@@ -3,7 +3,7 @@ import { ChevronRight, ChevronDown, Folder, File, FolderOpen, Plus, Search, X, E
 import { useEditorStore } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { detectLanguage } from "../types";
+import { detectLanguage, isPreviewOnlyLanguage } from "../types";
 import ContextMenu from "./ContextMenu";
 
 const normalizePath = (p: string) => {
@@ -92,7 +92,7 @@ function FileNode({ path, name, is_dir, level, onContextMenu, onRefresh }: FileN
       const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
       const language = detectLanguage(fileName);
       let content = "";
-      if (language !== "image") {
+      if (!isPreviewOnlyLanguage(language)) {
         content = await invoke<string>("read_file", { path: filePath });
       }
       openTab({
@@ -322,7 +322,7 @@ export default function Sidebar() {
       const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
       const language = detectLanguage(fileName);
       let content = "";
-      if (language !== "image") {
+      if (!isPreviewOnlyLanguage(language)) {
         content = await invoke<string>("read_file", { path: filePath });
       }
       openTab({
@@ -739,4 +739,3 @@ export default function Sidebar() {
     </div>
   );
 }
-

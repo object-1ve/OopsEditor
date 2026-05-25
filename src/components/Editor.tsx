@@ -5,6 +5,9 @@ import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github.css";
 import { useEditorStore } from "../store/editor";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { readFile } from "@tauri-apps/plugin-fs";
+import { isPreviewOnlyLanguage } from "../types";
+import ImagePreview from "./ImagePreview";
 
 /* Bright terracotta-themed Monaco editor */
 const TERRACOTTA_THEME = {
@@ -60,22 +63,68 @@ const TERRACOTTA_THEME = {
 };
 
 export default function Editor() {
-  const { tabs, activeTabId, updateContent, togglePreviewMode } = useEditorStore();
+  const { tabs, activeTabId, updateContent, togglePreviewMode, showNotification } = useEditorStore();
   const editorRef = useRef<Parameters<OnMount>[0]>(null);
   const activeTab = tabs.find((t) => t.id === activeTabId);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (activeTab?.language === "image") {
-      try {
-        setImageUrl(convertFileSrc(activeTab.path));
-      } catch {
-        setImageUrl(null);
-      }
-    } else {
-      setImageUrl(null);
+    if (!activeTab || !isPreviewOnlyLanguage(activeTab.language)) {
+      setPreviewUrl(null);
+      setPreviewError(null);
+      return;
     }
-  }, [activeTab]);
+
+    let isCancelled = false;
+    let objectUrl: string | null = null;
+    setPreviewUrl(null);
+    setPreviewError(null);
+
+    const loadPreview = async () => {
+      try {
+        if (activeTab.language === "image") {
+          setPreviewUrl(convertFileSrc(activeTab.path));
+          return;
+        }
+
+        if (activeTab.language === "pdf") {
+          const pdfBytes = await readFile(activeTab.path);
+          if (isCancelled) {
+            return;
+          }
+
+          objectUrl = URL.createObjectURL(
+            new Blob([pdfBytes], { type: "application/pdf" }),
+          );
+          setPreviewUrl(objectUrl);
+          return;
+        }
+
+        setPreviewUrl(null);
+      } catch {
+        if (!isCancelled) {
+          const message = activeTab.language === "pdf"
+            ? "当前文件没有读取权限，或文件内容无法作为 PDF 打开"
+            : "当前预览资源加载失败";
+          setPreviewUrl(null);
+          setPreviewError(message);
+          if (activeTab.language === "pdf") {
+            showNotification(`PDF 加载失败: ${message}`, "error");
+          }
+        }
+      }
+    };
+
+    void loadPreview();
+
+    return () => {
+      isCancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [activeTab, showNotification]);
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
@@ -152,23 +201,33 @@ export default function Editor() {
   }
 
   if (activeTab.language === "image") {
-    return (
-      <div className="flex-1 h-full flex items-center justify-center bg-deepest overflow-auto p-8">
-        {imageUrl ? (
-          <div className="relative group">
-            <div className="absolute -inset-4 bg-accent/5 blur-xl rounded-[2rem] opacity-0 group-hover:opacity-100 transition-opacity" />
-            <img
-              src={imageUrl}
-              alt={activeTab.name}
-              className="max-w-full max-h-full object-contain shadow-2xl rounded-lg relative z-10 border border-border"
-            />
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-surface/80 backdrop-blur-md border border-border text-text-muted text-xs opacity-0 group-hover:opacity-100 transition-opacity z-20">
-              {activeTab.name}
-            </div>
-          </div>
-        ) : (
-          <div className="text-text-muted">无法加载图片</div>
-        )}
+    return previewUrl ? (
+      <ImagePreview 
+        src={previewUrl} 
+        name={activeTab.name} 
+        path={activeTab.path} 
+      />
+    ) : (
+      <div className="flex-1 h-full flex items-center justify-center bg-deepest">
+        <div className="text-text-muted">无法加载图片</div>
+      </div>
+    );
+  }
+
+  if (activeTab.language === "pdf") {
+    return previewUrl ? (
+      <div className="flex-1 h-full bg-deepest p-4">
+        <div className="h-full overflow-hidden rounded-xl border border-border bg-white shadow-xl">
+          <iframe
+            src={previewUrl}
+            title={activeTab.name}
+            className="h-full w-full"
+          />
+        </div>
+      </div>
+    ) : (
+      <div className="flex-1 h-full flex items-center justify-center bg-deepest">
+        <div className="text-text-muted">{previewError ?? "无法加载 PDF"}</div>
       </div>
     );
   }

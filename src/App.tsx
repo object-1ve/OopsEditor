@@ -9,7 +9,7 @@ import TerminalView from "./components/Terminal";
 import Toast from "./components/Toast";
 import ConfirmModal from "./components/ConfirmModal";
 import { useEditorStore } from "./store/editor";
-import { detectLanguage } from "./types";
+import { detectLanguage, isPreviewOnlyLanguage } from "./types";
 import { saveSetting, loadSettings } from "./utils/settings";
 import { monacoReady } from "./monaco";
 
@@ -431,7 +431,7 @@ async function openDroppedFile(path: string) {
     const language = detectLanguage(name);
     let content = "";
 
-    if (language !== "image") {
+    if (!isPreviewOnlyLanguage(language)) {
       content = await invoke<string>("read_file", { path });
     }
 

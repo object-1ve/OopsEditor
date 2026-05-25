@@ -13,6 +13,23 @@
     "dialog:allow-ask",
     "dialog:allow-message",
     "fs:default",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        {
+          "path": "C:/**"
+        },
+        {
+          "path": "D:/**"
+        },
+        {
+          "path": "E:/**"
+        },
+        {
+          "path": "F:/**"
+        }
+      ]
+    },
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
     "core:window:allow-start-dragging",

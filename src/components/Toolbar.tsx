@@ -1,7 +1,7 @@
 import { File, X, ChevronLeft, ChevronRight, CopyX } from "lucide-react";
 import { useEditorStore } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import ContextMenu from "./ContextMenu";
 
 export default function Toolbar() {
@@ -10,7 +10,6 @@ export default function Toolbar() {
     activeTabId, 
     setActiveTab, 
     closeTab, 
-    closeTabs,
     closeOtherTabs,
     closeTabsToLeft,
     closeTabsToRight,
