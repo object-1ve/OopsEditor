@@ -5,8 +5,15 @@ commands.allow = [
   "read_file",
   "save_file",
   "list_dir",
+  "is_directory",
+  "create_file",
+  "create_dir",
   "open_terminal",
+  "reveal_in_explorer",
+  "rename_item",
+  "delete_item",
   "create_terminal",
   "write_to_terminal",
-  "resize_terminal"
+  "resize_terminal",
+  "close_terminal"
 ]

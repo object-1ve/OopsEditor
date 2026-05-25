@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings } from "lucide-react";
 import { useEditorStore } from "../store/editor";
 
 export default function WindowControls() {
@@ -8,7 +8,7 @@ export default function WindowControls() {
     isLeftSidebarCollapsed, 
     isRightSidebarCollapsed, 
     toggleLeftSidebar, 
-    toggleRightSidebar 
+    toggleRightSidebar
   } = useEditorStore();
 
   useEffect(() => {
@@ -18,7 +18,7 @@ export default function WindowControls() {
       try {
         const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
         const appWindow = getCurrentWebviewWindow();
-        
+
         // Initial state
         setIsMaximized(await appWindow.isMaximized());
 
@@ -59,7 +59,7 @@ export default function WindowControls() {
   const handleClose = async () => {
     try {
       const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-      await getCurrentWebviewWindow().close();
+      await getCurrentWebviewWindow().hide();
     } catch (e) {
       console.error(e);
     }
@@ -68,6 +68,12 @@ export default function WindowControls() {
   return (
     <div className="flex items-center h-full no-drag" onDoubleClick={(e) => e.stopPropagation()}>
       <div className="flex items-center mr-2 border-r border-border pr-2 gap-1">
+        <button
+          className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
+          title="设置"
+        >
+          <Settings size={14} />
+        </button>
         <button
           onClick={toggleLeftSidebar}
           className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"

@@ -1,5 +1,5 @@
 import { useCallback, useRef } from "react";
-import { Info, Settings, Share2, HelpCircle } from "lucide-react";
+import { Info, Share2, HelpCircle } from "lucide-react";
 import { useEditorStore } from "../store/editor";
 
 export default function RightSidebar() {
@@ -17,7 +17,7 @@ export default function RightSidebar() {
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!isResizing.current) return;
     const newWidth = window.innerWidth - e.clientX;
-    if (newWidth > 40 && newWidth < 400) {
+    if (newWidth > 36 && newWidth < 400) {
       setRightSidebarWidth(newWidth);
     }
   }, [setRightSidebarWidth]);
@@ -47,7 +47,6 @@ export default function RightSidebar() {
       
       <div className="flex flex-col items-center gap-4">
         <SidebarIcon icon={<HelpCircle size={18} />} title="帮助" />
-        <SidebarIcon icon={<Settings size={18} />} title="设置" />
       </div>
     </div>
   );

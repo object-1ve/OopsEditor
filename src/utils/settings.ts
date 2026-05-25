@@ -1,4 +1,6 @@
 import { load } from '@tauri-apps/plugin-store';
+import type { FileTab } from '../types';
+import type { DefaultFolder } from '../store/editor';
 
 const STORE_PATH = 'settings.json';
 
@@ -11,15 +13,25 @@ export interface AppSettings {
   terminalHeight: number;
   windowSize?: { width: number; height: number };
   windowPosition?: { x: number; y: number };
+  tabs: FileTab[];
+  activeTabId: string | null;
+  rootPaths: string[];
+  defaultFolders: DefaultFolder[];
+  expandedFolders: string[];
 }
 
 export const defaultSettings: AppSettings = {
   isLeftSidebarCollapsed: false,
   isRightSidebarCollapsed: false,
   isTerminalVisible: false,
-  leftSidebarWidth: 260,
-  rightSidebarWidth: 48,
+  leftSidebarWidth: 220,
+  rightSidebarWidth: 40,
   terminalHeight: 300,
+  tabs: [],
+  activeTabId: null,
+  rootPaths: [],
+  defaultFolders: [],
+  expandedFolders: [],
 };
 
 let storePromise: ReturnType<typeof load> | null = null;
@@ -64,6 +76,21 @@ export async function loadSettings(): Promise<AppSettings> {
 
   const savedWindowPosition = await store.get<{ x: number; y: number }>('windowPosition');
   if (savedWindowPosition !== null) settings.windowPosition = savedWindowPosition;
+
+  const savedTabs = await store.get<FileTab[]>('tabs');
+  if (Array.isArray(savedTabs)) settings.tabs = savedTabs;
+
+  const savedActiveTabId = await store.get<string>('activeTabId');
+  if (typeof savedActiveTabId === 'string' || savedActiveTabId === null) settings.activeTabId = savedActiveTabId;
+
+  const savedRootPaths = await store.get<string[]>('rootPaths');
+  if (Array.isArray(savedRootPaths)) settings.rootPaths = savedRootPaths;
+
+  const savedDefaultFolders = await store.get<DefaultFolder[]>('defaultFolders');
+  if (Array.isArray(savedDefaultFolders)) settings.defaultFolders = savedDefaultFolders;
+
+  const savedExpandedFolders = await store.get<string[]>('expandedFolders');
+  if (Array.isArray(savedExpandedFolders)) settings.expandedFolders = savedExpandedFolders;
 
   return settings;
 }

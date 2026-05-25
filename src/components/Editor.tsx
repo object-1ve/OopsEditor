@@ -135,18 +135,7 @@ export default function Editor() {
 
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight shimmer-text">Oops Editor</h1>
-            <p className="text-text-secondary">万能编辑器，打开文件开始工作</p>
-          </div>
-
-          <div className="flex items-center justify-center gap-6 text-sm">
-            <div className="flex items-center gap-2">
-              <kbd className="px-2 py-0.5 rounded bg-surface text-text-muted text-xs border border-border font-mono">Ctrl+O</kbd>
-              <span className="text-text-muted">打开文件</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <kbd className="px-2 py-0.5 rounded bg-surface text-text-muted text-xs border border-border font-mono">Ctrl+S</kbd>
-              <span className="text-text-muted">保存</span>
-            </div>
+            <p className="text-text-secondary">万能编辑器，开始你的创作</p>
           </div>
 
           <div className="pt-4">
