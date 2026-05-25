@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-inner-size",
+    "core:window:allow-inner-position",
+    "store:default",
+    "store:allow-load",
+    "store:allow-get",
+    "store:allow-set",
+    "store:allow-save",
+    "allow-all"
+  ]
+}

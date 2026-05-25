@@ -1,0 +1,12 @@
+[[permission]]
+identifier = "allow-all"
+description = "Allows all custom commands in the main crate"
+commands.allow = [
+  "read_file",
+  "save_file",
+  "list_dir",
+  "open_terminal",
+  "create_terminal",
+  "write_to_terminal",
+  "resize_terminal"
+]

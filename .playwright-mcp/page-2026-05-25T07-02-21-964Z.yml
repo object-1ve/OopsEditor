@@ -1,0 +1,30 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e10]: Oops
+    - generic [ref=e11]:
+      - button "打开文件 (Ctrl+O)" [ref=e12] [cursor=pointer]:
+        - img [ref=e13]
+      - button "保存 (Ctrl+S)" [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+  - generic [ref=e23]:
+    - img [ref=e26]
+    - generic [ref=e29]:
+      - heading "Oops Editor" [level=1] [ref=e30]
+      - paragraph [ref=e31]: 万能编辑器，打开文件开始工作
+    - generic [ref=e32]:
+      - generic [ref=e33]:
+        - generic [ref=e34]: Ctrl+O
+        - generic [ref=e35]: 打开文件
+      - generic [ref=e36]:
+        - generic [ref=e37]: Ctrl+S
+        - generic [ref=e38]: 保存
+    - generic [ref=e40]:
+      - img [ref=e41]
+      - text: 拖拽文件到窗口打开
+  - generic [ref=e43]:
+    - generic [ref=e46]: 就绪
+    - generic [ref=e47]: "|"
+    - generic [ref=e48]: Oops Editor
+    - generic [ref=e49]: 拖拽文件到窗口打开
