@@ -48,8 +48,18 @@ jobs:
           npm_config_platform: all
         run: npm install
 
+      - name: Install Rollup native binding
+        shell: bash
+        run: |
+          ROLLUP_VERSION=$(node -p "require('./node_modules/rollup/package.json').version")
+          ROLLUP_PKG=$(node -p "process.arch === 'arm64' ? '@rollup/rollup-darwin-arm64' : '@rollup/rollup-darwin-x64'")
+          npm install --no-save "${ROLLUP_PKG}@${ROLLUP_VERSION}"
+
       - name: Install Tauri CLI native binding
-        run: npm install --no-save @tauri-apps/cli-darwin-arm64@2.11.2
+        shell: bash
+        run: |
+          TAURI_CLI_PKG=$(node -p "process.arch === 'arm64' ? '@tauri-apps/cli-darwin-arm64' : '@tauri-apps/cli-darwin-x64'")
+          npm install --no-save "${TAURI_CLI_PKG}@2.11.2"
 
       - name: Verify Tauri CLI
         run: npx tauri info
