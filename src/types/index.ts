@@ -5,6 +5,7 @@ export interface FileTab {
   language: string;
   content: string;
   isDirty: boolean;
+  size?: number;
   isPreviewMode?: boolean;
 }
 

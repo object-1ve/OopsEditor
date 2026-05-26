@@ -15,6 +15,12 @@ export interface DefaultFolder {
   path: string;
 }
 
+export interface MarkdownOutlineTarget {
+  tabId: string;
+  headingId: string;
+  line: number;
+}
+
 interface EditorState {
   tabs: FileTab[];
   activeTabId: string | null;
@@ -38,6 +44,8 @@ interface EditorState {
   } | null;
   notification: { message: string; type: "info" | "error" | "success" } | null;
   expandedFolders: string[];
+  markdownOutlineTarget: MarkdownOutlineTarget | null;
+  rightSidebarIconOrder: string[];
 
   init: () => Promise<void>;
   openTab: (tab: FileTab) => void;
@@ -76,6 +84,9 @@ interface EditorState {
   togglePreviewMode: (id: string) => void;
   toggleFolderExpanded: (path: string) => void;
   setFolderExpanded: (path: string, expanded: boolean) => void;
+  navigateToMarkdownHeading: (target: MarkdownOutlineTarget) => void;
+  clearMarkdownOutlineTarget: () => void;
+  setRightSidebarIconOrder: (order: string[]) => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -95,6 +106,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   modal: null,
   notification: null,
   expandedFolders: [],
+  markdownOutlineTarget: null,
+  rightSidebarIconOrder: ["info", "outline", "help"],
 
   init: async () => {
     const settings = await loadSettings();
@@ -130,6 +143,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       rootPaths: settings.rootPaths || [],
       expandedFolders: settings.expandedFolders || [],
       openFiles: (settings.tabs || []).map(t => t.path),
+      rightSidebarIconOrder: settings.rightSidebarIconOrder || ["info", "outline", "help"],
     });
   },
 
@@ -408,6 +422,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         t.id === id ? { ...t, isPreviewMode: !t.isPreviewMode } : t
       ),
     })),
+  navigateToMarkdownHeading: (target) => set({ markdownOutlineTarget: target }),
+  clearMarkdownOutlineTarget: () => set({ markdownOutlineTarget: null }),
+  setRightSidebarIconOrder: (order: string[]) => {
+    const sanitizedOrder = order.filter((id) => id !== "share");
+    set({ rightSidebarIconOrder: sanitizedOrder });
+    saveSetting('rightSidebarIconOrder', sanitizedOrder);
+  },
   toggleFolderExpanded: (path: string) => {
     const { expandedFolders } = get();
     const isExpanded = expandedFolders.includes(path);

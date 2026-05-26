@@ -74,13 +74,31 @@ export default function Terminal({ id, path, isVisible, isExpanded }: TerminalPr
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
+    const syncTerminalSize = async () => {
+      fitAddon.fit();
+      if (term.rows > 0 && term.cols > 0) {
+        await invoke("resize_terminal", {
+          id,
+          rows: term.rows,
+          cols: term.cols,
+        });
+      }
+    };
+
     // Listen for data from terminal
     term.onData((data) => {
       invoke("write_to_terminal", { id, data });
     });
 
+    term.onResize(({ rows, cols }) => {
+      invoke("resize_terminal", { id, rows, cols }).catch((err) => {
+        console.error(`Failed to resize terminal ${id}:`, err);
+      });
+    });
+
     // Start terminal backend
     invoke("create_terminal", { id, path: path || "" })
+      .then(() => syncTerminalSize())
       .catch(err => {
         console.error(`Failed to create terminal ${id}:`, err);
         term.write(`\r\n\x1b[31mError: Failed to connect to terminal backend.\x1b[0m\r\n${err}\r\n`);
@@ -95,11 +113,8 @@ export default function Terminal({ id, path, isVisible, isExpanded }: TerminalPr
     // Handle resize
     const handleResize = () => {
       if (!isVisible) return;
-      fitAddon.fit();
-      invoke("resize_terminal", {
-        id,
-        rows: term.rows,
-        cols: term.cols,
+      syncTerminalSize().catch((err) => {
+        console.error(`Failed to sync terminal ${id} size:`, err);
       });
     };
 
@@ -119,11 +134,13 @@ export default function Terminal({ id, path, isVisible, isExpanded }: TerminalPr
       // Need a small delay to ensure DOM is updated
       setTimeout(() => {
         fitAddonRef.current?.fit();
-        if (xtermRef.current) {
+        if (xtermRef.current && xtermRef.current.rows > 0 && xtermRef.current.cols > 0) {
           invoke("resize_terminal", {
             id,
             rows: xtermRef.current.rows,
             cols: xtermRef.current.cols,
+          }).catch((err) => {
+            console.error(`Failed to resize terminal ${id}:`, err);
           });
         }
       }, 50);

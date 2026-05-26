@@ -18,6 +18,30 @@ export interface AppSettings {
   rootPaths: string[];
   defaultFolders: DefaultFolder[];
   expandedFolders: string[];
+  rightSidebarIconOrder?: string[];
+}
+
+const DEFAULT_RIGHT_SIDEBAR_ICON_ORDER = ["info", "outline", "help"] as const;
+
+function sanitizeRightSidebarIconOrder(order?: string[]): string[] {
+  if (!Array.isArray(order)) {
+    return [...DEFAULT_RIGHT_SIDEBAR_ICON_ORDER];
+  }
+
+  const allowed = new Set(DEFAULT_RIGHT_SIDEBAR_ICON_ORDER);
+  const sanitized = order.filter((id): id is (typeof DEFAULT_RIGHT_SIDEBAR_ICON_ORDER)[number] => allowed.has(id as (typeof DEFAULT_RIGHT_SIDEBAR_ICON_ORDER)[number]));
+
+  if (sanitized.length === 0) {
+    return [...DEFAULT_RIGHT_SIDEBAR_ICON_ORDER];
+  }
+
+  for (const id of DEFAULT_RIGHT_SIDEBAR_ICON_ORDER) {
+    if (!sanitized.includes(id)) {
+      sanitized.push(id);
+    }
+  }
+
+  return sanitized;
 }
 
 export const defaultSettings: AppSettings = {
@@ -32,6 +56,7 @@ export const defaultSettings: AppSettings = {
   rootPaths: [],
   defaultFolders: [],
   expandedFolders: [],
+  rightSidebarIconOrder: [...DEFAULT_RIGHT_SIDEBAR_ICON_ORDER],
 };
 
 let storePromise: ReturnType<typeof load> | null = null;
@@ -91,6 +116,9 @@ export async function loadSettings(): Promise<AppSettings> {
 
   const savedExpandedFolders = await store.get<string[]>('expandedFolders');
   if (Array.isArray(savedExpandedFolders)) settings.expandedFolders = savedExpandedFolders;
+
+  const savedIconOrder = await store.get<string[]>('rightSidebarIconOrder');
+  settings.rightSidebarIconOrder = sanitizeRightSidebarIconOrder(savedIconOrder);
 
   return settings;
 }

@@ -31,6 +31,14 @@ pub(crate) fn create_terminal(app: AppHandle, id: String, path: String) -> Resul
     #[cfg(not(target_os = "windows"))]
     let mut cmd = CommandBuilder::new("bash");
 
+    #[cfg(target_os = "windows")]
+    cmd.args(["-NoLogo"]);
+
+    // Advertise terminal capabilities so interactive CLIs like Claude render the full UI.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "OopsEditor");
+
     // Set working directory if provided
     if !path.is_empty() {
         cmd.cwd(path);

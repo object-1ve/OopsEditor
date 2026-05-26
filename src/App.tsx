@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import Sidebar from "./components/Sidebar";
 import RightSidebar from "./components/RightSidebar";
 import TitleBar from "./components/TitleBar";
@@ -63,13 +64,21 @@ function App() {
   } = useEditorStore();
 
   const [isDragging, setIsDragging] = useState(false);
+  const [isDraggingOverTerminal, setIsDraggingOverTerminal] = useState(false);
   const [isAppReady, setIsAppReady] = useState(false);
   const [isTerminalExpanded, setIsTerminalExpanded] = useState(false);
   const [terminalContextMenu, setTerminalContextMenu] = useState<{ x: number; y: number; terminalId: string } | null>(null);
   const isResizingTerminal = useRef(false);
   const editorWorkspaceRef = useRef<HTMLDivElement>(null);
+  const terminalDropZoneRef = useRef<HTMLDivElement>(null);
+  const isDraggingOverTerminalRef = useRef(false);
   const lastRestorableTerminalHeightRef = useRef(terminalHeight);
   const dragStartTerminalHeightRef = useRef(terminalHeight);
+
+  const setTerminalDragState = useCallback((value: boolean) => {
+    isDraggingOverTerminalRef.current = value;
+    setIsDraggingOverTerminal(value);
+  }, []);
 
   const getMaxTerminalHeight = useCallback(() => {
     return editorWorkspaceRef.current?.getBoundingClientRect().height ?? terminalHeight;
@@ -230,6 +239,39 @@ function App() {
     }
   };
 
+  const isPointInsideTerminal = useCallback((position?: { x: number; y: number }) => {
+    if (!position || !terminalDropZoneRef.current) return false;
+    const { isTerminalVisible, activeTerminalId } = useEditorStore.getState();
+    if (!isTerminalVisible || !activeTerminalId) return false;
+
+    const rect = terminalDropZoneRef.current.getBoundingClientRect();
+    return (
+      position.x >= rect.left &&
+      position.x <= rect.right &&
+      position.y >= rect.top &&
+      position.y <= rect.bottom
+    );
+  }, []);
+
+  const insertPathsIntoTerminal = useCallback(async (paths: string[]) => {
+    const { activeTerminalId, showNotification } = useEditorStore.getState();
+    if (!activeTerminalId || paths.length === 0) return false;
+
+    try {
+      const serializedPaths = paths.map(quotePathForPowerShell).join(" ");
+      await invoke("write_to_terminal", {
+        id: activeTerminalId,
+        data: `${serializedPaths} `,
+      });
+      showNotification(`已插入 ${paths.length} 个路径到终端`, "success");
+      return true;
+    } catch (err) {
+      console.error("Failed to insert dropped paths into terminal:", err);
+      showNotification("无法将路径写入终端", "error");
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     let unlistenResize: (() => void) | undefined;
     let unlistenMoved: (() => void) | undefined;
@@ -296,14 +338,24 @@ function App() {
         unlistenDrop = await appWindow.onDragDropEvent((event) => {
           if (event.payload.type === "enter") {
             setIsDragging(true);
+            setTerminalDragState(false);
+          } else if (event.payload.type === "over") {
+            setTerminalDragState(isPointInsideTerminal(event.payload.position));
           } else if (event.payload.type === "drop") {
+            const droppedInTerminal = isDraggingOverTerminalRef.current;
             setIsDragging(false);
+            setTerminalDragState(false);
             const paths = event.payload.paths;
+            if (droppedInTerminal) {
+              void insertPathsIntoTerminal(paths);
+              return;
+            }
             for (const path of paths) {
-              handleDroppedPath(path);
+              void handleDroppedPath(path);
             }
           } else {
             setIsDragging(false);
+            setTerminalDragState(false);
           }
         });
 
@@ -367,7 +419,7 @@ function App() {
       <TitleBar />
 
       {/* Main Layout Area: Sidebars and Content */}
-      <div className={`flex-1 flex overflow-hidden transition-transform duration-300 ${isDragging ? 'scale-[0.98] opacity-50 blur-[2px]' : 'scale-100 opacity-100 blur-0'}`}>
+      <div className={`flex-1 flex overflow-hidden transition-transform duration-300 ${isDragging && !isDraggingOverTerminal ? 'scale-[0.98] opacity-50 blur-[2px]' : 'scale-100 opacity-100 blur-0'}`}>
         {/* Left Sidebar */}
         {!isLeftSidebarCollapsed && <Sidebar />}
 
@@ -382,6 +434,7 @@ function App() {
             {/* Integrated Terminal */}
             {isTerminalVisible && (
               <div 
+                ref={terminalDropZoneRef}
                 style={isTerminalExpanded ? undefined : { height: terminalHeight }}
                 className={`border-t border-border bg-deepest flex flex-col ${
                   isTerminalExpanded ? "absolute inset-0 z-20 shadow-2xl" : "relative"
@@ -460,7 +513,7 @@ function App() {
                     </button>
                   </div>
                 </div>
-                <div className="flex-1 overflow-hidden relative">
+                <div className={`flex-1 overflow-hidden relative ${isDraggingOverTerminal ? "ring-2 ring-inset ring-accent/70 bg-accent/5" : ""}`}>
                   {terminals.map((t) => (
                     <TerminalView 
                       key={t.id}
@@ -470,6 +523,13 @@ function App() {
                       isExpanded={isTerminalExpanded}
                     />
                   ))}
+                  {isDraggingOverTerminal && (
+                    <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center bg-deepest/70 backdrop-blur-sm">
+                      <div className="px-4 py-2 rounded-lg border border-accent/60 bg-surface/90 text-sm text-text shadow-lg">
+                        释放文件以将路径插入当前终端
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {terminalContextMenu && (
                   <ContextMenu
@@ -511,7 +571,7 @@ function App() {
       </div>
 
       {/* Drag and Drop Overlay */}
-      {isDragging && (
+      {isDragging && !isDraggingOverTerminal && (
         <div className="absolute inset-0 z-[100] bg-accent/5 backdrop-blur-[2px] flex flex-col items-center justify-center pointer-events-none animate-in fade-in duration-300">
           <div className="relative flex flex-col items-center justify-center p-12 rounded-3xl border-2 border-dashed border-accent bg-deepest/90 shadow-[0_0_50px_rgba(var(--accent-rgb),0.2)] animate-in zoom-in duration-300">
             {/* Pulsing rings */}
@@ -586,8 +646,12 @@ async function openDroppedFile(path: string) {
       isDirty: false,
     });
   } catch (err) {
-    useEditorStore.getState().showNotification(`无法打开文件: ${path.split(/[/\\]/).pop()} (可能是不支持的二进制格式)`, "error");
+    useEditorStore.getState().showNotification(`无法打开文件: ${path.split(/[/\\]/).pop()} (${String(err)})`, "error");
   }
+}
+
+function quotePathForPowerShell(path: string) {
+  return `'${path.replace(/'/g, "''")}'`;
 }
 
 export default App;

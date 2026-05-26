@@ -8,7 +8,8 @@ use terminal::{close_terminal, create_terminal, resize_terminal, write_to_termin
 
 #[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))
+    let bytes = fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+    decode_text_bytes(&bytes).map_err(|e| format!("读取文件失败: {}", e))
 }
 
 #[tauri::command]
@@ -26,6 +27,7 @@ struct DirEntry {
     path: String,
     name: String,
     is_dir: bool,
+    size: u64,
 }
 
 #[tauri::command]
@@ -41,10 +43,14 @@ fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
             .unwrap_or_else(|| "".to_string());
         let is_dir = path.is_dir();
 
+        let metadata = fs::metadata(&path).map_err(|e| format!("获取元数据失败: {}", e))?;
+        let size = if is_dir { 0 } else { metadata.len() };
+
         result.push(DirEntry {
             path: path.to_string_lossy().to_string(),
             name,
             is_dir,
+            size,
         });
     }
     result.sort_by(|a, b| {
@@ -226,6 +232,45 @@ pub fn run() {
         .invoke_handler(generate_handler())
         .run(tauri::generate_context!())
         .expect("启动应用失败");
+}
+
+fn decode_text_bytes(bytes: &[u8]) -> Result<String, String> {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return String::from_utf8(bytes[3..].to_vec())
+            .map_err(|e| format!("UTF-8 解码失败: {}", e));
+    }
+
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return decode_utf16_bytes(&bytes[2..], true);
+    }
+
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return decode_utf16_bytes(&bytes[2..], false);
+    }
+
+    match String::from_utf8(bytes.to_vec()) {
+        Ok(text) => Ok(text),
+        Err(_) => Ok(String::from_utf8_lossy(bytes).into_owned()),
+    }
+}
+
+fn decode_utf16_bytes(bytes: &[u8], little_endian: bool) -> Result<String, String> {
+    if bytes.len() % 2 != 0 {
+        return Err("UTF-16 字节长度无效".to_string());
+    }
+
+    let code_units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|chunk| {
+            if little_endian {
+                u16::from_le_bytes([chunk[0], chunk[1]])
+            } else {
+                u16::from_be_bytes([chunk[0], chunk[1]])
+            }
+        })
+        .collect();
+
+    String::from_utf16(&code_units).map_err(|e| format!("UTF-16 解码失败: {}", e))
 }
 
 fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {

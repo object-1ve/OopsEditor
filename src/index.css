@@ -184,6 +184,120 @@ body {
   text-decoration: underline;
 }
 
+.context-view.monaco-menu-container {
+  border: 1px solid color-mix(in srgb, var(--border) 88%, white 12%) !important;
+  border-radius: 14px !important;
+  overflow: hidden;
+  min-width: 220px;
+  box-shadow:
+    0 20px 42px rgba(99, 63, 50, 0.16),
+    0 6px 16px rgba(99, 63, 50, 0.1) !important;
+  backdrop-filter: blur(16px);
+  transform-origin: top left;
+  animation: context-menu-enter 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes context-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.context-view.monaco-menu-container .monaco-menu {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78) 0%, rgba(253, 250, 247, 0.96) 16%, rgba(253, 250, 247, 0.98) 100%) !important;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical {
+  padding: 6px !important;
+}
+
+.context-view.monaco-menu-container .monaco-scrollable-element {
+  padding: 1px;
+}
+
+.context-view.monaco-menu-container .monaco-scrollable-element .scrollbar .slider {
+  border-radius: 999px;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-item {
+  margin-bottom: 2px;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-item:last-child {
+  margin-bottom: 0;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-menu-item {
+  min-height: 34px;
+  margin: 0 !important;
+  border-radius: 10px !important;
+  position: relative;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-menu-item::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0) 100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-item.focused .action-menu-item,
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-menu-item:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 1px rgba(200, 106, 78, 0.1);
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-item.focused .action-menu-item::before,
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-menu-item:hover::before {
+  opacity: 1;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-label:not(.separator),
+.context-view.monaco-menu-container .monaco-action-bar.vertical .keybinding,
+.context-view.monaco-menu-container .monaco-action-bar.vertical .submenu-indicator {
+  font-size: 12px;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-label:not(.separator) {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding-left: 1.1rem;
+  padding-right: 1.1rem;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .keybinding,
+.context-view.monaco-menu-container .monaco-action-bar.vertical .submenu-indicator {
+  color: color-mix(in srgb, var(--text-secondary) 72%, white 28%);
+  font-variant-numeric: tabular-nums;
+  padding-left: 0.75rem;
+  padding-right: 1rem;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .submenu-indicator.codicon::before {
+  margin-right: -14px;
+}
+
+.context-view.monaco-menu-container .monaco-action-bar.vertical .action-label.separator {
+  margin: 6px 4px !important;
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, white 22%);
+}
+
 /* Markdown Preview Styles */
 .markdown-preview {
   color: var(--text-primary);

@@ -20,6 +20,7 @@ interface DirEntry {
   path: string;
   name: string;
   is_dir: boolean;
+  size: number;
 }
 
 interface FileNodeProps extends DirEntry {
@@ -28,7 +29,7 @@ interface FileNodeProps extends DirEntry {
   onRefresh?: () => void;
 }
 
-function FileNode({ path, name, is_dir, level, onContextMenu, onRefresh }: FileNodeProps) {
+function FileNode({ path, name, is_dir, size, level, onContextMenu, onRefresh }: FileNodeProps) {
   const { openTab, activeTabId, showNotification, expandedFolders, toggleFolderExpanded } = useEditorStore();
   const isOpen = expandedFolders.includes(path);
   const [children, setChildren] = useState<DirEntry[]>([]);
@@ -65,7 +66,7 @@ function FileNode({ path, name, is_dir, level, onContextMenu, onRefresh }: FileN
     if (is_dir) {
       toggleFolderExpanded(path);
     } else {
-      openFile(path);
+      openFile(path, size);
     }
   };
 
@@ -87,7 +88,7 @@ function FileNode({ path, name, is_dir, level, onContextMenu, onRefresh }: FileN
     }
   };
 
-  const openFile = async (filePath: string) => {
+  const openFile = async (filePath: string, fileSize?: number) => {
     try {
       const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
       const language = detectLanguage(fileName);
@@ -102,9 +103,10 @@ function FileNode({ path, name, is_dir, level, onContextMenu, onRefresh }: FileN
         language,
         content,
         isDirty: false,
+        size: fileSize,
       });
     } catch (err) {
-      showNotification(`无法打开文件: ${filePath.split(/[/\\]/).pop()} (可能是不支持的二进制格式)`, "error");
+      showNotification(`无法打开文件: ${filePath.split(/[/\\]/).pop()} (${String(err)})`, "error");
     }
   };
 
@@ -143,7 +145,7 @@ function FileNode({ path, name, is_dir, level, onContextMenu, onRefresh }: FileN
         }`}
         style={{ paddingLeft: `${level * 12 + 12}px` }}
         onClick={handleToggle}
-        onContextMenu={(e) => onContextMenu(e, { path, name, is_dir })}
+        onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size })}
       >
         {is_dir ? (
           <>
@@ -242,7 +244,7 @@ function RootFolder({ path, onContextMenu }: { path: string; onContextMenu: (e: 
       <div 
         className="pl-2 pr-3 py-1.5 flex items-center justify-between group/folder cursor-pointer select-none hover:bg-surface/30 transition-colors"
         onClick={() => toggleFolderExpanded(path)}
-        onContextMenu={(e) => onContextMenu(e, { path, name: path.split(/[/\\]/).pop() || path, is_dir: true })}
+        onContextMenu={(e) => onContextMenu(e, { path, name: path.split(/[/\\]/).pop() || path, is_dir: true, size: 0 })}
       >
         <div className="flex items-center gap-1.5 overflow-hidden">
           {isOpen ? <ChevronDown size={14} className="text-text-muted" /> : <ChevronRight size={14} className="text-text-muted" />}
@@ -318,7 +320,7 @@ export default function Sidebar() {
     document.body.style.cursor = "default";
   }, [handleMouseMove]);
 
-  const openFile = useCallback(async (filePath: string) => {
+  const openFile = useCallback(async (filePath: string, fileSize?: number) => {
     try {
       const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
       const language = detectLanguage(fileName);
@@ -333,6 +335,7 @@ export default function Sidebar() {
         language,
         content,
         isDirty: false,
+        size: fileSize,
       });
     } catch (err) {
       console.error("Failed to open file:", err);

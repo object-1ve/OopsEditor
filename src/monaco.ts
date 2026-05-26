@@ -1,4 +1,5 @@
 import { loader } from "@monaco-editor/react";
+import "monaco-editor/esm/nls.messages.zh-cn.js";
 import * as monaco from "monaco-editor";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";

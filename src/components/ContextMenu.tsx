@@ -88,13 +88,13 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
   return createPortal(
     <div
       ref={menuRef}
-      className={`fixed z-[1000] bg-surface/95 backdrop-blur-md border border-border shadow-2xl rounded-lg py-1.5 min-w-[180px] max-h-[calc(100vh-20px)] overflow-y-auto scrollbar-none animate-in fade-in zoom-in duration-100 origin-top-left ${isVisible ? 'opacity-100' : 'opacity-0'}`}
+      className={`fixed z-[1000] min-w-[180px] max-h-[calc(100vh-20px)] overflow-y-auto scrollbar-none border border-[#dccabc] bg-[#fffaf4] py-1 shadow-[0_8px_24px_rgba(123,75,57,0.18)] rounded-md animate-in fade-in zoom-in duration-100 origin-top-left ${isVisible ? "opacity-100" : "opacity-0"}`}
       style={{ left: position.left, top: position.top }}
     >
       {items.map((item, index) => (
         <React.Fragment key={index}>
           {item.separator ? (
-            <div className="h-px bg-border my-1 mx-2" />
+            <div className="mx-2 my-1 h-px bg-[#ead8cb]" />
           ) : (
             <button
               onClick={(e) => {
@@ -102,11 +102,13 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
                 item.onClick();
                 onClose();
               }}
-              className={`w-full flex items-center gap-3 px-3 py-1.5 text-xs transition-colors hover:bg-accent/10 group ${
-                item.danger ? "text-error hover:text-error hover:bg-error/10" : "text-text-secondary hover:text-accent"
+              className={`group flex w-full items-center gap-3 px-3 py-1.5 text-xs transition-colors ${
+                item.danger
+                  ? "text-error hover:bg-error/10 hover:text-error"
+                  : "text-[#3b3027] hover:bg-[#f3e3d6] hover:text-[#b85a3e]"
               }`}
             >
-              {item.icon && <span className="opacity-70 group-hover:opacity-100">{item.icon}</span>}
+              {item.icon && <span className="opacity-75 group-hover:opacity-100">{item.icon}</span>}
               <span className="flex-1 text-left">{item.label}</span>
             </button>
           )}
