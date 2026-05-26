@@ -48,6 +48,12 @@ jobs:
           npm_config_platform: all
         run: npm install
 
+      - name: Install Tauri CLI native binding
+        run: npm install --no-save @tauri-apps/cli-darwin-arm64@2.11.2
+
+      - name: Verify Tauri CLI
+        run: npx tauri info
+
       - name: Build Tauri macOS bundles
         run: npm run tbuild -- --bundles app,dmg
 
@@ -102,6 +108,12 @@ jobs:
         env:
           npm_config_platform: all
         run: npm install
+
+      - name: Install Tauri CLI native binding
+        run: npm install --no-save @tauri-apps/cli-win32-x64-msvc@2.11.2
+
+      - name: Verify Tauri CLI
+        run: npx tauri info
 
       - name: Build Tauri Windows bundles
         run: npm run tbuild -- --bundles msi
