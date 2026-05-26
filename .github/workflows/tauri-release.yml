@@ -44,7 +44,9 @@ jobs:
           workspaces: ./src-tauri -> target
 
       - name: Install frontend dependencies
-        run: npm ci
+        env:
+          npm_config_platform: all
+        run: npm install
 
       - name: Build Tauri macOS bundles
         run: npm run tbuild -- --bundles app,dmg
@@ -97,7 +99,9 @@ jobs:
           workspaces: ./src-tauri -> target
 
       - name: Install frontend dependencies
-        run: npm ci
+        env:
+          npm_config_platform: all
+        run: npm install
 
       - name: Build Tauri Windows bundles
         run: npm run tbuild -- --bundles msi
