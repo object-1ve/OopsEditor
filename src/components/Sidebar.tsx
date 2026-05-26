@@ -141,7 +141,7 @@ function FileNode({ path, name, is_dir, level, onContextMenu, onRefresh }: FileN
         className={`flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-surface/50 transition-colors select-none text-sm group ${
           isActive ? "bg-surface text-accent font-medium" : "text-text-secondary"
         }`}
-        style={{ paddingLeft: `${level * 12 + 8}px` }}
+        style={{ paddingLeft: `${level * 12 + 12}px` }}
         onClick={handleToggle}
         onContextMenu={(e) => onContextMenu(e, { path, name, is_dir })}
       >
@@ -194,7 +194,7 @@ function FileNode({ path, name, is_dir, level, onContextMenu, onRefresh }: FileN
       {isOpen && children.length === 0 && (
         <div 
           className="py-1 text-[10px] text-text-muted italic"
-          style={{ paddingLeft: `${(level + 1) * 12 + 24}px` }}
+          style={{ paddingLeft: `${(level + 1) * 12 + 28}px` }}
         >
           空目录
         </div>
@@ -240,12 +240,13 @@ function RootFolder({ path, onContextMenu }: { path: string; onContextMenu: (e: 
   return (
     <div className="mb-2">
       <div 
-        className="px-3 py-1.5 flex items-center justify-between group/folder cursor-pointer select-none hover:bg-surface/30 transition-colors"
+        className="pl-2 pr-3 py-1.5 flex items-center justify-between group/folder cursor-pointer select-none hover:bg-surface/30 transition-colors"
         onClick={() => toggleFolderExpanded(path)}
         onContextMenu={(e) => onContextMenu(e, { path, name: path.split(/[/\\]/).pop() || path, is_dir: true })}
       >
         <div className="flex items-center gap-1.5 overflow-hidden">
           {isOpen ? <ChevronDown size={14} className="text-text-muted" /> : <ChevronRight size={14} className="text-text-muted" />}
+          {isOpen ? <FolderOpen size={14} className="text-accent/70 shrink-0" /> : <Folder size={14} className="text-accent/70 shrink-0" />}
           <span 
             className="text-[11px] font-bold tracking-wider text-text-secondary truncate"
             title={path}

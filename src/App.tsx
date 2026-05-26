@@ -1,5 +1,5 @@
-import { useEffect, useCallback, useRef, useState } from "react";
-import { Terminal, PanelRightClose, Plus, X, UploadCloud } from "lucide-react";
+import { useEffect, useCallback, useRef, useState, useMemo } from "react";
+import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import RightSidebar from "./components/RightSidebar";
 import TitleBar from "./components/TitleBar";
@@ -8,6 +8,7 @@ import Editor from "./components/Editor";
 import TerminalView from "./components/Terminal";
 import Toast from "./components/Toast";
 import ConfirmModal from "./components/ConfirmModal";
+import ContextMenu from "./components/ContextMenu";
 import { useEditorStore } from "./store/editor";
 import { detectLanguage, isPreviewOnlyLanguage } from "./types";
 import { saveSetting, loadSettings } from "./utils/settings";
@@ -55,24 +56,49 @@ function App() {
     setActiveTerminal,
     addTerminal,
     removeTerminal,
+    closeOtherTerminals,
+    closeTerminalsToLeft,
+    closeTerminalsToRight,
     init
   } = useEditorStore();
 
   const [isDragging, setIsDragging] = useState(false);
   const [isAppReady, setIsAppReady] = useState(false);
+  const [isTerminalExpanded, setIsTerminalExpanded] = useState(false);
+  const [terminalContextMenu, setTerminalContextMenu] = useState<{ x: number; y: number; terminalId: string } | null>(null);
   const isResizingTerminal = useRef(false);
+  const editorWorkspaceRef = useRef<HTMLDivElement>(null);
+  const lastRestorableTerminalHeightRef = useRef(terminalHeight);
+  const dragStartTerminalHeightRef = useRef(terminalHeight);
+
+  const getMaxTerminalHeight = useCallback(() => {
+    return editorWorkspaceRef.current?.getBoundingClientRect().height ?? terminalHeight;
+  }, [terminalHeight]);
 
   const handleTerminalMouseMove = useCallback((e: MouseEvent) => {
     if (!isResizingTerminal.current) return;
-    
-    // 终端在底部，高度 = 窗口高度 - 鼠标点击位置的 Y 坐标
-    // 需要减去状态栏的高度 (24px)
-    const newHeight = window.innerHeight - e.clientY - 24;
-    
-    if (newHeight > 100 && newHeight < window.innerHeight * 0.7) {
-      setTerminalHeight(newHeight);
+
+    const workspaceRect = editorWorkspaceRef.current?.getBoundingClientRect();
+    if (!workspaceRect) return;
+
+    // 基于编辑区容器的实际底边计算终端高度，支持向上拖满整个编辑区域。
+    const newHeight = workspaceRect.bottom - e.clientY;
+    const maxHeight = workspaceRect.height;
+    const clampedHeight = Math.max(100, Math.min(newHeight, maxHeight));
+
+    // 拖拽接近顶部时自动切换到最大化态，和按钮行为保持一致。
+    if (clampedHeight >= maxHeight - 8) {
+      lastRestorableTerminalHeightRef.current = dragStartTerminalHeightRef.current;
+      setTerminalHeight(maxHeight);
+      setIsTerminalExpanded(true);
+      return;
     }
-  }, [setTerminalHeight]);
+
+    if (isTerminalExpanded) {
+      setIsTerminalExpanded(false);
+    }
+    setTerminalHeight(clampedHeight);
+  }, [isTerminalExpanded, setTerminalHeight]);
 
   const stopResizingTerminal = useCallback(() => {
     isResizingTerminal.current = false;
@@ -82,12 +108,100 @@ function App() {
   }, [handleTerminalMouseMove]);
 
   const startResizingTerminal = useCallback((e: React.MouseEvent) => {
+    if (isTerminalExpanded) return;
     e.preventDefault();
+    dragStartTerminalHeightRef.current = terminalHeight;
     isResizingTerminal.current = true;
     document.addEventListener("mousemove", handleTerminalMouseMove);
     document.addEventListener("mouseup", stopResizingTerminal);
     document.body.style.cursor = "row-resize";
-  }, [handleTerminalMouseMove, stopResizingTerminal]);
+  }, [handleTerminalMouseMove, isTerminalExpanded, stopResizingTerminal, terminalHeight]);
+
+  const toggleTerminalExpanded = useCallback(() => {
+    if (isTerminalExpanded) {
+      const restoredHeight = Math.max(100, Math.min(lastRestorableTerminalHeightRef.current, getMaxTerminalHeight()));
+      setIsTerminalExpanded(false);
+      setTerminalHeight(restoredHeight);
+      return;
+    }
+
+    lastRestorableTerminalHeightRef.current = terminalHeight;
+    setTerminalHeight(getMaxTerminalHeight());
+    setIsTerminalExpanded(true);
+  }, [getMaxTerminalHeight, isTerminalExpanded, setTerminalHeight, terminalHeight]);
+
+  const handleTerminalContextMenu = useCallback((e: React.MouseEvent, terminalId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActiveTerminal(terminalId);
+    setTerminalContextMenu({ x: e.clientX, y: e.clientY, terminalId });
+  }, [setActiveTerminal]);
+
+  const handleCloseTerminal = useCallback((e: React.MouseEvent | { stopPropagation: () => void }, terminalId: string) => {
+    e.stopPropagation();
+    removeTerminal(terminalId);
+    setTerminalContextMenu(null);
+  }, [removeTerminal]);
+
+  const handleCloseOtherTerminalTabs = useCallback(() => {
+    if (!terminalContextMenu) return;
+    closeOtherTerminals(terminalContextMenu.terminalId);
+    setTerminalContextMenu(null);
+  }, [closeOtherTerminals, terminalContextMenu]);
+
+  const handleCloseTerminalTabsToLeft = useCallback(() => {
+    if (!terminalContextMenu) return;
+    closeTerminalsToLeft(terminalContextMenu.terminalId);
+    setTerminalContextMenu(null);
+  }, [closeTerminalsToLeft, terminalContextMenu]);
+
+  const handleCloseTerminalTabsToRight = useCallback(() => {
+    if (!terminalContextMenu) return;
+    closeTerminalsToRight(terminalContextMenu.terminalId);
+    setTerminalContextMenu(null);
+  }, [closeTerminalsToRight, terminalContextMenu]);
+
+  const terminalContextMenuItems = useMemo(() => {
+    if (!terminalContextMenu) return [];
+    const terminal = terminals.find((item) => item.id === terminalContextMenu.terminalId);
+    if (!terminal) return [];
+
+    return [
+      {
+        label: "关闭终端",
+        icon: <X size={14} />,
+        onClick: () => handleCloseTerminal({ stopPropagation: () => {} } as React.MouseEvent, terminal.id),
+      },
+      { separator: true, label: "", onClick: () => {} },
+      {
+        label: "关闭其他终端",
+        icon: <CopyX size={14} />,
+        onClick: handleCloseOtherTerminalTabs,
+      },
+      {
+        label: "关闭左侧终端",
+        icon: <ChevronLeft size={14} />,
+        onClick: handleCloseTerminalTabsToLeft,
+      },
+      {
+        label: "关闭右侧终端",
+        icon: <ChevronRight size={14} />,
+        onClick: handleCloseTerminalTabsToRight,
+      },
+    ];
+  }, [
+    handleCloseOtherTerminalTabs,
+    handleCloseTerminal,
+    handleCloseTerminalTabsToLeft,
+    handleCloseTerminalTabsToRight,
+    terminalContextMenu,
+    terminals,
+  ]);
+
+  const handleTerminalTabBarDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (e.target !== e.currentTarget) return;
+    addTerminal();
+  }, [addTerminal]);
 
   const handleOpenTerminal = async () => {
     const { tabs, activeTabId, rootPaths, addTerminal, toggleTerminal, isTerminalVisible, terminals } = useEditorStore.getState();
@@ -260,7 +374,7 @@ function App() {
         {/* Center Main Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
           <Toolbar />
-          <div className="flex-1 overflow-hidden relative z-0 flex flex-col">
+          <div ref={editorWorkspaceRef} className="flex-1 overflow-hidden relative z-0 flex flex-col">
             <div className="flex-1 overflow-hidden relative">
               <Editor />
             </div>
@@ -268,23 +382,35 @@ function App() {
             {/* Integrated Terminal */}
             {isTerminalVisible && (
               <div 
-                style={{ height: terminalHeight }}
-                className="border-t border-border bg-deepest flex flex-col relative"
+                style={isTerminalExpanded ? undefined : { height: terminalHeight }}
+                className={`border-t border-border bg-deepest flex flex-col ${
+                  isTerminalExpanded ? "absolute inset-0 z-20 shadow-2xl" : "relative"
+                }`}
               >
                 {/* Resize Handle */}
-                <div
-                  onMouseDown={startResizingTerminal}
-                  className="absolute -top-1 left-0 right-0 h-2 cursor-row-resize z-50 hover:bg-accent/30 active:bg-accent/50 transition-colors"
-                />
+                {!isTerminalExpanded && (
+                  <div
+                    onMouseDown={startResizingTerminal}
+                    className="absolute -top-1 left-0 right-0 h-2 cursor-row-resize z-50 hover:bg-accent/30 active:bg-accent/50 transition-colors"
+                  />
+                )}
                 
                 {/* Terminal Header/Handle */}
                 <div className="h-8 bg-surface border-b border-border flex items-center justify-between shrink-0 select-none">
-                  <div className="flex items-center flex-1 overflow-x-auto h-full scrollbar-hide">
-                    <div className="flex items-center h-full px-1 gap-0.5">
+                  <div
+                    className="flex items-center flex-1 overflow-x-auto h-full scrollbar-hide"
+                    onDoubleClick={handleTerminalTabBarDoubleClick}
+                  >
+                    <div
+                      className="flex items-center h-full px-1 gap-0.5"
+                      onDoubleClick={handleTerminalTabBarDoubleClick}
+                    >
                       {terminals.map((t) => (
                         <div
                           key={t.id}
                           onClick={() => setActiveTerminal(t.id)}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                          onContextMenu={(e) => handleTerminalContextMenu(e, t.id)}
                           className={`group relative flex items-center gap-1.5 px-3 h-7 text-[11px] cursor-pointer transition-all duration-150 rounded-t-md min-w-0 shrink-0 ${
                             t.id === activeTerminalId
                               ? "bg-primary text-text-primary"
@@ -298,9 +424,9 @@ function App() {
                           <span className="truncate max-w-24 font-medium uppercase tracking-wider">{t.name}</span>
                           <button
                             onClick={(e) => {
-                              e.stopPropagation();
-                              removeTerminal(t.id);
+                              handleCloseTerminal(e, t.id);
                             }}
+                            onDoubleClick={(e) => e.stopPropagation()}
                             className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 text-text-muted hover:text-text"
                           >
                             <X size={10} />
@@ -311,6 +437,13 @@ function App() {
                   </div>
                   
                   <div className="flex items-center px-1 gap-1">
+                    <button
+                      onClick={toggleTerminalExpanded}
+                      className="p-1.5 hover:bg-white/5 rounded transition-colors text-text-muted hover:text-accent cursor-pointer"
+                      title={isTerminalExpanded ? "还原终端高度" : "向上伸展并覆盖编辑区"}
+                    >
+                      {isTerminalExpanded ? <Minimize2 size={14} /> : <ChevronsUp size={14} />}
+                    </button>
                     <button 
                       onClick={() => addTerminal()}
                       className="p-1.5 hover:bg-white/5 rounded transition-colors text-text-muted hover:text-accent cursor-pointer"
@@ -334,9 +467,18 @@ function App() {
                       id={t.id}
                       path={t.path}
                       isVisible={t.id === activeTerminalId}
+                      isExpanded={isTerminalExpanded}
                     />
                   ))}
                 </div>
+                {terminalContextMenu && (
+                  <ContextMenu
+                    x={terminalContextMenu.x}
+                    y={terminalContextMenu.y}
+                    items={terminalContextMenuItems}
+                    onClose={() => setTerminalContextMenu(null)}
+                  />
+                )}
                </div>
             )}
           </div>

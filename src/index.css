@@ -127,6 +127,63 @@ body {
   scrollbar-width: none;
 }
 
+.terminal-shell {
+  background: #0f1117;
+}
+
+.terminal-shell .xterm {
+  height: 100%;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, #11141b 0%, #0f1117 100%);
+}
+
+.terminal-shell .xterm-viewport {
+  scrollbar-color: #2d333b #0f1117;
+  scrollbar-width: thin;
+}
+
+.terminal-shell .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.terminal-shell .xterm-viewport::-webkit-scrollbar-track {
+  background: #0f1117;
+}
+
+.terminal-shell .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #2d333b;
+  border-radius: 999px;
+  border: 2px solid #0f1117;
+}
+
+.terminal-shell .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #3d444d;
+}
+
+.terminal-shell .xterm-screen,
+.terminal-shell .xterm-rows {
+  width: 100%;
+}
+
+.terminal-shell .xterm-selection div {
+  background: rgba(88, 166, 255, 0.28) !important;
+}
+
+.terminal-shell .xterm-cursor-layer .xterm-cursor {
+  box-shadow: 0 0 12px rgba(240, 246, 252, 0.18);
+}
+
+.terminal-shell .xterm a {
+  color: #79c0ff;
+  text-decoration: none;
+}
+
+.terminal-shell .xterm a:hover {
+  color: #a5d6ff;
+  text-decoration: underline;
+}
+
 /* Markdown Preview Styles */
 .markdown-preview {
   color: var(--text-primary);

@@ -64,6 +64,10 @@ interface EditorState {
   setTerminalHeight: (height: number) => void;
   addTerminal: (path?: string | null) => void;
   removeTerminal: (id: string) => void;
+  closeTerminals: (ids: string[]) => void;
+  closeOtherTerminals: (id: string) => void;
+  closeTerminalsToLeft: (id: string) => void;
+  closeTerminalsToRight: (id: string) => void;
   setActiveTerminal: (id: string) => void;
   showModal: (config: { title: string; message: string; onConfirm: () => void; onCancel?: () => void; kind?: "warning" | "danger" | "info" }) => void;
   closeModal: () => void;
@@ -341,6 +345,46 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         isTerminalVisible: terminals.length > 0 ? state.isTerminalVisible : false
       };
     });
+  },
+
+  closeTerminals: (ids: string[]) => {
+    if (ids.length === 0) return;
+    set((state) => {
+      const terminals = state.terminals.filter((t) => !ids.includes(t.id));
+      let activeTerminalId = state.activeTerminalId;
+      if (activeTerminalId && ids.includes(activeTerminalId)) {
+        activeTerminalId = terminals[terminals.length - 1]?.id ?? null;
+      }
+      return {
+        terminals,
+        activeTerminalId,
+        isTerminalVisible: terminals.length > 0 ? state.isTerminalVisible : false,
+      };
+    });
+  },
+
+  closeOtherTerminals: (id: string) => {
+    const { terminals, closeTerminals } = get();
+    const idsToClose = terminals.filter((t) => t.id !== id).map((t) => t.id);
+    closeTerminals(idsToClose);
+  },
+
+  closeTerminalsToLeft: (id: string) => {
+    const { terminals, closeTerminals } = get();
+    const idx = terminals.findIndex((t) => t.id === id);
+    if (idx > 0) {
+      const idsToClose = terminals.slice(0, idx).map((t) => t.id);
+      closeTerminals(idsToClose);
+    }
+  },
+
+  closeTerminalsToRight: (id: string) => {
+    const { terminals, closeTerminals } = get();
+    const idx = terminals.findIndex((t) => t.id === id);
+    if (idx !== -1 && idx < terminals.length - 1) {
+      const idsToClose = terminals.slice(idx + 1).map((t) => t.id);
+      closeTerminals(idsToClose);
+    }
   },
 
   setActiveTerminal: (id: string) => set({ activeTerminalId: id }),

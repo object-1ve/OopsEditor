@@ -11,14 +11,52 @@ node_modules
 dist
 dist-ssr
 *.local
-
+docs
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Rust / Tauri build output
+src-tauri/target/
+src-tauri/debug/
+src-tauri/release/
+
+# Dependency directories
+pids
+*.pid
+*.seed
+lib-cov
+
+# Coverage
+coverage
+*.lcov
+
+# Build caches
+.eslintcache
+*.tsbuildinfo
+*.map
+
+# Yarn/Pnpm specific
+.yarn/*
+!.yarn/releases
+!.yarn/plugins
+!.yarn/patches
+.pnp.*

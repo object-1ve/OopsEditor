@@ -10,9 +10,10 @@ interface TerminalProps {
   id: string;
   path: string | null;
   isVisible: boolean;
+  isExpanded: boolean;
 }
 
-export default function Terminal({ id, path, isVisible }: TerminalProps) {
+export default function Terminal({ id, path, isVisible, isExpanded }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -23,31 +24,40 @@ export default function Terminal({ id, path, isVisible }: TerminalProps) {
 
     const term = new XTerm({
       cursorBlink: true,
-      fontSize: 14,
-      fontFamily: "'Cascadia Code', 'Consolas', 'Liberation Mono', Menlo, Courier, monospace",
-      lineHeight: 1.2,
+      cursorStyle: "bar",
+      cursorWidth: 2,
+      fontSize: 13,
+      fontFamily: "'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', 'Liberation Mono', Menlo, Courier, monospace",
+      lineHeight: 1.28,
+      letterSpacing: 0,
+      fontWeight: "400",
+      fontWeightBold: "600",
+      scrollback: 10000,
+      scrollOnUserInput: true,
+      tabStopWidth: 4,
       theme: {
-        background: "#1e1e1e",
-        foreground: "#cccccc",
-        cursor: "#aeafad",
-        cursorAccent: "#1e1e1e",
-        selectionBackground: "#ffffff40",
-        black: "#000000",
-        red: "#cd3131",
-        green: "#0dbc79",
-        yellow: "#e5e510",
-        blue: "#2472c8",
-        magenta: "#bc3fbc",
-        cyan: "#11a8cd",
-        white: "#e5e5e5",
-        brightBlack: "#666666",
-        brightRed: "#f14c4c",
-        brightGreen: "#23d18b",
-        brightYellow: "#f5f543",
-        brightBlue: "#3b8eea",
-        brightMagenta: "#d670d6",
-        brightCyan: "#29b8db",
-        brightWhite: "#e5e5e5",
+        background: "#0f1117",
+        foreground: "#e6edf3",
+        cursor: "#f0f6fc",
+        cursorAccent: "#0f1117",
+        selectionBackground: "#264f78",
+        selectionInactiveBackground: "#1b2533",
+        black: "#0f1117",
+        red: "#ff7b72",
+        green: "#3fb950",
+        yellow: "#d29922",
+        blue: "#58a6ff",
+        magenta: "#bc8cff",
+        cyan: "#39c5cf",
+        white: "#d0d7de",
+        brightBlack: "#6e7681",
+        brightRed: "#ffa198",
+        brightGreen: "#56d364",
+        brightYellow: "#e3b341",
+        brightBlue: "#79c0ff",
+        brightMagenta: "#d2a8ff",
+        brightCyan: "#56d4dd",
+        brightWhite: "#f0f6fc",
       },
       allowProposedApi: true,
     });
@@ -118,11 +128,11 @@ export default function Terminal({ id, path, isVisible }: TerminalProps) {
         }
       }, 50);
     }
-  }, [terminalHeight, isVisible, id]);
+  }, [terminalHeight, isVisible, isExpanded, id]);
 
   return (
     <div 
-      className={`w-full h-full bg-[#1e1e1e] pl-4 pt-2 ${isVisible ? "block" : "hidden"}`}
+      className={`terminal-shell w-full h-full overflow-hidden ${isVisible ? "block" : "hidden"}`}
       ref={terminalRef}
     />
   );
