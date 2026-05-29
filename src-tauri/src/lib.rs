@@ -18,8 +18,19 @@ fn save_file(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn copy_file(source_path: String, target_path: String) -> Result<(), String> {
+    fs::copy(&source_path, &target_path).map_err(|e| format!("复制文件失败: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn is_directory(path: String) -> bool {
     fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
+}
+
+#[tauri::command]
+fn path_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
 }
 
 #[derive(serde::Serialize)]
@@ -277,8 +288,10 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
     tauri::generate_handler![
         read_file,
         save_file,
+        copy_file,
         list_dir,
         is_directory,
+        path_exists,
         create_file,
         create_dir,
         open_terminal,

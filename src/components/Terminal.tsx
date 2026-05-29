@@ -14,13 +14,13 @@ interface TerminalProps {
 }
 
 export default function Terminal({ id, path, isVisible, isExpanded }: TerminalProps) {
-  const terminalRef = useRef<HTMLDivElement>(null);
+  const terminalViewportRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const { terminalHeight } = useEditorStore();
 
   useEffect(() => {
-    if (!terminalRef.current) return;
+    if (!terminalViewportRef.current) return;
 
     const term = new XTerm({
       cursorBlink: true,
@@ -64,7 +64,7 @@ export default function Terminal({ id, path, isVisible, isExpanded }: TerminalPr
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.open(terminalRef.current);
+    term.open(terminalViewportRef.current);
     
     // Initial fit
     setTimeout(() => {
@@ -148,9 +148,11 @@ export default function Terminal({ id, path, isVisible, isExpanded }: TerminalPr
   }, [terminalHeight, isVisible, isExpanded, id]);
 
   return (
-    <div 
-      className={`terminal-shell w-full h-full overflow-hidden ${isVisible ? "block" : "hidden"}`}
-      ref={terminalRef}
-    />
+    <div className={`terminal-shell w-full h-full overflow-hidden ${isVisible ? "block" : "hidden"}`}>
+      <div
+        ref={terminalViewportRef}
+        className="terminal-shell__viewport h-full w-full overflow-hidden"
+      />
+    </div>
   );
 }

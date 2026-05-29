@@ -18,6 +18,7 @@ export interface AppSettings {
   rootPaths: string[];
   defaultFolders: DefaultFolder[];
   expandedFolders: string[];
+  pinnedFolders: string[];
   rightSidebarIconOrder?: string[];
 }
 
@@ -56,6 +57,7 @@ export const defaultSettings: AppSettings = {
   rootPaths: [],
   defaultFolders: [],
   expandedFolders: [],
+  pinnedFolders: [],
   rightSidebarIconOrder: [...DEFAULT_RIGHT_SIDEBAR_ICON_ORDER],
 };
 
@@ -116,6 +118,9 @@ export async function loadSettings(): Promise<AppSettings> {
 
   const savedExpandedFolders = await store.get<string[]>('expandedFolders');
   if (Array.isArray(savedExpandedFolders)) settings.expandedFolders = savedExpandedFolders;
+
+  const savedPinnedFolders = await store.get<string[]>('pinnedFolders');
+  if (Array.isArray(savedPinnedFolders)) settings.pinnedFolders = savedPinnedFolders;
 
   const savedIconOrder = await store.get<string[]>('rightSidebarIconOrder');
   settings.rightSidebarIconOrder = sanitizeRightSidebarIconOrder(savedIconOrder);

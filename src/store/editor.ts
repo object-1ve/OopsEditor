@@ -3,6 +3,18 @@ import type { FileTab } from "../types";
 import { saveSetting, loadSettings } from "../utils/settings";
 import { appDataDir } from "@tauri-apps/api/path";
 
+const normalizePath = (path: string) => {
+  if (!path) return "";
+  let normalized = path.replace(/\\/g, "/").replace(/\/$/, "");
+  if (/^[a-z]:/i.test(normalized)) {
+    normalized = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+  return normalized;
+};
+
+const normalizeUniquePaths = (paths: string[]) =>
+  Array.from(new Set(paths.map(normalizePath).filter(Boolean)));
+
 export interface TerminalInstance {
   id: string;
   name: string;
@@ -44,6 +56,7 @@ interface EditorState {
   } | null;
   notification: { message: string; type: "info" | "error" | "success" } | null;
   expandedFolders: string[];
+  pinnedFolders: string[];
   markdownOutlineTarget: MarkdownOutlineTarget | null;
   rightSidebarIconOrder: string[];
 
@@ -57,12 +70,17 @@ interface EditorState {
   setActiveTab: (id: string) => void;
   updateContent: (id: string, content: string) => void;
   markClean: (id: string) => void;
+  replaceTabFileLocation: (id: string, nextPath: string, nextName?: string) => void;
   addRootPath: (path: string) => void;
   removeRootPath: (path: string) => void;
   setDefaultFolders: (folders: DefaultFolder[]) => void;
   updateDefaultFolder: (id: string, path: string, name?: string) => void;
   addDefaultFolder: (name: string, path: string) => void;
   removeDefaultFolder: (id: string) => void;
+  pinFolder: (path: string) => void;
+  unpinFolder: (path: string) => void;
+  rebasePinnedFolderPaths: (oldPath: string, newPath: string) => void;
+  removePinnedFoldersUnder: (path: string) => void;
   toggleLeftSidebar: () => void;
   toggleRightSidebar: () => void;
   toggleTerminal: () => void;
@@ -106,6 +124,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   modal: null,
   notification: null,
   expandedFolders: [],
+  pinnedFolders: [],
   markdownOutlineTarget: null,
   rightSidebarIconOrder: ["info", "outline", "help"],
 
@@ -142,6 +161,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       activeTabId: settings.activeTabId,
       rootPaths: settings.rootPaths || [],
       expandedFolders: settings.expandedFolders || [],
+      pinnedFolders: normalizeUniquePaths(settings.pinnedFolders || []),
       openFiles: (settings.tabs || []).map(t => t.path),
       rightSidebarIconOrder: settings.rightSidebarIconOrder || ["info", "outline", "help"],
     });
@@ -243,6 +263,35 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return { tabs: newTabs };
     }),
 
+  replaceTabFileLocation: (id: string, nextPath: string, nextName?: string) =>
+    set((state) => {
+      const nextTabs = state.tabs.map((tab) => {
+        if (tab.id !== id) {
+          return tab;
+        }
+
+        return {
+          ...tab,
+          id: nextPath,
+          path: nextPath,
+          name: nextName ?? nextPath.split(/[/\\]/).pop() ?? tab.name,
+          isDirty: false,
+        };
+      });
+
+      const nextActiveTabId = state.activeTabId === id ? nextPath : state.activeTabId;
+      const nextOpenFiles = nextTabs.map((tab) => tab.path);
+
+      saveSetting('tabs', nextTabs);
+      saveSetting('activeTabId', nextActiveTabId);
+
+      return {
+        tabs: nextTabs,
+        activeTabId: nextActiveTabId,
+        openFiles: nextOpenFiles,
+      };
+    }),
+
   addRootPath: (path: string) =>
     set((state) => {
       const newRootPaths = state.rootPaths.includes(path)
@@ -289,6 +338,58 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const folders = get().defaultFolders.filter(f => f.id !== id);
     set({ defaultFolders: folders });
     saveSetting('defaultFolders', folders);
+  },
+
+  pinFolder: (path: string) => {
+    const normalizedPath = normalizePath(path);
+    if (!normalizedPath) return;
+
+    const pinnedFolders = get().pinnedFolders;
+    if (pinnedFolders.includes(normalizedPath)) return;
+
+    const nextPinnedFolders = normalizeUniquePaths([...pinnedFolders, normalizedPath]);
+    set({ pinnedFolders: nextPinnedFolders });
+    saveSetting('pinnedFolders', nextPinnedFolders);
+  },
+
+  unpinFolder: (path: string) => {
+    const normalizedPath = normalizePath(path);
+    const nextPinnedFolders = get().pinnedFolders.filter((item) => item !== normalizedPath);
+    set({ pinnedFolders: nextPinnedFolders });
+    saveSetting('pinnedFolders', nextPinnedFolders);
+  },
+
+  rebasePinnedFolderPaths: (oldPath: string, newPath: string) => {
+    const normalizedOldPath = normalizePath(oldPath);
+    const normalizedNewPath = normalizePath(newPath);
+    if (!normalizedOldPath || !normalizedNewPath) return;
+
+    const nextPinnedFolders = normalizeUniquePaths(get().pinnedFolders.map((item) => {
+      if (item === normalizedOldPath) {
+        return normalizedNewPath;
+      }
+
+      if (item.startsWith(`${normalizedOldPath}/`)) {
+        return `${normalizedNewPath}${item.slice(normalizedOldPath.length)}`;
+      }
+
+      return item;
+    }));
+
+    set({ pinnedFolders: nextPinnedFolders });
+    saveSetting('pinnedFolders', nextPinnedFolders);
+  },
+
+  removePinnedFoldersUnder: (path: string) => {
+    const normalizedPath = normalizePath(path);
+    if (!normalizedPath) return;
+
+    const nextPinnedFolders = get().pinnedFolders.filter(
+      (item) => item !== normalizedPath && !item.startsWith(`${normalizedPath}/`)
+    );
+
+    set({ pinnedFolders: nextPinnedFolders });
+    saveSetting('pinnedFolders', nextPinnedFolders);
   },
 
   toggleLeftSidebar: () => {

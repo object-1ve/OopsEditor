@@ -4,8 +4,10 @@ description = "Allows all custom commands in the main crate"
 commands.allow = [
   "read_file",
   "save_file",
+  "copy_file",
   "list_dir",
   "is_directory",
+  "path_exists",
   "create_file",
   "create_dir",
   "open_terminal",

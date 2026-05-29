@@ -1,8 +1,25 @@
-import { File, X, ChevronLeft, ChevronRight, CopyX } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, CopyX, Save } from "lucide-react";
 import { useEditorStore } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
 import ContextMenu from "./ContextMenu";
+import MaterialFileIcon from "./MaterialFileIcon";
+
+const buildChildPath = (basePath: string, fileName: string) => {
+  if (/[\\/]$/.test(basePath)) {
+    return `${basePath}${fileName}`;
+  }
+  const separator = basePath.includes("\\") ? "\\" : "/";
+  return `${basePath}${separator}${fileName}`;
+};
+
+const canSaveToDefaultFolder = (language: string) => {
+  if (language === "pdf") {
+    return false;
+  }
+
+  return true;
+};
 
 export default function Toolbar() {
   const { 
@@ -10,12 +27,11 @@ export default function Toolbar() {
     activeTabId, 
     setActiveTab, 
     closeTab, 
-    closeOtherTabs,
-    closeTabsToLeft,
-    closeTabsToRight,
+    closeTabs,
     openTab, 
     showNotification, 
     defaultFolders,
+    replaceTabFileLocation,
     showModal 
   } = useEditorStore();
 
@@ -45,67 +61,160 @@ export default function Toolbar() {
     if (!contextMenu) return;
     const currentTabId = contextMenu.tabId;
     const otherTabs = tabs.filter(t => t.id !== currentTabId);
+    const cleanTabs = otherTabs.filter(t => !t.isDirty);
     const dirtyTabs = otherTabs.filter(t => t.isDirty);
+
+    if (cleanTabs.length > 0) {
+      closeTabs(cleanTabs.map((tab) => tab.id));
+    }
 
     if (dirtyTabs.length > 0) {
       showModal({
         title: "确认关闭其他文件",
         message: `有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
         kind: "warning",
-        onConfirm: () => closeOtherTabs(currentTabId),
+        onConfirm: () => closeTabs(dirtyTabs.map((tab) => tab.id)),
       });
-    } else {
-      closeOtherTabs(currentTabId);
     }
     setContextMenu(null);
-  }, [contextMenu, tabs, closeOtherTabs, showModal]);
+  }, [contextMenu, tabs, closeTabs, showModal]);
 
   const handleCloseLeft = useCallback(() => {
     if (!contextMenu) return;
     const currentTabId = contextMenu.tabId;
     const idx = tabs.findIndex(t => t.id === currentTabId);
     const leftTabs = tabs.slice(0, idx);
+    const cleanTabs = leftTabs.filter(t => !t.isDirty);
     const dirtyTabs = leftTabs.filter(t => t.isDirty);
+
+    if (cleanTabs.length > 0) {
+      closeTabs(cleanTabs.map((tab) => tab.id));
+    }
 
     if (dirtyTabs.length > 0) {
       showModal({
         title: "确认关闭左侧文件",
         message: `左侧有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
         kind: "warning",
-        onConfirm: () => closeTabsToLeft(currentTabId),
+        onConfirm: () => closeTabs(dirtyTabs.map((tab) => tab.id)),
       });
-    } else {
-      closeTabsToLeft(currentTabId);
     }
     setContextMenu(null);
-  }, [contextMenu, tabs, closeTabsToLeft, showModal]);
+  }, [contextMenu, tabs, closeTabs, showModal]);
 
   const handleCloseRight = useCallback(() => {
     if (!contextMenu) return;
     const currentTabId = contextMenu.tabId;
     const idx = tabs.findIndex(t => t.id === currentTabId);
     const rightTabs = tabs.slice(idx + 1);
+    const cleanTabs = rightTabs.filter(t => !t.isDirty);
     const dirtyTabs = rightTabs.filter(t => t.isDirty);
+
+    if (cleanTabs.length > 0) {
+      closeTabs(cleanTabs.map((tab) => tab.id));
+    }
 
     if (dirtyTabs.length > 0) {
       showModal({
         title: "确认关闭右侧文件",
         message: `右侧有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
         kind: "warning",
-        onConfirm: () => closeTabsToRight(currentTabId),
+        onConfirm: () => closeTabs(dirtyTabs.map((tab) => tab.id)),
       });
-    } else {
-      closeTabsToRight(currentTabId);
     }
     setContextMenu(null);
-  }, [contextMenu, tabs, closeTabsToRight, showModal]);
+  }, [contextMenu, tabs, closeTabs, showModal]);
+
+  const handleSaveToDefaultFolder = useCallback(async (defaultFolderPath: string, defaultFolderName: string) => {
+    if (!contextMenu) return;
+
+    const tab = tabs.find((item) => item.id === contextMenu.tabId);
+    if (!tab) return;
+
+    if (!canSaveToDefaultFolder(tab.language)) {
+      showNotification("PDF 暂不支持保存到默认文件夹", "info");
+      setContextMenu(null);
+      return;
+    }
+
+    const targetPath = buildChildPath(defaultFolderPath, tab.name);
+    const targetTab = tabs.find((item) => item.path === targetPath && item.id !== tab.id);
+    if (targetTab) {
+      showNotification("目标文件已在其他标签页中打开，请先关闭该标签页", "error");
+      setContextMenu(null);
+      return;
+    }
+
+    const persistToTarget = async () => {
+      if (tab.language === "image") {
+        await invoke("copy_file", { sourcePath: tab.path, targetPath });
+      } else {
+        await invoke("save_file", { path: targetPath, content: tab.content });
+      }
+      replaceTabFileLocation(tab.id, targetPath, tab.name);
+      showNotification(`已保存到默认文件夹: ${defaultFolderName}`, "success");
+      window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: defaultFolderPath } }));
+      setContextMenu(null);
+    };
+
+    if (targetPath === tab.path) {
+      await persistToTarget();
+      return;
+    }
+
+    try {
+      const exists = await invoke<boolean>("path_exists", { path: targetPath });
+      if (exists) {
+        showModal({
+          title: "覆盖确认",
+          message: `默认文件夹中已存在 "${tab.name}"，继续将覆盖该文件。确定要保存吗？`,
+          kind: "warning",
+          onConfirm: () => {
+            void persistToTarget();
+          },
+        });
+        setContextMenu(null);
+        return;
+      }
+
+      await persistToTarget();
+    } catch (err) {
+      console.error("Failed to save to default folder:", err);
+      showNotification(`保存到默认文件夹失败: ${err}`, "error");
+      setContextMenu(null);
+    }
+  }, [contextMenu, tabs, replaceTabFileLocation, showNotification, showModal]);
 
   const contextMenuItems = useMemo(() => {
     if (!contextMenu) return [];
     const tab = tabs.find(t => t.id === contextMenu.tabId);
     if (!tab) return [];
 
+    const saveToDefaultFolderItems = !canSaveToDefaultFolder(tab.language)
+      ? []
+      : defaultFolders.length > 0
+        ? defaultFolders.map((folder) => ({
+            label: defaultFolders.length === 1 ? "保存到默认文件夹" : `保存到 ${folder.name}`,
+            icon: <Save size={14} />,
+            onClick: () => {
+              void handleSaveToDefaultFolder(folder.path, folder.name);
+            },
+            separatorBefore: false,
+          }))
+        : [
+            {
+              label: "保存到默认文件夹",
+              icon: <Save size={14} />,
+              onClick: () => showNotification("请先在侧边栏添加默认文件夹", "info"),
+              separatorBefore: false,
+            },
+          ];
+
     return [
+      ...saveToDefaultFolderItems.flatMap((item) => [
+        ...(item.separatorBefore ? [{ separator: true, label: "", onClick: () => {} }] : []),
+        { label: item.label, icon: item.icon, onClick: item.onClick },
+      ]),
       { 
         label: "关闭标签页", 
         icon: <X size={14} />, 
@@ -128,7 +237,7 @@ export default function Toolbar() {
         onClick: handleCloseRight 
       },
     ];
-  }, [contextMenu, tabs, handleCloseTab, handleCloseOthers, handleCloseLeft, handleCloseRight]);
+  }, [contextMenu, tabs, defaultFolders, handleCloseTab, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, showNotification]);
 
   const handleDoubleClick = useCallback(async (e: React.MouseEvent) => {
     // 只有在标签栏空白处双击才触发（或者在整个工具栏双击，但要避开按钮）
@@ -197,7 +306,11 @@ export default function Toolbar() {
                 <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-accent to-accent-bright rounded-full" />
               )}
 
-              <File size={14} className="shrink-0 opacity-60" />
+              <MaterialFileIcon
+                name={tab.name}
+                path={tab.path}
+                size={16}
+              />
               <span className="truncate max-w-28">{tab.name}</span>
               {tab.isDirty && <span className="text-accent-warm text-xs shrink-0">&#9679;</span>}
               <button
