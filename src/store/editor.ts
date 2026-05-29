@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import type { FileTab } from "../types";
-import { saveSetting, loadSettings } from "../utils/settings";
+import {
+  DEFAULT_MAX_OPEN_TABS,
+  loadSettings,
+  sanitizeMaxOpenTabs,
+  saveSetting,
+} from "../utils/settings";
+import { base64ToHexView, parseHexView } from "../utils/hexView";
 import { appDataDir } from "@tauri-apps/api/path";
 
 const normalizePath = (path: string) => {
@@ -14,6 +20,59 @@ const normalizePath = (path: string) => {
 
 const normalizeUniquePaths = (paths: string[]) =>
   Array.from(new Set(paths.map(normalizePath).filter(Boolean)));
+
+function enforceTabLimit(
+  tabs: FileTab[],
+  activeTabId: string | null,
+  maxOpenTabs: number,
+) {
+  const sanitizedMaxOpenTabs = sanitizeMaxOpenTabs(maxOpenTabs);
+  const nextTabs = [...tabs];
+  const closedTabs: FileTab[] = [];
+
+  while (nextTabs.length > sanitizedMaxOpenTabs) {
+    const firstCleanTabIndex = nextTabs.findIndex((tab) => !tab.isDirty);
+    if (firstCleanTabIndex === -1) {
+      break;
+    }
+
+    const [closedTab] = nextTabs.splice(firstCleanTabIndex, 1);
+    if (closedTab) {
+      closedTabs.push(closedTab);
+    }
+  }
+
+  let nextActiveTabId = activeTabId;
+  if (nextActiveTabId && !nextTabs.some((tab) => tab.id === nextActiveTabId)) {
+    nextActiveTabId = nextTabs[nextTabs.length - 1]?.id ?? null;
+  }
+
+  return {
+    tabs: nextTabs,
+    activeTabId: nextActiveTabId,
+    openFiles: nextTabs.map((tab) => tab.path),
+    closedTabs,
+  };
+}
+
+function formatAutoClosedTabsMessage(closedTabs: FileTab[]) {
+  if (closedTabs.length === 0) {
+    return "";
+  }
+
+  const previewNames = closedTabs
+    .slice(0, 2)
+    .map((tab) => tab.name)
+    .join("、");
+
+  if (closedTabs.length === 1) {
+    return `已自动关闭未修改标签：${previewNames}`;
+  }
+
+  const remainingCount = closedTabs.length - 2;
+  const suffix = remainingCount > 0 ? ` 等 ${closedTabs.length} 个标签` : ` 共 ${closedTabs.length} 个标签`;
+  return `已自动关闭未修改标签：${previewNames}${suffix}`;
+}
 
 export interface TerminalInstance {
   id: string;
@@ -45,6 +104,9 @@ interface EditorState {
   leftSidebarWidth: number;
   rightSidebarWidth: number;
   terminalHeight: number;
+  editorWordWrap: boolean;
+  maxOpenTabs: number;
+  isSettingsOpen: boolean;
   terminals: TerminalInstance[];
   activeTerminalId: string | null;
   modal: {
@@ -88,6 +150,10 @@ interface EditorState {
   setLeftSidebarWidth: (width: number) => void;
   setRightSidebarWidth: (width: number) => void;
   setTerminalHeight: (height: number) => void;
+  setEditorWordWrap: (enabled: boolean) => void;
+  setMaxOpenTabs: (value: number) => void;
+  openSettings: () => void;
+  closeSettings: () => void;
   addTerminal: (path?: string | null) => void;
   removeTerminal: (id: string) => void;
   closeTerminals: (ids: string[]) => void;
@@ -102,6 +168,7 @@ interface EditorState {
   togglePreviewMode: (id: string) => void;
   toggleFolderExpanded: (path: string) => void;
   setFolderExpanded: (path: string, expanded: boolean) => void;
+  collapseAllFolders: () => void;
   navigateToMarkdownHeading: (target: MarkdownOutlineTarget) => void;
   clearMarkdownOutlineTarget: () => void;
   setRightSidebarIconOrder: (order: string[]) => void;
@@ -119,6 +186,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   leftSidebarWidth: 220,
   rightSidebarWidth: 40,
   terminalHeight: 300,
+  editorWordWrap: false,
+  maxOpenTabs: DEFAULT_MAX_OPEN_TABS,
+  isSettingsOpen: false,
   terminals: [],
   activeTerminalId: null,
   modal: null,
@@ -130,6 +200,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   init: async () => {
     const settings = await loadSettings();
+    const normalizedTabs = (settings.tabs || []).map((tab) => {
+      if (tab.viewMode !== "base64") {
+        return tab;
+      }
+
+      const parsedHex = parseHexView(tab.content);
+      const nextContent = parsedHex.error ? base64ToHexView(tab.content) : tab.content;
+
+      return {
+        ...tab,
+        content: nextContent,
+        isReadOnly: false,
+      };
+    });
 
     let defaultFolders = settings.defaultFolders;
     if (!defaultFolders || defaultFolders.length === 0) {
@@ -149,6 +233,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
     }
 
+    const limitedTabsState = enforceTabLimit(
+      normalizedTabs,
+      settings.activeTabId,
+      settings.maxOpenTabs,
+    );
+
     set({
       isLeftSidebarCollapsed: settings.isLeftSidebarCollapsed,
       isRightSidebarCollapsed: settings.isRightSidebarCollapsed,
@@ -156,15 +246,29 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       leftSidebarWidth: settings.leftSidebarWidth,
       rightSidebarWidth: settings.rightSidebarWidth,
       terminalHeight: settings.terminalHeight || 300,
+      editorWordWrap: settings.editorWordWrap,
+      maxOpenTabs: settings.maxOpenTabs,
       defaultFolders,
-      tabs: settings.tabs || [],
-      activeTabId: settings.activeTabId,
+      tabs: limitedTabsState.tabs,
+      activeTabId: limitedTabsState.activeTabId,
       rootPaths: settings.rootPaths || [],
       expandedFolders: settings.expandedFolders || [],
       pinnedFolders: normalizeUniquePaths(settings.pinnedFolders || []),
-      openFiles: (settings.tabs || []).map(t => t.path),
+      openFiles: limitedTabsState.openFiles,
       rightSidebarIconOrder: settings.rightSidebarIconOrder || ["info", "outline", "help"],
     });
+
+    if (
+      limitedTabsState.tabs.length !== normalizedTabs.length ||
+      limitedTabsState.activeTabId !== settings.activeTabId
+    ) {
+      saveSetting("tabs", limitedTabsState.tabs);
+      saveSetting("activeTabId", limitedTabsState.activeTabId);
+    }
+
+    if (limitedTabsState.closedTabs.length > 0) {
+      get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");
+    }
   },
 
   openTab: (tab: FileTab) =>
@@ -174,21 +278,29 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         saveSetting('activeTabId', tab.id);
         return { activeTabId: tab.id };
       }
-      const newTabs = [...state.tabs, tab];
-      const newOpenFiles = [...state.openFiles, tab.path];
-      saveSetting('tabs', newTabs);
-      saveSetting('activeTabId', tab.id);
+      const limitedTabsState = enforceTabLimit(
+        [...state.tabs, tab],
+        tab.id,
+        state.maxOpenTabs,
+      );
+      saveSetting('tabs', limitedTabsState.tabs);
+      saveSetting('activeTabId', limitedTabsState.activeTabId);
+      if (limitedTabsState.closedTabs.length > 0) {
+        queueMicrotask(() => {
+          get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");
+        });
+      }
       return {
-        tabs: newTabs,
-        activeTabId: tab.id,
-        openFiles: newOpenFiles,
+        tabs: limitedTabsState.tabs,
+        activeTabId: limitedTabsState.activeTabId,
+        openFiles: limitedTabsState.openFiles,
       };
     }),
 
   closeTab: (id: string) =>
     set((state) => {
       const tabs = state.tabs.filter((t) => t.id !== id);
-      const openFiles = state.openFiles.filter((_path, i) => state.tabs[i]?.id !== id);
+      const openFiles = tabs.map((tab) => tab.path);
       let activeTabId = state.activeTabId;
       if (activeTabId === id) {
         const idx = state.tabs.findIndex((t) => t.id === id);
@@ -202,7 +314,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   closeTabs: (ids: string[]) =>
     set((state) => {
       const tabs = state.tabs.filter((t) => !ids.includes(t.id));
-      const openFiles = state.openFiles.filter((_path, i) => !ids.includes(state.tabs[i]?.id));
+      const openFiles = tabs.map((tab) => tab.path);
       let activeTabId = state.activeTabId;
       if (activeTabId && ids.includes(activeTabId)) {
         activeTabId = tabs[tabs.length - 1]?.id ?? null;
@@ -272,7 +384,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
         return {
           ...tab,
-          id: nextPath,
+          id: tab.viewMode === "base64" ? `${nextPath}#base64` : nextPath,
           path: nextPath,
           name: nextName ?? nextPath.split(/[/\\]/).pop() ?? tab.name,
           isDirty: false,
@@ -430,6 +542,33 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ terminalHeight: height });
     saveSetting('terminalHeight', height);
   },
+  setEditorWordWrap: (enabled: boolean) => {
+    set({ editorWordWrap: enabled });
+    saveSetting('editorWordWrap', enabled);
+  },
+  setMaxOpenTabs: (value: number) => {
+    const nextMaxOpenTabs = sanitizeMaxOpenTabs(value);
+    const limitedTabsState = enforceTabLimit(
+      get().tabs,
+      get().activeTabId,
+      nextMaxOpenTabs,
+    );
+
+    set({
+      maxOpenTabs: nextMaxOpenTabs,
+      tabs: limitedTabsState.tabs,
+      activeTabId: limitedTabsState.activeTabId,
+      openFiles: limitedTabsState.openFiles,
+    });
+    saveSetting('maxOpenTabs', nextMaxOpenTabs);
+    saveSetting('tabs', limitedTabsState.tabs);
+    saveSetting('activeTabId', limitedTabsState.activeTabId);
+    if (limitedTabsState.closedTabs.length > 0) {
+      get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");
+    }
+  },
+  openSettings: () => set({ isSettingsOpen: true }),
+  closeSettings: () => set({ isSettingsOpen: false }),
 
   addTerminal: (path: string | null = null) => {
     const id = crypto.randomUUID();
@@ -549,5 +688,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       : expandedFolders.filter(p => p !== path);
     set({ expandedFolders: newExpanded });
     saveSetting('expandedFolders', newExpanded);
+  },
+  collapseAllFolders: () => {
+    set({ expandedFolders: [] });
+    saveSetting('expandedFolders', []);
   },
 }));

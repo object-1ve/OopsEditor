@@ -23,6 +23,12 @@ import { useEditorStore } from "../store/editor";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { isPreviewOnlyLanguage } from "../types";
+import {
+  bytesToAsciiView,
+  getHexOffsetLabel,
+  hexViewToBase64,
+  parseHexView,
+} from "../utils/hexView";
 import ImagePreview from "./ImagePreview";
 import ContextMenu from "./ContextMenu";
 import {
@@ -95,6 +101,28 @@ const TERRACOTTA_THEME = {
   },
 };
 
+function applyTerracottaTheme(monaco: Parameters<OnMount>[1]) {
+  monaco.editor.defineTheme("terracotta-dark", TERRACOTTA_THEME);
+  monaco.editor.setTheme("terracotta-dark");
+}
+
+function decodeHexPreview(content: string) {
+  const parsed = parseHexView(content);
+  if (parsed.error || !parsed.bytes) {
+    return {
+      text: "",
+      byteLength: 0,
+      error: parsed.error ?? "当前十六进制内容无法解析。",
+    };
+  }
+
+  return {
+    text: bytesToAsciiView(parsed.bytes),
+    byteLength: parsed.bytes.length,
+    error: null as string | null,
+  };
+}
+
 export default function Editor() {
   const {
     tabs,
@@ -104,6 +132,7 @@ export default function Editor() {
     showNotification,
     markdownOutlineTarget,
     clearMarkdownOutlineTarget,
+    editorWordWrap,
   } = useEditorStore();
   const editorRef = useRef<Parameters<OnMount>[0]>(null);
   const markdownPreviewRef = useRef<HTMLDivElement>(null);
@@ -120,6 +149,12 @@ export default function Editor() {
     y: number;
     hasSelection: boolean;
   } | null>(null);
+  const base64Preview = useMemo(() => {
+    if (activeTab?.viewMode !== "base64") {
+      return null;
+    }
+    return decodeHexPreview(activeTab.content);
+  }, [activeTab?.content, activeTab?.viewMode]);
 
   const markdownComponents = useMemo<Components | undefined>(() => {
     if (activeTab?.language !== "markdown") {
@@ -303,8 +338,13 @@ export default function Editor() {
         const state = useEditorStore.getState();
         const id = state.activeTabId;
         if (id) {
-          state.markClean(id);
-          saveToBackend(id);
+          void saveToBackend(id)
+            .then(() => {
+              state.markClean(id);
+            })
+            .catch((err) => {
+              state.showNotification(`保存失败: ${String(err)}`, "error");
+            });
         }
       },
     });
@@ -348,9 +388,14 @@ export default function Editor() {
       return;
     }
 
-    state.markClean(id);
-    void saveToBackend(id);
-    showNotification("文件已保存", "success");
+    void saveToBackend(id)
+      .then(() => {
+        state.markClean(id);
+        showNotification("文件已保存", "success");
+      })
+      .catch((err) => {
+        showNotification(`保存失败: ${String(err)}`, "error");
+      });
   }, [showNotification]);
 
   const getEditorSelectionText = useCallback(() => {
@@ -415,6 +460,7 @@ export default function Editor() {
   }, [showNotification]);
 
   const editorContextMenuItems = useMemo(() => {
+    const isReadOnlyTab = Boolean(activeTab?.isReadOnly);
     const items = [
       ...(activeTab?.language === "markdown"
         ? [
@@ -426,28 +472,36 @@ export default function Editor() {
             { separator: true, label: "", onClick: () => {} },
           ]
         : []),
-      {
-        label: "撤销",
-        icon: <Undo2 size={14} />,
-        onClick: handleEditorUndo,
-      },
-      {
-        label: "重做",
-        icon: <Redo2 size={14} />,
-        onClick: handleEditorRedo,
-      },
-      { separator: true, label: "", onClick: () => {} },
+      ...(!isReadOnlyTab
+        ? [
+            {
+              label: "撤销",
+              icon: <Undo2 size={14} />,
+              onClick: handleEditorUndo,
+            },
+            {
+              label: "重做",
+              icon: <Redo2 size={14} />,
+              onClick: handleEditorRedo,
+            },
+            { separator: true, label: "", onClick: () => {} },
+          ]
+        : []),
     ];
 
     if (editorContextMenu?.hasSelection) {
       items.push(
-        {
-          label: "剪切",
-          icon: <Scissors size={14} />,
-          onClick: () => {
-            void handleEditorCut();
-          },
-        },
+        ...(!isReadOnlyTab
+          ? [
+              {
+                label: "剪切",
+                icon: <Scissors size={14} />,
+                onClick: () => {
+                  void handleEditorCut();
+                },
+              },
+            ]
+          : []),
         {
           label: "复制",
           icon: <Copy size={14} />,
@@ -458,24 +512,27 @@ export default function Editor() {
       );
     }
 
-    items.push(
-      {
-        label: "粘贴",
-        icon: <Clipboard size={14} />,
-        onClick: () => {
-          void handleEditorPaste();
+    if (!isReadOnlyTab) {
+      items.push(
+        {
+          label: "粘贴",
+          icon: <Clipboard size={14} />,
+          onClick: () => {
+            void handleEditorPaste();
+          },
         },
-      },
-      { separator: true, label: "", onClick: () => {} },
-      {
-        label: "保存文件",
-        icon: <Save size={14} />,
-        onClick: handleEditorSave,
-      },
-    );
+        { separator: true, label: "", onClick: () => {} },
+        {
+          label: "保存文件",
+          icon: <Save size={14} />,
+          onClick: handleEditorSave,
+        },
+      );
+    }
 
     return items;
   }, [
+    activeTab?.isReadOnly,
     activeTab?.language,
     activeTabId,
     editorContextMenu?.hasSelection,
@@ -659,6 +716,110 @@ export default function Editor() {
     );
   }
 
+  if (activeTab.viewMode === "base64") {
+    return (
+      <div className="flex h-full bg-primary">
+        <div className="flex min-w-0 flex-1 flex-col border-r border-border">
+          <div className="flex items-center justify-between border-b border-border bg-surface/40 px-3 py-2 text-xs text-text-secondary">
+            <span className="font-medium uppercase tracking-wider text-text">Hex</span>
+            <span>每行 16 字节，4 字节分组</span>
+          </div>
+          <div className="min-h-0 flex-1">
+            <MonacoEditor
+              key={`${activeTab.id}:base64`}
+              theme="terracotta-dark"
+              language={activeTab.language}
+              value={activeTab.content}
+              onChange={handleChange}
+              onMount={(editor, monaco) => {
+                applyTerracottaTheme(monaco);
+                handleMount(editor, monaco);
+              }}
+              options={
+                {
+                  fontSize: 14,
+                  fontFamily: "var(--font-mono)",
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  lineNumbers: getHexOffsetLabel,
+                  lineNumbersMinChars: 4,
+                  renderLineHighlight: "line",
+                  cursorBlinking: "smooth",
+                  cursorSmoothCaretAnimation: "on",
+                  cursorWidth: 2,
+                  smoothScrolling: true,
+                  padding: { top: 12 },
+                  bracketPairColorization: { enabled: true },
+                  automaticLayout: true,
+                  contextmenu: false,
+                  tabSize: 2,
+                  wordWrap: "off",
+                  readOnly: false,
+                } satisfies EditorProps["options"]
+              }
+            />
+          </div>
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-center justify-between border-b border-border bg-surface/20 px-3 py-2 text-xs text-text-secondary">
+            <span className="font-medium uppercase tracking-wider text-text">Ascii</span>
+            <span>
+              {base64Preview?.error
+                ? "解析失败"
+                : `${base64Preview?.byteLength.toLocaleString() ?? 0} B`}
+            </span>
+          </div>
+          <div className="min-h-0 flex-1">
+            {base64Preview?.error ? (
+              <div className="flex h-full items-center justify-center bg-deepest p-6">
+                <div className="max-w-md rounded-xl border border-error/30 bg-error/5 px-4 py-3 text-sm leading-relaxed text-error">
+                  {base64Preview.error}
+                </div>
+              </div>
+            ) : (
+              <MonacoEditor
+                key={`${activeTab.id}:decoded`}
+                theme="terracotta-dark"
+                language="plaintext"
+                value={base64Preview?.text ?? ""}
+                onMount={(_editor, monaco) => {
+                  applyTerracottaTheme(monaco);
+                }}
+                options={
+                  {
+                    fontSize: 14,
+                    fontFamily: "var(--font-mono)",
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    lineNumbers: "off",
+                    renderLineHighlight: "none",
+                    smoothScrolling: true,
+                    padding: { top: 12 },
+                    automaticLayout: true,
+                    contextmenu: false,
+                    tabSize: 2,
+                    wordWrap: "off",
+                    readOnly: true,
+                  } satisfies EditorProps["options"]
+                }
+              />
+            )}
+          </div>
+        </div>
+
+        {editorContextMenu && (
+          <ContextMenu
+            x={editorContextMenu.x}
+            y={editorContextMenu.y}
+            items={editorContextMenuItems}
+            onClose={() => setEditorContextMenu(null)}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <>
       <MonacoEditor
@@ -668,8 +829,7 @@ export default function Editor() {
         value={activeTab.content}
         onChange={handleChange}
         onMount={(editor, monaco) => {
-          monaco.editor.defineTheme("terracotta-dark", TERRACOTTA_THEME);
-          monaco.editor.setTheme("terracotta-dark");
+          applyTerracottaTheme(monaco);
           handleMount(editor, monaco);
         }}
         options={
@@ -689,7 +849,8 @@ export default function Editor() {
             automaticLayout: true,
             contextmenu: false,
             tabSize: 2,
-            wordWrap: activeTab.language === "markdown" ? "on" : "off",
+            wordWrap: editorWordWrap ? "on" : "off",
+            readOnly: activeTab.isReadOnly ?? false,
             suggest: {
               showMethods: true, showFunctions: true, showConstructors: true,
               showFields: true, showVariables: true, showClasses: true,
@@ -716,14 +877,20 @@ export default function Editor() {
 }
 
 async function saveToBackend(id: string) {
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    const state = useEditorStore.getState();
-    const tab = state.tabs.find((t) => t.id === id);
-    if (tab) {
-      await invoke("save_file", { path: tab.path, content: tab.content });
-    }
-  } catch {
-    // ignore
+  const { invoke } = await import("@tauri-apps/api/core");
+  const state = useEditorStore.getState();
+  const tab = state.tabs.find((t) => t.id === id);
+  if (!tab) {
+    return;
   }
+
+  if (tab.viewMode === "base64") {
+    await invoke("save_file_from_base64", {
+      path: tab.path,
+      content: hexViewToBase64(tab.content),
+    });
+    return;
+  }
+
+  await invoke("save_file", { path: tab.path, content: tab.content });
 }

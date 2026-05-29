@@ -8,7 +8,8 @@ export default function WindowControls() {
     isLeftSidebarCollapsed, 
     isRightSidebarCollapsed, 
     toggleLeftSidebar, 
-    toggleRightSidebar
+    toggleRightSidebar,
+    openSettings,
   } = useEditorStore();
 
   useEffect(() => {
@@ -69,6 +70,7 @@ export default function WindowControls() {
     <div className="flex items-center h-full no-drag" onDoubleClick={(e) => e.stopPropagation()}>
       <div className="flex items-center mr-2 border-r border-border pr-2 gap-1">
         <button
+          onClick={openSettings}
           className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
           title="设置"
         >

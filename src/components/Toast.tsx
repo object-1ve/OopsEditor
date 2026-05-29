@@ -21,7 +21,7 @@ export default function Toast() {
   };
 
   return (
-    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[999] animate-in fade-in slide-in-from-bottom-4 duration-300">
+    <div className="fixed bottom-6 right-6 z-[999] animate-in fade-in slide-in-from-bottom-4 duration-300">
       <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-xl ${bgMap[type]} min-w-[320px] backdrop-blur-md`}>
         {iconMap[type]}
         <span className="text-sm font-medium text-[var(--text-primary)] flex-1">{message}</span>

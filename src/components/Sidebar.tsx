@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Search, X, Edit2, Trash2, ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin } from "lucide-react";
+import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Search, X, Edit2, Trash2, ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin, ChevronsUp } from "lucide-react";
 import { useEditorStore } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { detectLanguage, isPreviewOnlyLanguage } from "../types";
+import { base64ToHexView } from "../utils/hexView";
 import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
 
@@ -22,6 +23,46 @@ interface DirEntry {
   name: string;
   is_dir: boolean;
   size: number;
+}
+
+type OpenMode = "text" | "base64";
+
+const buildTabId = (filePath: string, mode: OpenMode) =>
+  mode === "base64" ? `${filePath}#base64` : filePath;
+
+async function openFileTab(
+  filePath: string,
+  openTab: ReturnType<typeof useEditorStore.getState>["openTab"],
+  showNotification: ReturnType<typeof useEditorStore.getState>["showNotification"],
+  fileSize?: number,
+  mode: OpenMode = "text",
+) {
+  try {
+    const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
+    const language = mode === "base64" ? "plaintext" : detectLanguage(fileName);
+    let content = "";
+
+    if (mode === "base64") {
+      const base64Content = await invoke<string>("read_file_as_base64", { path: filePath });
+      content = base64ToHexView(base64Content);
+    } else if (!isPreviewOnlyLanguage(language)) {
+      content = await invoke<string>("read_file", { path: filePath });
+    }
+
+    openTab({
+      id: buildTabId(filePath, mode),
+      name: mode === "base64" ? `${fileName} [Base64]` : fileName,
+      path: filePath,
+      language,
+      content,
+      isDirty: false,
+      size: fileSize,
+      viewMode: mode,
+      isReadOnly: false,
+    });
+  } catch (err) {
+    showNotification(`无法打开文件: ${filePath.split(/[/\\]/).pop()} (${String(err)})`, "error");
+  }
 }
 
 const sortTreeEntries = (entries: DirEntry[], pinnedFolders: string[]) => {
@@ -122,25 +163,7 @@ function FileNode({ path, name, is_dir, size, level, onContextMenu, onRefresh }:
   }, [newName, name, path, is_dir, onRefresh, rebasePinnedFolderPaths, showNotification]);
 
   const openFile = async (filePath: string, fileSize?: number) => {
-    try {
-      const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
-      const language = detectLanguage(fileName);
-      let content = "";
-      if (!isPreviewOnlyLanguage(language)) {
-        content = await invoke<string>("read_file", { path: filePath });
-      }
-      openTab({
-        id: filePath,
-        name: fileName,
-        path: filePath,
-        language,
-        content,
-        isDirty: false,
-        size: fileSize,
-      });
-    } catch (err) {
-      showNotification(`无法打开文件: ${filePath.split(/[/\\]/).pop()} (${String(err)})`, "error");
-    }
+    await openFileTab(filePath, openTab, showNotification, fileSize);
   };
 
   const isActive = activeTabId === path;
@@ -352,7 +375,7 @@ export default function Sidebar() {
     rootPaths, addRootPath, leftSidebarWidth, setLeftSidebarWidth, 
     showNotification, addTerminal, openTab,
     defaultFolders, addDefaultFolder, removeDefaultFolder, updateDefaultFolder,
-    pinnedFolders, pinFolder, unpinFolder, removePinnedFoldersUnder, showModal
+    pinnedFolders, pinFolder, unpinFolder, removePinnedFoldersUnder, collapseAllFolders, showModal
   } = useEditorStore();
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DirEntry } | null>(null);
@@ -393,26 +416,7 @@ export default function Sidebar() {
   }, [handleMouseMove]);
 
   const openFile = useCallback(async (filePath: string, fileSize?: number) => {
-    try {
-      const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
-      const language = detectLanguage(fileName);
-      let content = "";
-      if (!isPreviewOnlyLanguage(language)) {
-        content = await invoke<string>("read_file", { path: filePath });
-      }
-      openTab({
-        id: filePath,
-        name: fileName,
-        path: filePath,
-        language,
-        content,
-        isDirty: false,
-        size: fileSize,
-      });
-    } catch (err) {
-      console.error("Failed to open file:", err);
-      showNotification(`无法打开文件: ${filePath.split(/[/\\]/).pop()} (${err})`, "error");
-    }
+    await openFileTab(filePath, openTab, showNotification, fileSize);
   }, [openTab, showNotification]);
 
   const handleOpenFolder = useCallback(async () => {
@@ -511,6 +515,11 @@ export default function Sidebar() {
     }
   }, [sortedRootPaths, rootPaths.length, showNotification, openFile]);
 
+  const handleCollapseAllFolders = useCallback(() => {
+    collapseAllFolders();
+    showNotification("已全部折叠", "success");
+  }, [collapseAllFolders, showNotification]);
+
   const handleAction = useCallback(async (action: string) => {
     if (!contextMenu) return;
     const { path, is_dir, name } = contextMenu.entry;
@@ -530,6 +539,13 @@ export default function Sidebar() {
           const terminalPath = is_dir ? path : path.substring(0, lastIdx + 1);
           // Only open it in internal terminal
           addTerminal(terminalPath);
+          break;
+        case "open-base64":
+          if (is_dir) {
+            showNotification("文件夹暂不支持 Base64 视图", "info");
+            break;
+          }
+          await openFileTab(path, openTab, showNotification, contextMenu.entry.size, "base64");
           break;
         case "rename":
           window.dispatchEvent(new CustomEvent("file-rename", { detail: { path } }));
@@ -640,8 +656,15 @@ export default function Sidebar() {
       { label: "新建文件", icon: <FilePlus size={14} />, onClick: () => handleAction("new-file") },
       { label: "新建文件夹", icon: <FolderPlus size={14} />, onClick: () => handleAction("new-folder") },
       { separator: true, label: "", onClick: () => {} },
+      ...(rootPaths.length > 0
+        ? [{ label: "全部折叠", icon: <ChevronsUp size={14} />, onClick: handleCollapseAllFolders }]
+        : []),
+      ...(rootPaths.length > 0 ? [{ separator: true, label: "", onClick: () => {} }] : []),
       { label: "在资源管理器中显示", icon: <ExternalLink size={14} />, onClick: () => handleAction("reveal") },
       { label: "在终端中打开", icon: <TerminalIcon size={14} />, onClick: () => handleAction("terminal") },
+      ...(!contextMenu.entry.is_dir
+        ? [{ label: "以 Base64 打开", icon: <Copy size={14} />, onClick: () => handleAction("open-base64") }]
+        : []),
       { label: "复制完整路径", icon: <Copy size={14} />, onClick: () => handleAction("copy-path") },
       { separator: true, label: "", onClick: () => {} },
       ...(contextMenu.entry.is_dir
@@ -651,12 +674,15 @@ export default function Sidebar() {
       { label: "重命名", icon: <Edit2 size={14} />, onClick: () => handleAction("rename") },
       { label: "删除", icon: <Trash2 size={14} />, onClick: () => handleAction("delete"), danger: true },
     ];
-  }, [contextMenu, handleAction, pinnedFolders]);
+  }, [contextMenu, handleAction, pinnedFolders, rootPaths.length, handleCollapseAllFolders]);
 
   const emptyAreaMenuItems = useMemo(() => [
     { label: "新建文件", icon: <FilePlus size={14} />, onClick: () => handleToolbarCreate("file") },
     { label: "新建文件夹", icon: <FolderPlus size={14} />, onClick: () => handleToolbarCreate("folder") },
     { separator: true, label: "", onClick: () => {} },
+    ...(rootPaths.length > 0
+      ? [{ label: "全部折叠", icon: <ChevronsUp size={14} />, onClick: handleCollapseAllFolders }, { separator: true, label: "", onClick: () => {} }]
+      : []),
     { label: "添加文件夹到工作区...", icon: <FolderOpen size={14} />, onClick: handleOpenFolder },
     { label: "添加默认文件夹...", icon: <Plus size={14} />, onClick: handleAddDefaultFolder },
     { separator: true, label: "", onClick: () => {} },
@@ -667,7 +693,7 @@ export default function Sidebar() {
         addTerminal();
       }
     }},
-  ], [handleToolbarCreate, handleOpenFolder, handleAddDefaultFolder, sortedRootPaths, addTerminal]);
+  ], [handleToolbarCreate, handleCollapseAllFolders, handleOpenFolder, handleAddDefaultFolder, rootPaths.length, sortedRootPaths, addTerminal]);
 
   const defaultFolderMenuItems = useMemo(() => {
     if (!defaultFolderContextMenu) return [];

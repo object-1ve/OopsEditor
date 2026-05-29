@@ -9,6 +9,7 @@ import Editor from "./components/Editor";
 import TerminalView from "./components/Terminal";
 import Toast from "./components/Toast";
 import ConfirmModal from "./components/ConfirmModal";
+import SettingsModal from "./components/SettingsModal";
 import ContextMenu from "./components/ContextMenu";
 import { useEditorStore } from "./store/editor";
 import { detectLanguage, isPreviewOnlyLanguage } from "./types";
@@ -605,6 +606,7 @@ function App() {
       )}
 
       <ConfirmModal />
+      <SettingsModal />
       <Toast />
     </div>
   );

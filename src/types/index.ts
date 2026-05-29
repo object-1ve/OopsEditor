@@ -7,6 +7,8 @@ export interface FileTab {
   isDirty: boolean;
   size?: number;
   isPreviewMode?: boolean;
+  viewMode?: "text" | "base64";
+  isReadOnly?: boolean;
 }
 
 export type SupportedLanguage = "plaintext" | "markdown" | "json" | "yaml" | "xml" | "toml" | "javascript" | "typescript" | "css" | "html" | "rust" | "python" | "sql" | "shell" | "image" | "pdf";

@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::fs;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -13,8 +14,23 @@ fn read_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn read_file_as_base64(path: String) -> Result<String, String> {
+    let bytes = fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+    Ok(STANDARD.encode(bytes))
+}
+
+#[tauri::command]
 fn save_file(path: String, content: String) -> Result<(), String> {
     fs::write(&path, &content).map_err(|e| format!("保存文件失败: {}", e))
+}
+
+#[tauri::command]
+fn save_file_from_base64(path: String, content: String) -> Result<(), String> {
+    let normalized: String = content.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = STANDARD
+        .decode(normalized.as_bytes())
+        .map_err(|e| format!("Base64 解码失败: {}", e))?;
+    fs::write(&path, bytes).map_err(|e| format!("保存文件失败: {}", e))
 }
 
 #[tauri::command]
@@ -287,7 +303,9 @@ fn decode_utf16_bytes(bytes: &[u8], little_endian: bool) -> Result<String, Strin
 fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         read_file,
+        read_file_as_base64,
         save_file,
+        save_file_from_base64,
         copy_file,
         list_dir,
         is_directory,

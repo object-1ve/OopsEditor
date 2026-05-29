@@ -3,6 +3,20 @@ import type { FileTab } from '../types';
 import type { DefaultFolder } from '../store/editor';
 
 const STORE_PATH = 'settings.json';
+export const DEFAULT_MAX_OPEN_TABS = 7;
+export const MIN_OPEN_TABS_LIMIT = 1;
+export const MAX_OPEN_TABS_LIMIT = 50;
+
+export function sanitizeMaxOpenTabs(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_MAX_OPEN_TABS;
+  }
+
+  return Math.min(
+    MAX_OPEN_TABS_LIMIT,
+    Math.max(MIN_OPEN_TABS_LIMIT, Math.round(value)),
+  );
+}
 
 export interface AppSettings {
   isLeftSidebarCollapsed: boolean;
@@ -11,6 +25,7 @@ export interface AppSettings {
   leftSidebarWidth: number;
   rightSidebarWidth: number;
   terminalHeight: number;
+  editorWordWrap: boolean;
   windowSize?: { width: number; height: number };
   windowPosition?: { x: number; y: number };
   tabs: FileTab[];
@@ -20,6 +35,7 @@ export interface AppSettings {
   expandedFolders: string[];
   pinnedFolders: string[];
   rightSidebarIconOrder?: string[];
+  maxOpenTabs: number;
 }
 
 const DEFAULT_RIGHT_SIDEBAR_ICON_ORDER = ["info", "outline", "help"] as const;
@@ -52,6 +68,7 @@ export const defaultSettings: AppSettings = {
   leftSidebarWidth: 220,
   rightSidebarWidth: 40,
   terminalHeight: 300,
+  editorWordWrap: false,
   tabs: [],
   activeTabId: null,
   rootPaths: [],
@@ -59,6 +76,7 @@ export const defaultSettings: AppSettings = {
   expandedFolders: [],
   pinnedFolders: [],
   rightSidebarIconOrder: [...DEFAULT_RIGHT_SIDEBAR_ICON_ORDER],
+  maxOpenTabs: DEFAULT_MAX_OPEN_TABS,
 };
 
 let storePromise: ReturnType<typeof load> | null = null;
@@ -98,6 +116,9 @@ export async function loadSettings(): Promise<AppSettings> {
   const savedTerminalHeight = await store.get<number>('terminalHeight');
   if (typeof savedTerminalHeight === 'number') settings.terminalHeight = savedTerminalHeight;
 
+  const savedEditorWordWrap = await store.get<boolean>('editorWordWrap');
+  if (typeof savedEditorWordWrap === 'boolean') settings.editorWordWrap = savedEditorWordWrap;
+
   const savedWindowSize = await store.get<{ width: number; height: number }>('windowSize');
   if (savedWindowSize !== null) settings.windowSize = savedWindowSize;
 
@@ -124,6 +145,9 @@ export async function loadSettings(): Promise<AppSettings> {
 
   const savedIconOrder = await store.get<string[]>('rightSidebarIconOrder');
   settings.rightSidebarIconOrder = sanitizeRightSidebarIconOrder(savedIconOrder);
+
+  const savedMaxOpenTabs = await store.get<number>('maxOpenTabs');
+  settings.maxOpenTabs = sanitizeMaxOpenTabs(savedMaxOpenTabs);
 
   return settings;
 }

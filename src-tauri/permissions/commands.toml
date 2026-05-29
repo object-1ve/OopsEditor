@@ -3,7 +3,9 @@ identifier = "allow-all"
 description = "Allows all custom commands in the main crate"
 commands.allow = [
   "read_file",
+  "read_file_as_base64",
   "save_file",
+  "save_file_from_base64",
   "copy_file",
   "list_dir",
   "is_directory",

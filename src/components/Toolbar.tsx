@@ -2,6 +2,7 @@ import { X, ChevronLeft, ChevronRight, CopyX, Save } from "lucide-react";
 import { useEditorStore } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
+import { hexViewToBase64 } from "../utils/hexView";
 import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
 
@@ -132,7 +133,7 @@ export default function Toolbar() {
     if (!tab) return;
 
     if (!canSaveToDefaultFolder(tab.language)) {
-      showNotification("PDF 暂不支持保存到默认文件夹", "info");
+      showNotification("当前视图暂不支持保存到默认文件夹", "info");
       setContextMenu(null);
       return;
     }
@@ -148,6 +149,11 @@ export default function Toolbar() {
     const persistToTarget = async () => {
       if (tab.language === "image") {
         await invoke("copy_file", { sourcePath: tab.path, targetPath });
+      } else if (tab.viewMode === "base64") {
+        await invoke("save_file_from_base64", {
+          path: targetPath,
+          content: hexViewToBase64(tab.content),
+        });
       } else {
         await invoke("save_file", { path: targetPath, content: tab.content });
       }

@@ -2363,6 +2363,7 @@ name = "oops-editor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "once_cell",
  "parking_lot",
  "portable-pty",
