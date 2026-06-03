@@ -1,17 +1,15 @@
 import {
-  createElement,
   useCallback,
-  useRef,
-  useState,
   useEffect,
   useMemo,
+  useRef,
+  useState,
 } from "react";
-import MonacoEditor, { OnMount, type EditorProps } from "@monaco-editor/react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
+import { type OnMount } from "@monaco-editor/react";
 import "highlight.js/styles/github.css";
 import {
   Clipboard,
+  Columns2,
   Copy,
   FilePenLine,
   Redo2,
@@ -20,21 +18,9 @@ import {
   Undo2,
 } from "lucide-react";
 import { useEditorStore } from "../store/editor";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { readFile } from "@tauri-apps/plugin-fs";
-import { isPreviewOnlyLanguage } from "../types";
-import {
-  bytesToAsciiView,
-  getHexOffsetLabel,
-  hexViewToBase64,
-  parseHexView,
-} from "../utils/hexView";
-import ImagePreview from "./ImagePreview";
 import ContextMenu from "./ContextMenu";
-import {
-  createMarkdownHeadingIdFactory,
-  extractTextFromReactNode,
-} from "../utils/markdown";
+import { resolveEditorMode } from "./editor-modes";
+import { saveTab } from "../services/editorSave";
 
 /* Bright terracotta-themed Monaco editor */
 const TERRACOTTA_THEME = {
@@ -106,199 +92,37 @@ function applyTerracottaTheme(monaco: Parameters<OnMount>[1]) {
   monaco.editor.setTheme("terracotta-dark");
 }
 
-function decodeHexPreview(content: string) {
-  const parsed = parseHexView(content);
-  if (parsed.error || !parsed.bytes) {
-    return {
-      text: "",
-      byteLength: 0,
-      error: parsed.error ?? "当前十六进制内容无法解析。",
-    };
-  }
-
-  return {
-    text: bytesToAsciiView(parsed.bytes),
-    byteLength: parsed.bytes.length,
-    error: null as string | null,
-  };
-}
-
 export default function Editor() {
   const {
     tabs,
     activeTabId,
     updateContent,
     togglePreviewMode,
+    toggleLivePreviewMode,
     showNotification,
     markdownOutlineTarget,
     clearMarkdownOutlineTarget,
     editorWordWrap,
   } = useEditorStore();
-  const editorRef = useRef<Parameters<OnMount>[0]>(null);
-  const markdownPreviewRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const activeTab = tabs.find((t) => t.id === activeTabId);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
   const [editorContextMenu, setEditorContextMenu] = useState<{
     x: number;
     y: number;
     hasSelection: boolean;
   } | null>(null);
-  const [previewContextMenu, setPreviewContextMenu] = useState<{
-    x: number;
-    y: number;
-    hasSelection: boolean;
-  } | null>(null);
-  const base64Preview = useMemo(() => {
-    if (activeTab?.viewMode !== "base64") {
-      return null;
-    }
-    return decodeHexPreview(activeTab.content);
-  }, [activeTab?.content, activeTab?.viewMode]);
-
-  const markdownComponents = useMemo<Components | undefined>(() => {
-    if (activeTab?.language !== "markdown") {
-      return undefined;
-    }
-
-    const nextHeadingId = createMarkdownHeadingIdFactory();
-    const createHeadingRenderer = (
-      tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
-    ) =>
-      function HeadingRenderer({
-        children,
-        node,
-        ...props
-      }: any) {
-        const headingText = extractTextFromReactNode(children);
-        const line = node?.position?.start?.line;
-        const headingId = nextHeadingId(headingText, line);
-        return createElement(tag, { ...props, id: headingId }, children);
-      };
-
-    return {
-      h1: createHeadingRenderer("h1"),
-      h2: createHeadingRenderer("h2"),
-      h3: createHeadingRenderer("h3"),
-      h4: createHeadingRenderer("h4"),
-      h5: createHeadingRenderer("h5"),
-      h6: createHeadingRenderer("h6"),
-    };
-  }, [activeTab?.id, activeTab?.language, activeTab?.content]);
-
-  useEffect(() => {
-    if (!activeTab || !isPreviewOnlyLanguage(activeTab.language)) {
-      setPreviewUrl(null);
-      setPreviewError(null);
-      return;
-    }
-
-    let isCancelled = false;
-    let objectUrl: string | null = null;
-    setPreviewUrl(null);
-    setPreviewError(null);
-
-    const loadPreview = async () => {
-      try {
-        if (activeTab.language === "image") {
-          setPreviewUrl(convertFileSrc(activeTab.path));
-          return;
-        }
-
-        if (activeTab.language === "pdf") {
-          const pdfBytes = await readFile(activeTab.path);
-          if (isCancelled) {
-            return;
-          }
-
-          objectUrl = URL.createObjectURL(
-            new Blob([pdfBytes], { type: "application/pdf" }),
-          );
-          setPreviewUrl(objectUrl);
-          return;
-        }
-
-        setPreviewUrl(null);
-      } catch {
-        if (!isCancelled) {
-          const message = activeTab.language === "pdf"
-            ? "当前文件没有读取权限，或文件内容无法作为 PDF 打开"
-            : "当前预览资源加载失败";
-          setPreviewUrl(null);
-          setPreviewError(message);
-          if (activeTab.language === "pdf") {
-            showNotification(`PDF 加载失败: ${message}`, "error");
-          }
-        }
-      }
-    };
-
-    void loadPreview();
-
-    return () => {
-      isCancelled = true;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [activeTab, showNotification]);
-
   useEffect(() => {
     setEditorContextMenu(null);
-    setPreviewContextMenu(null);
-  }, [activeTab?.id, activeTab?.isPreviewMode]);
+  }, [activeTab?.id, activeTab?.isLivePreviewMode, activeTab?.isPreviewMode]);
 
   useEffect(() => {
     if (
       !markdownOutlineTarget ||
       !activeTab ||
       activeTab.id !== markdownOutlineTarget.tabId ||
-      activeTab.language !== "markdown"
+      activeTab.language !== "markdown" ||
+      activeTab.isPreviewMode
     ) {
-      return;
-    }
-
-    if (activeTab.isPreviewMode) {
-      const container = markdownPreviewRef.current;
-      if (!container) {
-        return;
-      }
-
-      const escapeSelector = (value: string) => {
-        if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-          return CSS.escape(value);
-        }
-        return value.replace(/[^a-zA-Z0-9\-_]/g, "\\$&");
-      };
-
-      let attempts = 0;
-      const scrollToHeading = () => {
-        const selector = `#${escapeSelector(markdownOutlineTarget.headingId)}`;
-        const heading = container.querySelector<HTMLElement>(selector);
-
-        if (!heading) {
-          attempts += 1;
-          if (attempts < 3) {
-            requestAnimationFrame(scrollToHeading);
-            return;
-          }
-          clearMarkdownOutlineTarget();
-          return;
-        }
-
-        const containerRect = container.getBoundingClientRect();
-        const headingRect = heading.getBoundingClientRect();
-        const nextScrollTop =
-          container.scrollTop + (headingRect.top - containerRect.top) - 24;
-
-        container.scrollTo({
-          top: Math.max(0, nextScrollTop),
-          behavior: "smooth",
-        });
-        clearMarkdownOutlineTarget();
-      };
-
-      requestAnimationFrame(scrollToHeading);
       return;
     }
 
@@ -312,6 +136,17 @@ export default function Editor() {
     editor.focus();
     clearMarkdownOutlineTarget();
   }, [activeTab, clearMarkdownOutlineTarget, markdownOutlineTarget]);
+
+  const persistTab = useCallback(async (id: string) => {
+    const state = useEditorStore.getState();
+    const tab = state.tabs.find((item) => item.id === id);
+    if (!tab) {
+      return;
+    }
+
+    await saveTab(tab);
+    state.markClean(id);
+  }, []);
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
@@ -338,9 +173,9 @@ export default function Editor() {
         const state = useEditorStore.getState();
         const id = state.activeTabId;
         if (id) {
-          void saveToBackend(id)
+          void persistTab(id)
             .then(() => {
-              state.markClean(id);
+              state.showNotification("文件已保存", "success");
             })
             .catch((err) => {
               state.showNotification(`保存失败: ${String(err)}`, "error");
@@ -362,7 +197,7 @@ export default function Editor() {
         }
       },
     });
-  }, []);
+  }, [persistTab]);
 
   const handleChange = useCallback(
     (value: string | undefined) => {
@@ -388,15 +223,14 @@ export default function Editor() {
       return;
     }
 
-    void saveToBackend(id)
+    void persistTab(id)
       .then(() => {
-        state.markClean(id);
         showNotification("文件已保存", "success");
       })
       .catch((err) => {
         showNotification(`保存失败: ${String(err)}`, "error");
       });
-  }, [showNotification]);
+  }, [persistTab, showNotification]);
 
   const getEditorSelectionText = useCallback(() => {
     const editor = editorRef.current;
@@ -465,7 +299,12 @@ export default function Editor() {
       ...(activeTab?.language === "markdown"
         ? [
             {
-              label: "切换预览模式",
+              label: activeTab.isLivePreviewMode ? "关闭实时模式" : "开启实时模式",
+              icon: <Columns2 size={14} />,
+              onClick: () => activeTabId && toggleLivePreviewMode(activeTabId),
+            },
+            {
+              label: activeTab.isPreviewMode ? "返回编辑模式" : "切换预览模式",
               icon: <FilePenLine size={14} />,
               onClick: () => activeTabId && togglePreviewMode(activeTabId),
             },
@@ -542,77 +381,13 @@ export default function Editor() {
     handleEditorRedo,
     handleEditorSave,
     handleEditorUndo,
+    toggleLivePreviewMode,
     togglePreviewMode,
   ]);
 
-  const getPreviewSelectionText = useCallback(() => {
-    const container = markdownPreviewRef.current;
-    const selection = window.getSelection();
-    if (!container || !selection || selection.rangeCount === 0) {
-      return "";
-    }
+  const mode = activeTab ? resolveEditorMode(activeTab) : null;
 
-    const range = selection.getRangeAt(0);
-    const commonAncestor = range.commonAncestorContainer;
-    const selectedInsidePreview = container.contains(commonAncestor);
-    if (!selectedInsidePreview) {
-      return "";
-    }
-
-    return selection.toString().trim();
-  }, []);
-
-  const handlePreviewContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setPreviewContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      hasSelection: getPreviewSelectionText().length > 0,
-    });
-  }, [getPreviewSelectionText]);
-
-  const handleCopyFromPreview = useCallback(async () => {
-    const selectedText = getPreviewSelectionText();
-    if (!selectedText) {
-      showNotification("请先选择要复制的内容", "info");
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(selectedText);
-      showNotification("已复制选中内容", "success");
-    } catch {
-      showNotification("复制失败", "error");
-    }
-  }, [getPreviewSelectionText, showNotification]);
-
-  const previewContextMenuItems = useMemo(() => {
-    if (!activeTabId) {
-      return [];
-    }
-
-    const items = [
-      {
-        label: "切换到编辑模式",
-        icon: <FilePenLine size={14} />,
-        onClick: () => togglePreviewMode(activeTabId),
-      },
-    ];
-
-    if (previewContextMenu?.hasSelection) {
-      items.push({
-        label: "复制选中内容",
-        icon: <Copy size={14} />,
-        onClick: () => {
-          void handleCopyFromPreview();
-        },
-      });
-    }
-
-    return items;
-  }, [activeTabId, handleCopyFromPreview, previewContextMenu?.hasSelection, togglePreviewMode]);
-
-  if (!activeTab) {
+  if (!activeTab || !mode) {
     return (
       <div className="flex items-center justify-center h-full select-none">
         <div className="text-center space-y-6 relative">
@@ -646,224 +421,20 @@ export default function Editor() {
     );
   }
 
-  if (activeTab.language === "image") {
-    return previewUrl ? (
-      <ImagePreview 
-        src={previewUrl} 
-        name={activeTab.name} 
-        path={activeTab.path} 
-      />
-    ) : (
-      <div className="flex-1 h-full flex items-center justify-center bg-deepest">
-        <div className="text-text-muted">无法加载图片</div>
-      </div>
-    );
-  }
-
-  if (activeTab.language === "pdf") {
-    return previewUrl ? (
-      <div className="flex-1 h-full bg-deepest p-4">
-        <div className="h-full overflow-hidden rounded-xl border border-border bg-white shadow-xl">
-          <iframe
-            src={previewUrl}
-            title={activeTab.name}
-            className="h-full w-full"
-          />
-        </div>
-      </div>
-    ) : (
-      <div className="flex-1 h-full flex items-center justify-center bg-deepest">
-        <div className="text-text-muted">{previewError ?? "无法加载 PDF"}</div>
-      </div>
-    );
-  }
-
-  if (activeTab.language === "markdown" && activeTab.isPreviewMode) {
-    return (
-      <div
-        ref={markdownPreviewRef}
-        className="h-full overflow-auto p-8 bg-primary markdown-preview prose max-w-none relative"
-        onContextMenu={handlePreviewContextMenu}
-      >
-        <div className="max-w-4xl mx-auto">
-          <ReactMarkdown
-            rehypePlugins={[rehypeHighlight]}
-            components={markdownComponents}
-          >
-            {activeTab.content}
-          </ReactMarkdown>
-        </div>
-        {previewContextMenu && (
-          <ContextMenu
-            x={previewContextMenu.x}
-            y={previewContextMenu.y}
-            items={previewContextMenuItems}
-            onClose={() => setPreviewContextMenu(null)}
-          />
-        )}
-        {/* Floating toggle button for easier discovery */}
-        <button
-          onClick={() => activeTabId && togglePreviewMode(activeTabId)}
-          className="fixed bottom-8 right-8 p-3 rounded-full bg-accent text-white shadow-lg hover:bg-accent-bright transition-colors z-50 group"
-          title="切换到编辑模式"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-          </svg>
-        </button>
-      </div>
-    );
-  }
-
-  if (activeTab.viewMode === "base64") {
-    return (
-      <div className="flex h-full bg-primary">
-        <div className="flex min-w-0 flex-1 flex-col border-r border-border">
-          <div className="flex items-center justify-between border-b border-border bg-surface/40 px-3 py-2 text-xs text-text-secondary">
-            <span className="font-medium uppercase tracking-wider text-text">Hex</span>
-            <span>每行 16 字节，4 字节分组</span>
-          </div>
-          <div className="min-h-0 flex-1">
-            <MonacoEditor
-              key={`${activeTab.id}:base64`}
-              theme="terracotta-dark"
-              language={activeTab.language}
-              value={activeTab.content}
-              onChange={handleChange}
-              onMount={(editor, monaco) => {
-                applyTerracottaTheme(monaco);
-                handleMount(editor, monaco);
-              }}
-              options={
-                {
-                  fontSize: 14,
-                  fontFamily: "var(--font-mono)",
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  lineNumbers: getHexOffsetLabel,
-                  lineNumbersMinChars: 4,
-                  renderLineHighlight: "line",
-                  cursorBlinking: "smooth",
-                  cursorSmoothCaretAnimation: "on",
-                  cursorWidth: 2,
-                  smoothScrolling: true,
-                  padding: { top: 12 },
-                  bracketPairColorization: { enabled: true },
-                  automaticLayout: true,
-                  contextmenu: false,
-                  tabSize: 2,
-                  wordWrap: "off",
-                  readOnly: false,
-                } satisfies EditorProps["options"]
-              }
-            />
-          </div>
-        </div>
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-border bg-surface/20 px-3 py-2 text-xs text-text-secondary">
-            <span className="font-medium uppercase tracking-wider text-text">Ascii</span>
-            <span>
-              {base64Preview?.error
-                ? "解析失败"
-                : `${base64Preview?.byteLength.toLocaleString() ?? 0} B`}
-            </span>
-          </div>
-          <div className="min-h-0 flex-1">
-            {base64Preview?.error ? (
-              <div className="flex h-full items-center justify-center bg-deepest p-6">
-                <div className="max-w-md rounded-xl border border-error/30 bg-error/5 px-4 py-3 text-sm leading-relaxed text-error">
-                  {base64Preview.error}
-                </div>
-              </div>
-            ) : (
-              <MonacoEditor
-                key={`${activeTab.id}:decoded`}
-                theme="terracotta-dark"
-                language="plaintext"
-                value={base64Preview?.text ?? ""}
-                onMount={(_editor, monaco) => {
-                  applyTerracottaTheme(monaco);
-                }}
-                options={
-                  {
-                    fontSize: 14,
-                    fontFamily: "var(--font-mono)",
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    lineNumbers: "off",
-                    renderLineHighlight: "none",
-                    smoothScrolling: true,
-                    padding: { top: 12 },
-                    automaticLayout: true,
-                    contextmenu: false,
-                    tabSize: 2,
-                    wordWrap: "off",
-                    readOnly: true,
-                  } satisfies EditorProps["options"]
-                }
-              />
-            )}
-          </div>
-        </div>
-
-        {editorContextMenu && (
-          <ContextMenu
-            x={editorContextMenu.x}
-            y={editorContextMenu.y}
-            items={editorContextMenuItems}
-            onClose={() => setEditorContextMenu(null)}
-          />
-        )}
-      </div>
-    );
-  }
-
   return (
     <>
-      <MonacoEditor
-        key={activeTab.id}
-        theme="terracotta-dark"
-        language={activeTab.language}
-        value={activeTab.content}
-        onChange={handleChange}
-        onMount={(editor, monaco) => {
-          applyTerracottaTheme(monaco);
-          handleMount(editor, monaco);
-        }}
-        options={
-          {
-            fontSize: 14,
-            fontFamily: "var(--font-mono)",
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            lineNumbers: "on",
-            renderLineHighlight: "line",
-            cursorBlinking: "smooth",
-            cursorSmoothCaretAnimation: "on",
-            cursorWidth: 2,
-            smoothScrolling: true,
-            padding: { top: 12 },
-            bracketPairColorization: { enabled: true },
-            automaticLayout: true,
-            contextmenu: false,
-            tabSize: 2,
-            wordWrap: editorWordWrap ? "on" : "off",
-            readOnly: activeTab.isReadOnly ?? false,
-            suggest: {
-              showMethods: true, showFunctions: true, showConstructors: true,
-              showFields: true, showVariables: true, showClasses: true,
-              showStructs: true, showInterfaces: true, showModules: true,
-              showProperties: true, showEvents: true, showOperators: true,
-              showUnits: true, showValues: true, showConstants: true,
-              showEnums: true, showEnumMembers: true, showKeywords: true,
-              showWords: true, showColors: true, showFiles: true,
-              showReferences: true, showSnippets: true,
-            },
-          } satisfies EditorProps["options"]
-        }
-      />
+      {mode.render({
+        activeTab,
+        editorWordWrap,
+        onChange: handleChange,
+        onEditorMount: handleMount,
+        applyTheme: applyTerracottaTheme,
+        togglePreviewMode,
+        toggleLivePreviewMode,
+        markdownOutlineTarget,
+        clearMarkdownOutlineTarget,
+        showNotification,
+      })}
       {editorContextMenu && (
         <ContextMenu
           x={editorContextMenu.x}
@@ -874,23 +445,4 @@ export default function Editor() {
       )}
     </>
   );
-}
-
-async function saveToBackend(id: string) {
-  const { invoke } = await import("@tauri-apps/api/core");
-  const state = useEditorStore.getState();
-  const tab = state.tabs.find((t) => t.id === id);
-  if (!tab) {
-    return;
-  }
-
-  if (tab.viewMode === "base64") {
-    await invoke("save_file_from_base64", {
-      path: tab.path,
-      content: hexViewToBase64(tab.content),
-    });
-    return;
-  }
-
-  await invoke("save_file", { path: tab.path, content: tab.content });
 }

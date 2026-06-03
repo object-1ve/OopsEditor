@@ -7,11 +7,12 @@ export interface FileTab {
   isDirty: boolean;
   size?: number;
   isPreviewMode?: boolean;
+  isLivePreviewMode?: boolean;
   viewMode?: "text" | "base64";
   isReadOnly?: boolean;
 }
 
-export type SupportedLanguage = "plaintext" | "markdown" | "json" | "yaml" | "xml" | "toml" | "javascript" | "typescript" | "css" | "html" | "rust" | "python" | "sql" | "shell" | "image" | "pdf";
+export type SupportedLanguage = "plaintext" | "markdown" | "json" | "yaml" | "xml" | "toml" | "javascript" | "typescript" | "css" | "html" | "rust" | "python" | "sql" | "shell" | "image" | "pdf" | "word";
 
 export function detectLanguage(filename: string): SupportedLanguage {
   const ext = filename.split(".").pop()?.toLowerCase();
@@ -49,10 +50,15 @@ export function detectLanguage(filename: string): SupportedLanguage {
     avif: "image",
     apng: "image",
     pdf: "pdf",
+    doc: "word",
+    docx: "word",
+    docm: "word",
+    dotx: "word",
+    dotm: "word",
   };
   return map[ext ?? ""] ?? "plaintext";
 }
 
 export function isPreviewOnlyLanguage(language: string): boolean {
-  return language === "image" || language === "pdf";
+  return language === "image" || language === "pdf" || language === "word";
 }

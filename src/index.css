@@ -372,6 +372,12 @@ body {
   border-top: 1px solid color-mix(in srgb, var(--border) 78%, white 22%);
 }
 
+.monaco-editor .ascii-linked-selection {
+  background: rgba(106, 154, 130, 0.28);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(106, 154, 130, 0.24);
+}
+
 /* Markdown Preview Styles */
 .markdown-preview {
   color: var(--text-primary);
@@ -452,4 +458,33 @@ body {
 }
 .markdown-preview th {
   background: var(--bg-secondary);
+}
+
+/* Word Preview Styles */
+.word-preview-styles {
+  display: contents;
+}
+
+.word-preview-shell {
+  overflow: auto;
+  padding: 1.5rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(253, 250, 247, 0.96) 100%);
+}
+
+.word-preview-shell .word-document-wrapper {
+  padding: 1.5rem 0;
+  background: transparent;
+}
+
+.word-preview-shell .word-document {
+  color: #2c241e;
+  font-family: "Times New Roman", "SimSun", serif;
+}
+
+.word-preview-shell .word-document > section.docx,
+.word-preview-shell .word-document > section.word-document {
+  box-shadow:
+    0 12px 30px rgba(85, 58, 45, 0.08),
+    0 2px 8px rgba(85, 58, 45, 0.08);
 }

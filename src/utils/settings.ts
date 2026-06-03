@@ -1,6 +1,6 @@
 import { load } from '@tauri-apps/plugin-store';
 import type { FileTab } from '../types';
-import type { DefaultFolder } from '../store/editor';
+import type { DefaultFolder, PinnedFile } from '../store/editor';
 
 const STORE_PATH = 'settings.json';
 export const DEFAULT_MAX_OPEN_TABS = 7;
@@ -32,6 +32,7 @@ export interface AppSettings {
   activeTabId: string | null;
   rootPaths: string[];
   defaultFolders: DefaultFolder[];
+  pinnedFiles: PinnedFile[];
   expandedFolders: string[];
   pinnedFolders: string[];
   rightSidebarIconOrder?: string[];
@@ -73,6 +74,7 @@ export const defaultSettings: AppSettings = {
   activeTabId: null,
   rootPaths: [],
   defaultFolders: [],
+  pinnedFiles: [],
   expandedFolders: [],
   pinnedFolders: [],
   rightSidebarIconOrder: [...DEFAULT_RIGHT_SIDEBAR_ICON_ORDER],
@@ -136,6 +138,9 @@ export async function loadSettings(): Promise<AppSettings> {
 
   const savedDefaultFolders = await store.get<DefaultFolder[]>('defaultFolders');
   if (Array.isArray(savedDefaultFolders)) settings.defaultFolders = savedDefaultFolders;
+
+  const savedPinnedFiles = await store.get<PinnedFile[]>('pinnedFiles');
+  if (Array.isArray(savedPinnedFiles)) settings.pinnedFiles = savedPinnedFiles;
 
   const savedExpandedFolders = await store.get<string[]>('expandedFolders');
   if (Array.isArray(savedExpandedFolders)) settings.expandedFolders = savedExpandedFolders;

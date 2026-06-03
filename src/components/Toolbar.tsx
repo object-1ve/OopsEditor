@@ -1,10 +1,10 @@
-import { X, ChevronLeft, ChevronRight, CopyX, Save } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin } from "lucide-react";
 import { useEditorStore } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
-import { hexViewToBase64 } from "../utils/hexView";
 import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
+import { saveTab } from "../services/editorSave";
 
 const buildChildPath = (basePath: string, fileName: string) => {
   if (/[\\/]$/.test(basePath)) {
@@ -32,6 +32,9 @@ export default function Toolbar() {
     openTab, 
     showNotification, 
     defaultFolders,
+    pinnedFiles,
+    pinFile,
+    unpinFile,
     replaceTabFileLocation,
     showModal 
   } = useEditorStore();
@@ -147,16 +150,7 @@ export default function Toolbar() {
     }
 
     const persistToTarget = async () => {
-      if (tab.language === "image") {
-        await invoke("copy_file", { sourcePath: tab.path, targetPath });
-      } else if (tab.viewMode === "base64") {
-        await invoke("save_file_from_base64", {
-          path: targetPath,
-          content: hexViewToBase64(tab.content),
-        });
-      } else {
-        await invoke("save_file", { path: targetPath, content: tab.content });
-      }
+      await saveTab(tab, targetPath);
       replaceTabFileLocation(tab.id, targetPath, tab.name);
       showNotification(`已保存到默认文件夹: ${defaultFolderName}`, "success");
       window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: defaultFolderPath } }));
@@ -195,6 +189,7 @@ export default function Toolbar() {
     if (!contextMenu) return [];
     const tab = tabs.find(t => t.id === contextMenu.tabId);
     if (!tab) return [];
+    const isPinnedToSidebar = pinnedFiles.some((item) => item.path === tab.path);
 
     const saveToDefaultFolderItems = !canSaveToDefaultFolder(tab.language)
       ? []
@@ -221,6 +216,22 @@ export default function Toolbar() {
         ...(item.separatorBefore ? [{ separator: true, label: "", onClick: () => {} }] : []),
         { label: item.label, icon: item.icon, onClick: item.onClick },
       ]),
+      { separator: true, label: "", onClick: () => {} },
+      {
+        label: isPinnedToSidebar ? "从左侧边栏取消固定" : "固定到左侧边栏",
+        icon: <Pin size={14} />,
+        onClick: () => {
+          if (isPinnedToSidebar) {
+            unpinFile(tab.path);
+            showNotification(`已取消固定 ${tab.name}`, "success");
+            return;
+          }
+
+          pinFile({ name: tab.name, path: tab.path });
+          showNotification(`已固定到左侧边栏: ${tab.name}`, "success");
+        },
+      },
+      { separator: true, label: "", onClick: () => {} },
       { 
         label: "关闭标签页", 
         icon: <X size={14} />, 
@@ -243,7 +254,7 @@ export default function Toolbar() {
         onClick: handleCloseRight 
       },
     ];
-  }, [contextMenu, tabs, defaultFolders, handleCloseTab, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, showNotification]);
+  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleCloseTab, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, pinFile, showNotification, unpinFile]);
 
   const handleDoubleClick = useCallback(async (e: React.MouseEvent) => {
     // 只有在标签栏空白处双击才触发（或者在整个工具栏双击，但要避开按钮）

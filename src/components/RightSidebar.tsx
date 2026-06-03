@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { Info, HelpCircle, ListTree } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "../store/editor";
 import { parseMarkdownHeadings } from "../utils/markdown";
 
@@ -23,6 +24,25 @@ function formatFileSize(bytes: number | undefined): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
+function formatModifiedTime(timestamp: number | undefined): string {
+  if (!timestamp) return "未知";
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(timestamp));
+}
+
+interface FileInfo {
+  size: number;
+  modified_at: number;
+}
+
 export default function RightSidebar() {
   const {
     tabs,
@@ -36,6 +56,7 @@ export default function RightSidebar() {
   const isResizing = useRef(false);
   const [activePanel, setActivePanel] = useState<"outline" | "info" | null>(null);
   const [draggedIcon, setDraggedIcon] = useState<string | null>(null);
+  const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
   const isMarkdownTab = activeTab?.language === "markdown";
 
@@ -57,6 +78,31 @@ export default function RightSidebar() {
       setActivePanel(null);
     }
   }, [isMarkdownTab, activePanel]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!activeTab?.path) {
+      setFileInfo(null);
+      return;
+    }
+
+    void invoke<FileInfo>("get_file_info", { path: activeTab.path })
+      .then((info) => {
+        if (!cancelled) {
+          setFileInfo(info);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFileInfo(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab?.path, activeTab?.isDirty]);
 
   const startResizing = useCallback((e: React.MouseEvent) => {
     if (!isPanelOpen) return;
@@ -259,9 +305,10 @@ export default function RightSidebar() {
               <>
                 <InfoSection title="基本信息">
                   <InfoItem label="文件名" value={activeTab.name} />
-                  <InfoItem label="大小" value={formatFileSize(activeTab.size)} />
+                  <InfoItem label="大小" value={formatFileSize(fileInfo?.size ?? activeTab.size)} />
                   <InfoItem label="类型" value={activeTab.language.toUpperCase()} />
                   <InfoItem label="状态" value={activeTab.isDirty ? "已修改" : "已保存"} />
+                  <InfoItem label="修改时间" value={formatModifiedTime(fileInfo?.modified_at)} />
                 </InfoSection>
 
                 <InfoSection title="路径信息">

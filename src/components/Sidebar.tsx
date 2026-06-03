@@ -23,6 +23,7 @@ interface DirEntry {
   name: string;
   is_dir: boolean;
   size: number;
+  modified_at: number;
 }
 
 type OpenMode = "text" | "base64";
@@ -80,7 +81,11 @@ const sortTreeEntries = (entries: DirEntry[], pinnedFolders: string[]) => {
       return a.is_dir ? -1 : 1;
     }
 
-    return 0;
+    if (a.modified_at !== b.modified_at) {
+      return b.modified_at - a.modified_at;
+    }
+
+    return a.name.localeCompare(b.name, "zh-CN");
   });
 };
 
@@ -90,13 +95,14 @@ interface FileNodeProps extends DirEntry {
   onRefresh?: () => void;
 }
 
-function FileNode({ path, name, is_dir, size, level, onContextMenu, onRefresh }: FileNodeProps) {
+function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu, onRefresh }: FileNodeProps) {
   const {
     openTab,
     activeTabId,
     showNotification,
     expandedFolders,
     pinnedFolders,
+    rebasePinnedFilePath,
     toggleFolderExpanded,
     rebasePinnedFolderPaths,
   } = useEditorStore();
@@ -154,13 +160,15 @@ function FileNode({ path, name, is_dir, size, level, onContextMenu, onRefresh }:
       await invoke("rename_item", { path, newPath });
       if (is_dir) {
         rebasePinnedFolderPaths(path, newPath);
+      } else {
+        rebasePinnedFilePath(path, newPath, newName);
       }
       setIsRenaming(false);
       if (onRefresh) onRefresh();
     } catch (err) {
       showNotification(`重命名失败: ${err}`, "error");
     }
-  }, [newName, name, path, is_dir, onRefresh, rebasePinnedFolderPaths, showNotification]);
+  }, [newName, name, path, is_dir, onRefresh, rebasePinnedFilePath, rebasePinnedFolderPaths, showNotification]);
 
   const openFile = async (filePath: string, fileSize?: number) => {
     await openFileTab(filePath, openTab, showNotification, fileSize);
@@ -201,7 +209,7 @@ function FileNode({ path, name, is_dir, size, level, onContextMenu, onRefresh }:
         }`}
         style={{ paddingLeft: `${level * 12 + 12}px` }}
         onClick={handleToggle}
-        onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size })}
+        onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size, modified_at })}
       >
         {is_dir ? (
           <>
@@ -319,7 +327,7 @@ function RootFolder({ path, onContextMenu }: { path: string; onContextMenu: (e: 
       <div 
         className="pl-2 pr-3 py-1.5 flex items-center justify-between group/folder cursor-pointer select-none hover:bg-surface/30 transition-colors"
         onClick={() => toggleFolderExpanded(path)}
-        onContextMenu={(e) => onContextMenu(e, { path, name: path.split(/[/\\]/).pop() || path, is_dir: true, size: 0 })}
+        onContextMenu={(e) => onContextMenu(e, { path, name: path.split(/[/\\]/).pop() || path, is_dir: true, size: 0, modified_at: 0 })}
       >
         <div className="flex items-center gap-1.5 overflow-hidden">
           {isOpen ? <ChevronDown size={14} className="text-text-muted" /> : <ChevronRight size={14} className="text-text-muted" />}
@@ -375,12 +383,14 @@ export default function Sidebar() {
     rootPaths, addRootPath, leftSidebarWidth, setLeftSidebarWidth, 
     showNotification, addTerminal, openTab,
     defaultFolders, addDefaultFolder, removeDefaultFolder, updateDefaultFolder,
+    pinnedFiles, removePinnedFile,
     pinnedFolders, pinFolder, unpinFolder, removePinnedFoldersUnder, collapseAllFolders, showModal
   } = useEditorStore();
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DirEntry } | null>(null);
   const [emptyAreaContextMenu, setEmptyAreaContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [defaultFolderContextMenu, setDefaultFolderContextMenu] = useState<{ x: number; y: number; folderId: string } | null>(null);
+  const [pinnedFileContextMenu, setPinnedFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   const isResizing = useRef(false);
   const sortedRootPaths = useMemo(() => {
     const pinnedSet = new Set(pinnedFolders.map(normalizePath));
@@ -443,6 +453,7 @@ export default function Sidebar() {
     });
     setEmptyAreaContextMenu(null);
     setDefaultFolderContextMenu(null);
+    setPinnedFileContextMenu(null);
   };
 
   const handleEmptyAreaContextMenu = (e: React.MouseEvent) => {
@@ -453,6 +464,7 @@ export default function Sidebar() {
     });
     setContextMenu(null);
     setDefaultFolderContextMenu(null);
+    setPinnedFileContextMenu(null);
   };
 
   const handleDefaultFolderContextMenu = (e: React.MouseEvent, folderId: string) => {
@@ -465,6 +477,20 @@ export default function Sidebar() {
     });
     setContextMenu(null);
     setEmptyAreaContextMenu(null);
+    setPinnedFileContextMenu(null);
+  };
+
+  const handlePinnedFileContextMenu = (e: React.MouseEvent, path: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPinnedFileContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      path,
+    });
+    setContextMenu(null);
+    setEmptyAreaContextMenu(null);
+    setDefaultFolderContextMenu(null);
   };
 
   const handleBottomAreaContextMenu = (e: React.MouseEvent) => {
@@ -568,6 +594,8 @@ export default function Sidebar() {
                 await invoke("delete_item", { path });
                 if (is_dir) {
                   removePinnedFoldersUnder(path);
+                } else {
+                  removePinnedFile(path);
                 }
                 const lastIdxDel = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
                 const parentPath = path.substring(0, lastIdxDel + 1);
@@ -607,7 +635,31 @@ export default function Sidebar() {
       showNotification(`操作失败: ${err}`, "error");
     }
     setContextMenu(null);
-  }, [contextMenu, showNotification, addTerminal, pinFolder, unpinFolder, showModal, openFile, removePinnedFoldersUnder]);
+  }, [contextMenu, showNotification, addTerminal, pinFolder, unpinFolder, showModal, openFile, removePinnedFile, removePinnedFoldersUnder]);
+
+  const handlePinnedFileAction = useCallback(async (action: string) => {
+    if (!pinnedFileContextMenu) return;
+    const pinnedFile = pinnedFiles.find((file) => file.path === pinnedFileContextMenu.path);
+    if (!pinnedFile) return;
+
+    try {
+      if (action === "open") {
+        await openFile(pinnedFile.path);
+      } else if (action === "reveal") {
+        await invoke("reveal_in_explorer", { path: pinnedFile.path });
+      } else if (action === "copy-path") {
+        await navigator.clipboard.writeText(pinnedFile.path);
+        showNotification("路径已复制到剪贴板", "success");
+      } else if (action === "unpin") {
+        removePinnedFile(pinnedFile.path);
+        showNotification(`已取消固定 ${pinnedFile.name}`, "success");
+      }
+    } catch (err) {
+      showNotification(`操作失败: ${err}`, "error");
+    }
+
+    setPinnedFileContextMenu(null);
+  }, [openFile, pinnedFileContextMenu, pinnedFiles, removePinnedFile, showNotification]);
 
   const handleDefaultFolderAction = useCallback(async (action: string) => {
     if (!defaultFolderContextMenu) return;
@@ -718,6 +770,21 @@ export default function Sidebar() {
     ];
   }, [defaultFolderContextMenu, defaultFolders, addRootPath, addTerminal, handleDefaultFolderAction]);
 
+  const pinnedFileMenuItems = useMemo(() => {
+    if (!pinnedFileContextMenu) return [];
+    const pinnedFile = pinnedFiles.find((file) => file.path === pinnedFileContextMenu.path);
+    if (!pinnedFile) return [];
+
+    return [
+      { label: "打开文件", icon: <FolderOpen size={14} />, onClick: () => void handlePinnedFileAction("open") },
+      { separator: true, label: "", onClick: () => {} },
+      { label: "在资源管理器中显示", icon: <ExternalLink size={14} />, onClick: () => void handlePinnedFileAction("reveal") },
+      { label: "复制完整路径", icon: <Copy size={14} />, onClick: () => void handlePinnedFileAction("copy-path") },
+      { separator: true, label: "", onClick: () => {} },
+      { label: "取消固定", icon: <X size={14} />, onClick: () => void handlePinnedFileAction("unpin"), danger: true },
+    ];
+  }, [handlePinnedFileAction, pinnedFileContextMenu, pinnedFiles]);
+
   return (
     <div 
       className="h-full bg-deepest border-r border-border flex flex-col overflow-hidden relative group/sidebar"
@@ -782,6 +849,39 @@ export default function Sidebar() {
         className="flex-1 overflow-auto py-2"
         onContextMenu={handleEmptyAreaContextMenu}
       >
+        <div className="mb-2 px-3">
+          <div className="mb-1 flex items-center gap-1 text-[10px] font-medium tracking-wider text-text-muted">
+            <Pin size={10} />
+            <span>固定文件</span>
+          </div>
+          {pinnedFiles.length > 0 ? (
+            <div className="space-y-1">
+              {pinnedFiles.map((file) => (
+                <button
+                  key={file.path}
+                  className="flex w-full items-center gap-1.5 rounded border border-border bg-secondary/40 px-2 py-1.5 text-[11px] text-text-secondary transition-colors hover:border-accent/40 hover:bg-surface/60 hover:text-accent"
+                  onClick={() => {
+                    void openFile(file.path);
+                  }}
+                  onContextMenu={(e) => handlePinnedFileContextMenu(e, file.path)}
+                  title={file.path}
+                >
+                  <MaterialFileIcon
+                    name={file.name}
+                    path={file.path}
+                    size={14}
+                  />
+                  <span className="truncate text-left">{file.name}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded border border-dashed border-border px-2 py-1.5 text-[10px] text-text-muted">
+              在文件标签上右键后选择“固定到左侧边栏”
+            </div>
+          )}
+        </div>
+
         {rootPaths.length > 0 ? (
           sortedRootPaths.map((path) => (
             <RootFolder key={path} path={path} onContextMenu={handleContextMenu} />
@@ -805,30 +905,32 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* Default Folders fixed at the bottom */}
-      <div 
-        className="h-6 shrink-0 border-t border-border bg-deepest flex items-center justify-between px-3 py-2 gap-2 overflow-hidden"
-        onContextMenu={handleBottomAreaContextMenu}
-      >
-        <div className="flex items-center gap-2 overflow-hidden flex-1">
-          <div className="flex items-center gap-2 overflow-hidden scrollbar-none">
-            {defaultFolders.map((folder) => (
-              <div 
-                key={folder.id}
-                className="flex items-center gap-1.5 cursor-pointer hover:bg-surface/50 px-1.5 py-0.5 rounded transition-colors text-text-secondary hover:text-accent text-[11px] truncate group shrink-0 max-w-[150px]"
-                onClick={() => addRootPath(folder.path)}
-                onContextMenu={(e) => handleDefaultFolderContextMenu(e, folder.id)}
-                title={folder.path}
-              >
-                <MaterialFileIcon
-                  name={folder.name}
-                  path={folder.path}
-                  isDirectory
-                  size={14}
-                />
-                <span className="truncate">{folder.name}</span>
-              </div>
-            ))}
+      {/* Fixed shortcuts at the bottom */}
+      <div className="shrink-0 border-t border-border bg-deepest">
+        <div 
+          className="min-h-6 flex items-center justify-between px-3 py-2 gap-2 overflow-hidden"
+          onContextMenu={handleBottomAreaContextMenu}
+        >
+          <div className="flex items-center gap-2 overflow-hidden flex-1">
+            <div className="flex items-center gap-2 overflow-hidden scrollbar-none">
+              {defaultFolders.map((folder) => (
+                <div 
+                  key={folder.id}
+                  className="flex items-center gap-1.5 cursor-pointer hover:bg-surface/50 px-1.5 py-0.5 rounded transition-colors text-text-secondary hover:text-accent text-[11px] truncate group shrink-0 max-w-[150px]"
+                  onClick={() => addRootPath(folder.path)}
+                  onContextMenu={(e) => handleDefaultFolderContextMenu(e, folder.id)}
+                  title={folder.path}
+                >
+                  <MaterialFileIcon
+                    name={folder.name}
+                    path={folder.path}
+                    isDirectory
+                    size={14}
+                  />
+                  <span className="truncate">{folder.name}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -857,6 +959,15 @@ export default function Sidebar() {
           y={defaultFolderContextMenu.y}
           items={defaultFolderMenuItems}
           onClose={() => setDefaultFolderContextMenu(null)}
+        />
+      )}
+
+      {pinnedFileContextMenu && (
+        <ContextMenu
+          x={pinnedFileContextMenu.x}
+          y={pinnedFileContextMenu.y}
+          items={pinnedFileMenuItems}
+          onClose={() => setPinnedFileContextMenu(null)}
         />
       )}
     </div>

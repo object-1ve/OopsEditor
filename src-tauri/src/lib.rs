@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::fs;
+use std::time::UNIX_EPOCH;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
@@ -55,6 +56,13 @@ struct DirEntry {
     name: String,
     is_dir: bool,
     size: u64,
+    modified_at: u64,
+}
+
+#[derive(serde::Serialize)]
+struct FileInfo {
+    size: u64,
+    modified_at: u64,
 }
 
 #[tauri::command]
@@ -72,22 +80,47 @@ fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
 
         let metadata = fs::metadata(&path).map_err(|e| format!("获取元数据失败: {}", e))?;
         let size = if is_dir { 0 } else { metadata.len() };
+        let modified_at = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
 
         result.push(DirEntry {
             path: path.to_string_lossy().to_string(),
             name,
             is_dir,
             size,
+            modified_at,
         });
     }
     result.sort_by(|a, b| {
         if a.is_dir != b.is_dir {
             b.is_dir.cmp(&a.is_dir) // Directories first
+        } else if a.modified_at != b.modified_at {
+            b.modified_at.cmp(&a.modified_at)
         } else {
             a.name.cmp(&b.name)
         }
     });
     Ok(result)
+}
+
+#[tauri::command]
+fn get_file_info(path: String) -> Result<FileInfo, String> {
+    let metadata = fs::metadata(&path).map_err(|e| format!("获取文件信息失败: {}", e))?;
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+
+    Ok(FileInfo {
+        size: metadata.len(),
+        modified_at,
+    })
 }
 
 #[tauri::command]
@@ -308,6 +341,7 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         save_file_from_base64,
         copy_file,
         list_dir,
+        get_file_info,
         is_directory,
         path_exists,
         create_file,

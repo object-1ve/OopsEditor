@@ -86,11 +86,36 @@ export interface DefaultFolder {
   path: string;
 }
 
+export interface PinnedFile {
+  name: string;
+  path: string;
+}
+
 export interface MarkdownOutlineTarget {
   tabId: string;
   headingId: string;
   line: number;
 }
+
+const normalizePinnedFiles = (files: PinnedFile[]) => {
+  const seen = new Set<string>();
+  const normalizedFiles: PinnedFile[] = [];
+
+  for (const file of files) {
+    const normalizedPath = normalizePath(file.path);
+    if (!normalizedPath || seen.has(normalizedPath)) {
+      continue;
+    }
+
+    seen.add(normalizedPath);
+    normalizedFiles.push({
+      name: file.name || file.path.split(/[/\\]/).pop() || normalizedPath,
+      path: file.path,
+    });
+  }
+
+  return normalizedFiles;
+};
 
 interface EditorState {
   tabs: FileTab[];
@@ -98,6 +123,7 @@ interface EditorState {
   openFiles: string[];
   rootPaths: string[];
   defaultFolders: DefaultFolder[];
+  pinnedFiles: PinnedFile[];
   isLeftSidebarCollapsed: boolean;
   isRightSidebarCollapsed: boolean;
   isTerminalVisible: boolean;
@@ -139,6 +165,10 @@ interface EditorState {
   updateDefaultFolder: (id: string, path: string, name?: string) => void;
   addDefaultFolder: (name: string, path: string) => void;
   removeDefaultFolder: (id: string) => void;
+  pinFile: (file: PinnedFile) => void;
+  unpinFile: (path: string) => void;
+  rebasePinnedFilePath: (oldPath: string, newPath: string, nextName?: string) => void;
+  removePinnedFile: (path: string) => void;
   pinFolder: (path: string) => void;
   unpinFolder: (path: string) => void;
   rebasePinnedFolderPaths: (oldPath: string, newPath: string) => void;
@@ -166,6 +196,7 @@ interface EditorState {
   showNotification: (message: string, type?: "info" | "error" | "success") => void;
   clearNotification: () => void;
   togglePreviewMode: (id: string) => void;
+  toggleLivePreviewMode: (id: string) => void;
   toggleFolderExpanded: (path: string) => void;
   setFolderExpanded: (path: string, expanded: boolean) => void;
   collapseAllFolders: () => void;
@@ -180,6 +211,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   openFiles: [],
   rootPaths: [],
   defaultFolders: [],
+  pinnedFiles: [],
   isLeftSidebarCollapsed: false,
   isRightSidebarCollapsed: false,
   isTerminalVisible: false,
@@ -249,6 +281,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       editorWordWrap: settings.editorWordWrap,
       maxOpenTabs: settings.maxOpenTabs,
       defaultFolders,
+      pinnedFiles: normalizePinnedFiles(settings.pinnedFiles || []),
       tabs: limitedTabsState.tabs,
       activeTabId: limitedTabsState.activeTabId,
       rootPaths: settings.rootPaths || [],
@@ -377,6 +410,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   replaceTabFileLocation: (id: string, nextPath: string, nextName?: string) =>
     set((state) => {
+      const targetTab = state.tabs.find((tab) => tab.id === id);
       const nextTabs = state.tabs.map((tab) => {
         if (tab.id !== id) {
           return tab;
@@ -391,16 +425,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
       });
 
+      const nextPinnedFiles = targetTab
+        ? normalizePinnedFiles(
+          state.pinnedFiles.map((file) =>
+            normalizePath(file.path) === normalizePath(targetTab.path)
+              ? {
+                name: nextName ?? nextPath.split(/[/\\]/).pop() ?? file.name,
+                path: nextPath,
+              }
+              : file,
+          ),
+        )
+        : state.pinnedFiles;
       const nextActiveTabId = state.activeTabId === id ? nextPath : state.activeTabId;
       const nextOpenFiles = nextTabs.map((tab) => tab.path);
 
       saveSetting('tabs', nextTabs);
       saveSetting('activeTabId', nextActiveTabId);
+      saveSetting('pinnedFiles', nextPinnedFiles);
 
       return {
         tabs: nextTabs,
         activeTabId: nextActiveTabId,
         openFiles: nextOpenFiles,
+        pinnedFiles: nextPinnedFiles,
       };
     }),
 
@@ -450,6 +498,55 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const folders = get().defaultFolders.filter(f => f.id !== id);
     set({ defaultFolders: folders });
     saveSetting('defaultFolders', folders);
+  },
+
+  pinFile: (file: PinnedFile) => {
+    const normalizedPath = normalizePath(file.path);
+    if (!normalizedPath) return;
+
+    const nextPinnedFiles = normalizePinnedFiles([...get().pinnedFiles, file]);
+    set({ pinnedFiles: nextPinnedFiles });
+    saveSetting('pinnedFiles', nextPinnedFiles);
+  },
+
+  unpinFile: (path: string) => {
+    const normalizedPath = normalizePath(path);
+    const nextPinnedFiles = get().pinnedFiles.filter(
+      (item) => normalizePath(item.path) !== normalizedPath
+    );
+    set({ pinnedFiles: nextPinnedFiles });
+    saveSetting('pinnedFiles', nextPinnedFiles);
+  },
+
+  rebasePinnedFilePath: (oldPath: string, newPath: string, nextName?: string) => {
+    const normalizedOldPath = normalizePath(oldPath);
+    const normalizedNewPath = normalizePath(newPath);
+    if (!normalizedOldPath || !normalizedNewPath) return;
+
+    const nextPinnedFiles = normalizePinnedFiles(
+      get().pinnedFiles.map((file) =>
+        normalizePath(file.path) === normalizedOldPath
+          ? {
+            name: nextName ?? newPath.split(/[/\\]/).pop() ?? file.name,
+            path: newPath,
+          }
+          : file,
+      ),
+    );
+
+    set({ pinnedFiles: nextPinnedFiles });
+    saveSetting('pinnedFiles', nextPinnedFiles);
+  },
+
+  removePinnedFile: (path: string) => {
+    const normalizedPath = normalizePath(path);
+    if (!normalizedPath) return;
+
+    const nextPinnedFiles = get().pinnedFiles.filter(
+      (item) => normalizePath(item.path) !== normalizedPath
+    );
+    set({ pinnedFiles: nextPinnedFiles });
+    saveSetting('pinnedFiles', nextPinnedFiles);
   },
 
   pinFolder: (path: string) => {
@@ -657,11 +754,41 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   clearNotification: () => set({ notification: null }),
   togglePreviewMode: (id: string) =>
-    set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.id === id ? { ...t, isPreviewMode: !t.isPreviewMode } : t
-      ),
-    })),
+    set((state) => {
+      const nextTabs = state.tabs.map((tab) => {
+        if (tab.id !== id) {
+          return tab;
+        }
+
+        const nextIsPreviewMode = !Boolean(tab.isPreviewMode);
+        return {
+          ...tab,
+          isPreviewMode: nextIsPreviewMode,
+          isLivePreviewMode: false,
+        };
+      });
+
+      saveSetting("tabs", nextTabs);
+      return { tabs: nextTabs };
+    }),
+  toggleLivePreviewMode: (id: string) =>
+    set((state) => {
+      const nextTabs = state.tabs.map((tab) => {
+        if (tab.id !== id) {
+          return tab;
+        }
+
+        const nextIsLivePreviewMode = !Boolean(tab.isLivePreviewMode);
+        return {
+          ...tab,
+          isPreviewMode: false,
+          isLivePreviewMode: nextIsLivePreviewMode,
+        };
+      });
+
+      saveSetting("tabs", nextTabs);
+      return { tabs: nextTabs };
+    }),
   navigateToMarkdownHeading: (target) => set({ markdownOutlineTarget: target }),
   clearMarkdownOutlineTarget: () => set({ markdownOutlineTarget: null }),
   setRightSidebarIconOrder: (order: string[]) => {
