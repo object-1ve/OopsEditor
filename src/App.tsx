@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
-import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX } from "lucide-react";
+import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import Sidebar from "./components/Sidebar";
 import RightSidebar from "./components/RightSidebar";
@@ -15,6 +15,7 @@ import { useEditorStore } from "./store/editor";
 import { detectLanguage, isPreviewOnlyLanguage } from "./types";
 import { saveSetting, loadSettings } from "./utils/settings";
 import { monacoReady } from "./monaco";
+import { dispatchFileDrop, isMarkdownEditable } from "./utils/editorInsert";
 
 const DEFAULT_WINDOW_SIZE = { width: 1200, height: 800 };
 const DEFAULT_WINDOW_POSITION = { x: 100, y: 100 };
@@ -61,24 +62,33 @@ function App() {
     closeOtherTerminals,
     closeTerminalsToLeft,
     closeTerminalsToRight,
-    init
+    init,
+    hoveredPath
   } = useEditorStore();
 
   const [isDragging, setIsDragging] = useState(false);
   const [isDraggingOverTerminal, setIsDraggingOverTerminal] = useState(false);
+  const [isDraggingOverEditor, setIsDraggingOverEditor] = useState(false);
   const [isAppReady, setIsAppReady] = useState(false);
   const [isTerminalExpanded, setIsTerminalExpanded] = useState(false);
   const [terminalContextMenu, setTerminalContextMenu] = useState<{ x: number; y: number; terminalId: string } | null>(null);
   const isResizingTerminal = useRef(false);
   const editorWorkspaceRef = useRef<HTMLDivElement>(null);
   const terminalDropZoneRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
   const isDraggingOverTerminalRef = useRef(false);
+  const isDraggingOverEditorRef = useRef(false);
   const lastRestorableTerminalHeightRef = useRef(terminalHeight);
   const dragStartTerminalHeightRef = useRef(terminalHeight);
 
   const setTerminalDragState = useCallback((value: boolean) => {
     isDraggingOverTerminalRef.current = value;
     setIsDraggingOverTerminal(value);
+  }, []);
+
+  const setEditorDragState = useCallback((value: boolean) => {
+    isDraggingOverEditorRef.current = value;
+    setIsDraggingOverEditor(value);
   }, []);
 
   const getMaxTerminalHeight = useCallback(() => {
@@ -245,12 +255,35 @@ function App() {
     const { isTerminalVisible, activeTerminalId } = useEditorStore.getState();
     if (!isTerminalVisible || !activeTerminalId) return false;
 
+    const factor = window.devicePixelRatio || 1;
+    const logicalX = position.x / factor;
+    const logicalY = position.y / factor;
+
     const rect = terminalDropZoneRef.current.getBoundingClientRect();
     return (
-      position.x >= rect.left &&
-      position.x <= rect.right &&
-      position.y >= rect.top &&
-      position.y <= rect.bottom
+      logicalX >= rect.left &&
+      logicalX <= rect.right &&
+      logicalY >= rect.top &&
+      logicalY <= rect.bottom
+    );
+  }, []);
+
+  const isPointInsideEditor = useCallback((position?: { x: number; y: number }) => {
+    if (!position || !editorRef.current) return false;
+    
+    const factor = window.devicePixelRatio || 1;
+    const logicalX = position.x / factor;
+    const logicalY = position.y / factor;
+
+    const rect = editorRef.current.getBoundingClientRect();
+
+    // 如果终端可见，编辑区只占 editorWorkspaceRef 上方部分
+    // editorRef 已经是正确的编辑区域 DOM，直接用它的 rect 即可
+    return (
+      logicalX >= rect.left &&
+      logicalX <= rect.right &&
+      logicalY >= rect.top &&
+      logicalY <= rect.bottom
     );
   }, []);
 
@@ -277,11 +310,13 @@ function App() {
     let unlistenResize: (() => void) | undefined;
     let unlistenMoved: (() => void) | undefined;
     let unlistenDrop: (() => void) | undefined;
+    let unlistenClose: (() => void) | undefined;
+    let isMounted = true;
 
     async function setupApp() {
       // 设置一个安全超时，防止初始化挂起导致窗口永远不显示
       const timeoutId = setTimeout(async () => {
-        if (!isAppReady) {
+        if (!isAppReady && isMounted) {
           console.warn("App initialization timeout, forcing window show");
           try {
             const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -302,6 +337,8 @@ function App() {
 
         // 1. 等待核心状态和 Monaco 都准备完成后再显示主界面，避免半加载闪烁。
         await Promise.all([init(), monacoReady]);
+
+        if (!isMounted) return;
 
         // 2. 加载并应用窗口配置
         const settings = await loadSettings();
@@ -340,43 +377,80 @@ function App() {
           if (event.payload.type === "enter") {
             setIsDragging(true);
             setTerminalDragState(false);
+            setEditorDragState(false);
           } else if (event.payload.type === "over") {
-            setTerminalDragState(isPointInsideTerminal(event.payload.position));
+            const overTerminal = isPointInsideTerminal(event.payload.position);
+            const overEditor = !overTerminal && isPointInsideEditor(event.payload.position) && isMarkdownEditable(useEditorStore.getState().tabs, useEditorStore.getState().activeTabId);
+            setTerminalDragState(overTerminal);
+            setEditorDragState(overEditor);
           } else if (event.payload.type === "drop") {
-            const droppedInTerminal = isDraggingOverTerminalRef.current;
+            // 在 drop 时重新判定一次落点，确保准确性
+            const droppedInTerminal = isPointInsideTerminal(event.payload.position);
+            const droppedInEditor = !droppedInTerminal && isPointInsideEditor(event.payload.position) && isMarkdownEditable(useEditorStore.getState().tabs, useEditorStore.getState().activeTabId);
+            
             setIsDragging(false);
             setTerminalDragState(false);
+            setEditorDragState(false);
+            
             const paths = event.payload.paths;
             if (droppedInTerminal) {
               void insertPathsIntoTerminal(paths);
               return;
             }
+
+            // 如果活动 tab 是 Markdown 编辑模式，交由 Editor 组件处理
+            if (droppedInEditor) {
+              dispatchFileDrop(paths);
+              return;
+            }
+
+            // 只有当既不在终端也不在可编辑的编辑器区域时，才执行打开文件的操作
             for (const path of paths) {
               void handleDroppedPath(path);
             }
           } else {
             setIsDragging(false);
             setTerminalDragState(false);
+            setEditorDragState(false);
+          }
+        });
+
+        unlistenClose = await appWindow.onCloseRequested(async (event) => {
+          const state = useEditorStore.getState();
+          const dirtyTabs = state.tabs.filter(tab => tab.isDirty);
+          
+          if (dirtyTabs.length > 0) {
+            event.preventDefault();
+            state.showModal({
+              title: "是否保存窗口",
+              message: `有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失所有更改。确定要退出吗？`,
+              kind: "warning",
+              onConfirm: () => {
+                appWindow.destroy();
+              }
+            });
           }
         });
 
         // 5. 准备就绪，显示窗口
-        // 在所有位置和大小调整完成后再显示，避免视觉上的闪烁或跳变
         clearTimeout(timeoutId);
-        setIsAppReady(true);
-        await appWindow.show();
-        await appWindow.setFocus();
+        if (isMounted) {
+          setIsAppReady(true);
+          await appWindow.show();
+          await appWindow.setFocus();
+        }
       } catch (e) {
         clearTimeout(timeoutId);
         console.error("Tauri API Error:", e);
-        // 出错时也尝试显示窗口，避免应用永远隐藏
-        try {
-          const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-          const appWindow = getCurrentWebviewWindow();
-          setIsAppReady(true);
-          await appWindow.show();
-        } catch (innerE) {
-          console.error("Failed to show window in error handler:", innerE);
+        if (isMounted) {
+          try {
+            const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+            const appWindow = getCurrentWebviewWindow();
+            setIsAppReady(true);
+            await appWindow.show();
+          } catch (innerE) {
+            console.error("Failed to show window in error handler:", innerE);
+          }
         }
       }
     }
@@ -384,9 +458,11 @@ function App() {
     setupApp();
 
     return () => {
+      isMounted = false;
       if (unlistenResize) unlistenResize();
       if (unlistenMoved) unlistenMoved();
       if (unlistenDrop) unlistenDrop();
+      if (unlistenClose) unlistenClose();
     };
   }, []);
 
@@ -420,7 +496,7 @@ function App() {
       <TitleBar />
 
       {/* Main Layout Area: Sidebars and Content */}
-      <div className={`flex-1 flex overflow-hidden transition-transform duration-300 ${isDragging && !isDraggingOverTerminal ? 'scale-[0.98] opacity-50 blur-[2px]' : 'scale-100 opacity-100 blur-0'}`}>
+      <div className={`flex-1 flex overflow-hidden transition-transform duration-300 ${isDragging && !isDraggingOverTerminal && !isDraggingOverEditor ? 'scale-[0.98] opacity-50 blur-[2px]' : 'scale-100 opacity-100 blur-0'}`}>
         {/* Left Sidebar */}
         {!isLeftSidebarCollapsed && <Sidebar />}
 
@@ -428,8 +504,10 @@ function App() {
         <div className="flex-1 flex flex-col overflow-hidden">
           <Toolbar />
           <div ref={editorWorkspaceRef} className="flex-1 overflow-hidden relative z-0 flex flex-col">
-            <div className="flex-1 overflow-hidden relative">
-              <Editor />
+            <div className="flex-1 overflow-hidden relative flex flex-col">
+              <div ref={editorRef} className="flex-1 overflow-hidden">
+                <Editor />
+              </div>
             </div>
             
             {/* Integrated Terminal */}
@@ -562,7 +640,13 @@ function App() {
             </div>
             <span className="text-border">|</span>
             <span>Oops Editor</span>
-            <div className="flex-1" />
+            <div className="flex-1 flex items-center px-4 overflow-hidden">
+              {hoveredPath && (
+                <span className="text-accent/70 truncate animate-in fade-in slide-in-from-left-2 duration-200 font-mono text-[10px]">
+                  {hoveredPath}
+                </span>
+              )}
+            </div>
             <span className="hidden sm:inline text-text-muted/60">拖拽文件到窗口打开</span>
           </div>
         </div>
@@ -571,21 +655,21 @@ function App() {
         {!isRightSidebarCollapsed && <RightSidebar />}
       </div>
 
-      {/* Drag and Drop Overlay */}
-      {isDragging && !isDraggingOverTerminal && (
+      {/* Drag and Drop Overlay — different hints per drop zone */}
+      {isDragging && !isDraggingOverTerminal && !isDraggingOverEditor && (
         <div className="absolute inset-0 z-[100] bg-accent/5 backdrop-blur-[2px] flex flex-col items-center justify-center pointer-events-none animate-in fade-in duration-300">
           <div className="relative flex flex-col items-center justify-center p-12 rounded-3xl border-2 border-dashed border-accent bg-deepest/90 shadow-[0_0_50px_rgba(var(--accent-rgb),0.2)] animate-in zoom-in duration-300">
             {/* Pulsing rings */}
             <div className="absolute inset-0 rounded-3xl border-2 border-accent/30 animate-ping pointer-events-none" />
             <div className="absolute -inset-4 rounded-[40px] border border-accent/10 animate-pulse pointer-events-none" />
-            
+
             <div className="w-24 h-24 rounded-2xl bg-accent/10 flex items-center justify-center text-accent mb-6 shadow-inner relative overflow-hidden group">
               <div className="absolute inset-0 bg-gradient-to-tr from-accent/20 to-transparent opacity-50" />
               <UploadCloud size={48} className="relative z-10 animate-bounce" />
             </div>
-            
+
             <h2 className="text-2xl font-bold text-text mb-3 tracking-tight">
-              释放以导入资源
+              释放以打开文件
             </h2>
             <div className="flex items-center gap-3">
               <span className="px-2 py-1 rounded bg-surface border border-border text-[10px] text-text-secondary font-mono uppercase tracking-widest">
@@ -596,10 +680,38 @@ function App() {
                 Folders
               </span>
             </div>
-            
+
             <div className="mt-8 flex items-center gap-2 text-text-muted text-xs bg-surface/50 px-4 py-2 rounded-full border border-border/50">
               <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
               Oops Editor 准备就绪
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Editor drop zone overlay — Markdown editing mode */}
+      {isDragging && isDraggingOverEditor && (
+        <div className="absolute inset-0 z-[100] bg-accent/5 backdrop-blur-[2px] flex flex-col items-center justify-center pointer-events-none animate-in fade-in duration-300">
+          <div className="relative flex flex-col items-center justify-center p-12 rounded-3xl border-2 border-dashed border-accent bg-deepest/90 shadow-[0_0_50px_rgba(var(--accent-rgb),0.2)] animate-in zoom-in duration-300">
+            <div className="absolute inset-0 rounded-3xl border-2 border-accent/30 animate-ping pointer-events-none" />
+
+            <div className="w-24 h-24 rounded-2xl bg-accent/10 flex items-center justify-center text-accent mb-6 shadow-inner relative overflow-hidden group">
+              <div className="absolute inset-0 bg-gradient-to-tr from-accent/20 to-transparent opacity-50" />
+              <FileText size={48} className="relative z-10" />
+            </div>
+
+            <h2 className="text-2xl font-bold text-text mb-3 tracking-tight">
+              释放以插入 Markdown 引用
+            </h2>
+            <div className="flex items-center gap-4 text-text-secondary text-sm">
+              <div className="flex items-center gap-1.5">
+                <Image size={16} className="text-accent" />
+                <span>图片 → ![](path)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Link size={16} className="text-accent" />
+                <span>文件 → [name](path)</span>
+              </div>
             </div>
           </div>
         </div>
@@ -632,7 +744,13 @@ async function openDroppedFile(path: string) {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const name = path.split(/[/\\]/).pop() ?? path;
-    const language = detectLanguage(name);
+    const { language, unsupportedReason } = detectLanguage(name);
+
+    if (language === "unsupported") {
+      useEditorStore.getState().showNotification(unsupportedReason || `不支持打开该类型的文件: ${name}`, "info");
+      return;
+    }
+
     let content = "";
 
     if (!isPreviewOnlyLanguage(language)) {

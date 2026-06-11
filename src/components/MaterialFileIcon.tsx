@@ -74,7 +74,7 @@ function resolveFileIconName(fileName: string) {
     }
   }
 
-  const languageId = detectLanguage(fileName);
+  const { language: languageId } = detectLanguage(fileName);
   const languageMatch = manifest.languageIds?.[languageId];
   if (languageMatch) {
     return languageMatch;

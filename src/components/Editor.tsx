@@ -18,6 +18,14 @@ import {
   Undo2,
 } from "lucide-react";
 import { useEditorStore } from "../store/editor";
+import {
+  registerEditorInsert,
+  unregisterEditorInsert,
+  insertAtCursor,
+  isImageFile,
+  buildImageSyntax,
+  buildLinkSyntax,
+} from "../utils/editorInsert";
 import ContextMenu from "./ContextMenu";
 import { resolveEditorMode } from "./editor-modes";
 import { saveTab } from "../services/editorSave";
@@ -137,6 +145,45 @@ export default function Editor() {
     clearMarkdownOutlineTarget();
   }, [activeTab, clearMarkdownOutlineTarget, markdownOutlineTarget]);
 
+  // 监听 App 层发起的文件拖放事件（来自 Tauri onDragDropEvent）
+  useEffect(() => {
+    const handleFileDrop = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { paths: string[] } | undefined;
+      if (!detail?.paths?.length) return;
+
+      const state = useEditorStore.getState();
+      const tab = state.tabs.find((t) => t.id === state.activeTabId);
+      if (
+        !tab ||
+        tab.language !== "markdown" ||
+        tab.isPreviewMode ||
+        tab.isReadOnly
+      ) {
+        return;
+      }
+
+      let insertedCount = 0;
+      for (const path of detail.paths) {
+        const text = isImageFile(path)
+          ? buildImageSyntax(path)
+          : buildLinkSyntax(path);
+        if (insertAtCursor(text)) insertedCount++;
+      }
+
+      if (insertedCount > 0) {
+        state.showNotification(
+          `已插入 ${insertedCount} 个文件引用到 Markdown`,
+          "success",
+        );
+      }
+    };
+
+    window.addEventListener("file-drop-into-editor", handleFileDrop);
+    return () => {
+      window.removeEventListener("file-drop-into-editor", handleFileDrop);
+    };
+  }, []);
+
   const persistTab = useCallback(async (id: string) => {
     const state = useEditorStore.getState();
     const tab = state.tabs.find((item) => item.id === id);
@@ -146,10 +193,37 @@ export default function Editor() {
 
     await saveTab(tab);
     state.markClean(id);
+    
+    // 发送刷新事件，让 Git 面板等组件自动更新
+    window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: tab.path } }));
   }, []);
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
+
+    // 注册编辑器插入回调，供拖放等其他模块使用
+    registerEditorInsert((text: string) => {
+      const selection = editor.getSelection();
+      if (!selection) {
+        editor.executeEdits("external-insert", [
+          { range: new monaco.Range(1, 1, 1, 1), text, forceMoveMarkers: true },
+        ]);
+        return;
+      }
+      editor.executeEdits("external-insert", [
+        {
+          range: new monaco.Range(
+            selection.startLineNumber,
+            selection.startColumn,
+            selection.endLineNumber,
+            selection.endColumn,
+          ),
+          text,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.focus();
+    });
 
     editor.onContextMenu((event) => {
       const browserEvent = event.event.browserEvent;
@@ -198,6 +272,13 @@ export default function Editor() {
       },
     });
   }, [persistTab]);
+
+  // 组件卸载时清理编辑器插入回调
+  useEffect(() => {
+    return () => {
+      unregisterEditorInsert();
+    };
+  }, []);
 
   const handleChange = useCallback(
     (value: string | undefined) => {

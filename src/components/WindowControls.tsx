@@ -10,6 +10,8 @@ export default function WindowControls() {
     toggleLeftSidebar, 
     toggleRightSidebar,
     openSettings,
+    tabs,
+    showModal,
   } = useEditorStore();
 
   useEffect(() => {
@@ -58,6 +60,25 @@ export default function WindowControls() {
   };
 
   const handleClose = async () => {
+    const dirtyTabs = tabs.filter(tab => tab.isDirty);
+    
+    if (dirtyTabs.length > 0) {
+      showModal({
+        title: "是否保存窗口",
+        message: `有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失所有更改。确定要关闭吗？`,
+        kind: "warning",
+        onConfirm: async () => {
+          try {
+            const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+            await getCurrentWebviewWindow().hide();
+          } catch (e) {
+            console.error(e);
+          }
+        },
+      });
+      return;
+    }
+
     try {
       const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
       await getCurrentWebviewWindow().hide();

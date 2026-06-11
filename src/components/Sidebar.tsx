@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Search, X, Edit2, Trash2, ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin, ChevronsUp } from "lucide-react";
-import { useEditorStore } from "../store/editor";
+import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Search, X, Edit2, Trash2, ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin, ChevronsUp, RotateCw } from "lucide-react";
+import { useEditorStore, type DefaultFolder } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { detectLanguage, isPreviewOnlyLanguage } from "../types";
@@ -31,6 +31,19 @@ type OpenMode = "text" | "base64";
 const buildTabId = (filePath: string, mode: OpenMode) =>
   mode === "base64" ? `${filePath}#base64` : filePath;
 
+const getRenameSelectionEnd = (entryName: string, isDirectory: boolean) => {
+  if (isDirectory) {
+    return entryName.length;
+  }
+
+  const lastDotIndex = entryName.lastIndexOf(".");
+  if (lastDotIndex <= 0) {
+    return entryName.length;
+  }
+
+  return lastDotIndex;
+};
+
 async function openFileTab(
   filePath: string,
   openTab: ReturnType<typeof useEditorStore.getState>["openTab"],
@@ -40,7 +53,14 @@ async function openFileTab(
 ) {
   try {
     const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
-    const language = mode === "base64" ? "plaintext" : detectLanguage(fileName);
+    const detection = mode === "base64" ? { language: "plaintext" } : detectLanguage(fileName);
+    const { language, unsupportedReason } = detection;
+
+    if (language === "unsupported") {
+      showNotification(unsupportedReason || `不支持打开该类型的文件: ${fileName}`, "info");
+      return;
+    }
+
     let content = "";
 
     if (mode === "base64") {
@@ -66,25 +86,39 @@ async function openFileTab(
   }
 }
 
-const sortTreeEntries = (entries: DirEntry[], pinnedFolders: string[]) => {
+const sortTreeEntries = (entries: DirEntry[], pinnedFolders: string[], defaultFolders: DefaultFolder[]) => {
   const pinnedSet = new Set(pinnedFolders.map(normalizePath));
+  const defaultPathsSet = new Set(defaultFolders.map(f => normalizePath(f.path)));
 
   return [...entries].sort((a, b) => {
-    const aPinned = a.is_dir && pinnedSet.has(normalizePath(a.path));
-    const bPinned = b.is_dir && pinnedSet.has(normalizePath(b.path));
+    const aPath = normalizePath(a.path);
+    const bPath = normalizePath(b.path);
 
+    // 1. 默认文件夹优先级最高
+    const aDefault = a.is_dir && defaultPathsSet.has(aPath);
+    const bDefault = b.is_dir && defaultPathsSet.has(bPath);
+    if (aDefault !== bDefault) {
+      return aDefault ? -1 : 1;
+    }
+
+    // 2. 普通置顶文件夹
+    const aPinned = a.is_dir && pinnedSet.has(aPath);
+    const bPinned = b.is_dir && pinnedSet.has(bPath);
     if (aPinned !== bPinned) {
       return aPinned ? -1 : 1;
     }
 
+    // 3. 文件夹排在文件前面
     if (a.is_dir !== b.is_dir) {
       return a.is_dir ? -1 : 1;
     }
 
+    // 4. 修改时间
     if (a.modified_at !== b.modified_at) {
       return b.modified_at - a.modified_at;
     }
 
+    // 5. 名称排序
     return a.name.localeCompare(b.name, "zh-CN");
   });
 };
@@ -102,17 +136,20 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
     showNotification,
     expandedFolders,
     pinnedFolders,
+    defaultFolders,
     rebasePinnedFilePath,
     toggleFolderExpanded,
     rebasePinnedFolderPaths,
+    setHoveredPath,
   } = useEditorStore();
   const isOpen = expandedFolders.includes(path);
-  const isPinned = is_dir && pinnedFolders.includes(normalizePath(path));
+  const isDefault = is_dir && defaultFolders.some(f => normalizePath(f.path) === normalizePath(path));
+  const isPinned = is_dir && (isDefault || pinnedFolders.includes(normalizePath(path)));
   const [children, setChildren] = useState<DirEntry[]>([]);
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
-  const sortedChildren = useMemo(() => sortTreeEntries(children, pinnedFolders), [children, pinnedFolders]);
+  const sortedChildren = useMemo(() => sortTreeEntries(children, pinnedFolders, defaultFolders), [children, pinnedFolders, defaultFolders]);
 
   const refreshChildren = useCallback(async () => {
     if (is_dir && isOpen) {
@@ -134,9 +171,9 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
   useEffect(() => {
     if (isRenaming && inputRef.current) {
       inputRef.current.focus();
-      inputRef.current.select();
+      inputRef.current.setSelectionRange(0, getRenameSelectionEnd(name, is_dir));
     }
-  }, [isRenaming]);
+  }, [isRenaming, is_dir, name]);
 
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -174,12 +211,19 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
     await openFileTab(filePath, openTab, showNotification, fileSize);
   };
 
-  const isActive = activeTabId === path;
+  const isActive = useMemo(() => {
+    if (!activeTabId) return false;
+    // Handle base64 mode which appends #base64 to the id
+    const activePath = activeTabId.endsWith("#base64") 
+      ? activeTabId.slice(0, -7) 
+      : activeTabId;
+    return normalizePath(activePath) === normalizePath(path);
+  }, [activeTabId, path]);
 
   // Listen for custom "rename" event if we are the target
   useEffect(() => {
     const handleRenameEvent = (e: any) => {
-      if (e.detail.path === path) {
+      if (normalizePath(e.detail.path) === normalizePath(path)) {
         setIsRenaming(true);
       }
     };
@@ -209,6 +253,8 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
         }`}
         style={{ paddingLeft: `${level * 12 + 12}px` }}
         onClick={handleToggle}
+        onMouseEnter={() => setHoveredPath(path)}
+        onMouseLeave={() => setHoveredPath(null)}
         onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size, modified_at })}
       >
         {is_dir ? (
@@ -220,6 +266,7 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
               isDirectory
               isOpen={isOpen}
               size={16}
+              className="shrink-0"
             />
           </>
         ) : (
@@ -229,6 +276,7 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
               name={name}
               path={path}
               size={16}
+              className="shrink-0"
             />
           </>
         )}
@@ -262,7 +310,7 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
         )}
       </div>
       {isOpen && sortedChildren.length > 0 && (
-        <div>
+        <div onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size, modified_at })}>
           {sortedChildren.map((child) => (
             <FileNode 
               key={child.path} 
@@ -278,6 +326,7 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
         <div 
           className="py-1 text-[10px] text-text-muted italic"
           style={{ paddingLeft: `${(level + 1) * 12 + 28}px` }}
+          onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size, modified_at })}
         >
           空目录
         </div>
@@ -287,11 +336,12 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
 }
 
 function RootFolder({ path, onContextMenu }: { path: string; onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void }) {
-  const { removeRootPath, expandedFolders, pinnedFolders, toggleFolderExpanded } = useEditorStore();
+  const { removeRootPath, expandedFolders, pinnedFolders, defaultFolders, toggleFolderExpanded, setHoveredPath } = useEditorStore();
   const isOpen = expandedFolders.includes(path);
-  const isPinned = pinnedFolders.includes(normalizePath(path));
+  const isDefault = defaultFolders.some(f => normalizePath(f.path) === normalizePath(path));
+  const isPinned = isDefault || pinnedFolders.includes(normalizePath(path));
   const [entries, setEntries] = useState<DirEntry[]>([]);
-  const sortedEntries = useMemo(() => sortTreeEntries(entries, pinnedFolders), [entries, pinnedFolders]);
+  const sortedEntries = useMemo(() => sortTreeEntries(entries, pinnedFolders, defaultFolders), [entries, pinnedFolders, defaultFolders]);
 
   const loadRoot = useCallback(async () => {
     try {
@@ -327,16 +377,23 @@ function RootFolder({ path, onContextMenu }: { path: string; onContextMenu: (e: 
       <div 
         className="pl-2 pr-3 py-1.5 flex items-center justify-between group/folder cursor-pointer select-none hover:bg-surface/30 transition-colors"
         onClick={() => toggleFolderExpanded(path)}
+        onMouseEnter={() => setHoveredPath(path)}
+        onMouseLeave={() => setHoveredPath(null)}
         onContextMenu={(e) => onContextMenu(e, { path, name: path.split(/[/\\]/).pop() || path, is_dir: true, size: 0, modified_at: 0 })}
       >
-        <div className="flex items-center gap-1.5 overflow-hidden">
-          {isOpen ? <ChevronDown size={14} className="text-text-muted" /> : <ChevronRight size={14} className="text-text-muted" />}
+        <div className="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
+          {isOpen ? (
+            <ChevronDown size={14} className="text-text-muted shrink-0" />
+          ) : (
+            <ChevronRight size={14} className="text-text-muted shrink-0" />
+          )}
           <MaterialFileIcon
             name={path.split(/[/\\]/).pop() || path}
             path={path}
             isDirectory
             isOpen={isOpen}
             size={16}
+            className="shrink-0"
           />
           <span 
             className="text-[11px] font-bold tracking-wider text-text-secondary truncate"
@@ -358,7 +415,10 @@ function RootFolder({ path, onContextMenu }: { path: string; onContextMenu: (e: 
         </button>
       </div>
       {isOpen && (
-        <div className="mt-0.5">
+        <div 
+          className="mt-0.5"
+          onContextMenu={(e) => onContextMenu(e, { path, name: path.split(/[/\\]/).pop() || path, is_dir: true, size: 0, modified_at: 0 })}
+        >
           {sortedEntries.length > 0 ? (
             sortedEntries.map((entry) => (
               <FileNode 
@@ -370,7 +430,12 @@ function RootFolder({ path, onContextMenu }: { path: string; onContextMenu: (e: 
               />
             ))
           ) : (
-            <div className="px-8 py-1 text-[10px] text-text-muted italic">空目录</div>
+            <div 
+              className="px-8 py-1 text-[10px] text-text-muted italic"
+              onContextMenu={(e) => onContextMenu(e, { path, name: path.split(/[/\\]/).pop() || path, is_dir: true, size: 0, modified_at: 0 })}
+            >
+              空目录
+            </div>
           )}
         </div>
       )}
@@ -384,7 +449,8 @@ export default function Sidebar() {
     showNotification, addTerminal, openTab,
     defaultFolders, addDefaultFolder, removeDefaultFolder, updateDefaultFolder,
     pinnedFiles, removePinnedFile,
-    pinnedFolders, pinFolder, unpinFolder, removePinnedFoldersUnder, collapseAllFolders, showModal
+    pinnedFolders, pinFolder, unpinFolder, removePinnedFoldersUnder, collapseAllFolders, showModal,
+    setHoveredPath, hoveredPath, setFolderExpanded
   } = useEditorStore();
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DirEntry } | null>(null);
@@ -394,13 +460,29 @@ export default function Sidebar() {
   const isResizing = useRef(false);
   const sortedRootPaths = useMemo(() => {
     const pinnedSet = new Set(pinnedFolders.map(normalizePath));
+    const defaultPathsSet = new Set(defaultFolders.map(f => normalizePath(f.path)));
+
     return [...rootPaths].sort((a, b) => {
-      const aPinned = pinnedSet.has(normalizePath(a));
-      const bPinned = pinnedSet.has(normalizePath(b));
-      if (aPinned === bPinned) return 0;
-      return aPinned ? -1 : 1;
+      const aPath = normalizePath(a);
+      const bPath = normalizePath(b);
+
+      // 1. 默认文件夹优先级最高
+      const aDefault = defaultPathsSet.has(aPath);
+      const bDefault = defaultPathsSet.has(bPath);
+      if (aDefault !== bDefault) {
+        return aDefault ? -1 : 1;
+      }
+
+      // 2. 普通置顶文件夹
+      const aPinned = pinnedSet.has(aPath);
+      const bPinned = pinnedSet.has(bPath);
+      if (aPinned !== bPinned) {
+        return aPinned ? -1 : 1;
+      }
+
+      return 0;
     });
-  }, [rootPaths, pinnedFolders]);
+  }, [rootPaths, pinnedFolders, defaultFolders]);
 
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -515,7 +597,23 @@ export default function Sidebar() {
       return;
     }
 
-    const baseDir = sortedRootPaths[0];
+    let baseDir = sortedRootPaths[0];
+    if (hoveredPath) {
+      try {
+        const isDir = await invoke<boolean>("is_directory", { path: hoveredPath });
+        if (isDir) {
+          baseDir = hoveredPath;
+        } else {
+          const lastIdx = Math.max(hoveredPath.lastIndexOf("/"), hoveredPath.lastIndexOf("\\"));
+          if (lastIdx !== -1) {
+            baseDir = hoveredPath.substring(0, lastIdx);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to check if directory:", err);
+      }
+    }
+
     const separator = baseDir.includes("\\") ? "\\" : "/";
     const isFolder = type === 'folder';
     const defaultName = isFolder ? "新建文件夹" : "新建文件.txt";
@@ -531,6 +629,7 @@ export default function Sidebar() {
       }
       
       window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: baseDir } }));
+      setFolderExpanded(baseDir, true);
       
       // Trigger rename for the new item
       setTimeout(() => {
@@ -539,12 +638,33 @@ export default function Sidebar() {
     } catch (err) {
       showNotification(`创建失败: ${err}`, "error");
     }
-  }, [sortedRootPaths, rootPaths.length, showNotification, openFile]);
+  }, [sortedRootPaths, rootPaths.length, showNotification, openFile, hoveredPath]);
 
   const handleCollapseAllFolders = useCallback(() => {
     collapseAllFolders();
     showNotification("已全部折叠", "success");
   }, [collapseAllFolders, showNotification]);
+
+  // Support F2 shortcut for renaming
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "F2" && hoveredPath) {
+        // Don't trigger if we're typing in an input or textarea
+        if (
+          document.activeElement?.tagName === "INPUT" ||
+          document.activeElement?.tagName === "TEXTAREA"
+        ) {
+          return;
+        }
+        
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("file-rename", { detail: { path: hoveredPath } }));
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hoveredPath]);
 
   const handleAction = useCallback(async (action: string) => {
     if (!contextMenu) return;
@@ -575,6 +695,12 @@ export default function Sidebar() {
           break;
         case "rename":
           window.dispatchEvent(new CustomEvent("file-rename", { detail: { path } }));
+          break;
+        case "refresh":
+          if (is_dir) {
+            window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path } }));
+            showNotification(`已刷新目录 ${name}`, "success");
+          }
           break;
         case "pin":
           pinFolder(path);
@@ -625,6 +751,7 @@ export default function Sidebar() {
           }
           
           window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: baseDir } }));
+          setFolderExpanded(baseDir, true);
           // Optional: trigger rename for the new item
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent("file-rename", { detail: { path: newPath } }));
@@ -703,10 +830,13 @@ export default function Sidebar() {
 
   const contextMenuItems = useMemo(() => {
     if (!contextMenu) return [];
-    const isPinned = contextMenu.entry.is_dir && pinnedFolders.includes(normalizePath(contextMenu.entry.path));
+    const normalizedPath = normalizePath(contextMenu.entry.path);
+    const isDefault = contextMenu.entry.is_dir && defaultFolders.some(f => normalizePath(f.path) === normalizedPath);
+    const isPinned = contextMenu.entry.is_dir && (isDefault || pinnedFolders.includes(normalizedPath));
     return [
       { label: "新建文件", icon: <FilePlus size={14} />, onClick: () => handleAction("new-file") },
       { label: "新建文件夹", icon: <FolderPlus size={14} />, onClick: () => handleAction("new-folder") },
+      ...(contextMenu.entry.is_dir ? [{ label: "刷新", icon: <RotateCw size={14} />, onClick: () => handleAction("refresh") }] : []),
       { separator: true, label: "", onClick: () => {} },
       ...(rootPaths.length > 0
         ? [{ label: "全部折叠", icon: <ChevronsUp size={14} />, onClick: handleCollapseAllFolders }]
@@ -864,6 +994,8 @@ export default function Sidebar() {
                     void openFile(file.path);
                   }}
                   onContextMenu={(e) => handlePinnedFileContextMenu(e, file.path)}
+                  onMouseEnter={() => setHoveredPath(file.path)}
+                  onMouseLeave={() => setHoveredPath(null)}
                   title={file.path}
                 >
                   <MaterialFileIcon
@@ -919,6 +1051,8 @@ export default function Sidebar() {
                   className="flex items-center gap-1.5 cursor-pointer hover:bg-surface/50 px-1.5 py-0.5 rounded transition-colors text-text-secondary hover:text-accent text-[11px] truncate group shrink-0 max-w-[150px]"
                   onClick={() => addRootPath(folder.path)}
                   onContextMenu={(e) => handleDefaultFolderContextMenu(e, folder.id)}
+                  onMouseEnter={() => setHoveredPath(folder.path)}
+                  onMouseLeave={() => setHoveredPath(null)}
                   title={folder.path}
                 >
                   <MaterialFileIcon

@@ -6,8 +6,19 @@ import {
   sanitizeMaxOpenTabs,
   saveSetting,
 } from "../utils/settings";
+import {
+  persistActiveTabId,
+  persistDefaultFoldersState,
+  persistExpandedFoldersState,
+  persistPinnedFilesState,
+  persistPinnedFoldersState,
+  persistRootPathsState,
+  persistSingleTabState,
+  persistTabsState,
+} from "../utils/workspaceSession";
 import { base64ToHexView, parseHexView } from "../utils/hexView";
 import { appDataDir } from "@tauri-apps/api/path";
+import { invoke } from "@tauri-apps/api/core";
 
 const normalizePath = (path: string) => {
   if (!path) return "";
@@ -145,10 +156,12 @@ interface EditorState {
   notification: { message: string; type: "info" | "error" | "success" } | null;
   expandedFolders: string[];
   pinnedFolders: string[];
+  hoveredPath: string | null;
   markdownOutlineTarget: MarkdownOutlineTarget | null;
   rightSidebarIconOrder: string[];
 
   init: () => Promise<void>;
+  setHoveredPath: (path: string | null) => void;
   openTab: (tab: FileTab) => void;
   closeTab: (id: string) => void;
   closeTabs: (ids: string[]) => void;
@@ -227,8 +240,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   notification: null,
   expandedFolders: [],
   pinnedFolders: [],
+  hoveredPath: null,
   markdownOutlineTarget: null,
-  rightSidebarIconOrder: ["info", "outline", "help"],
+  rightSidebarIconOrder: ["info", "git", "outline", "help"],
 
   init: async () => {
     const settings = await loadSettings();
@@ -271,6 +285,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       settings.maxOpenTabs,
     );
 
+    const rightSidebarIconOrder = settings.rightSidebarIconOrder || ["info", "git", "outline", "help"];
+    if (!rightSidebarIconOrder.includes("git")) {
+      // 如果没有 git，插入到 info 后面
+      const infoIdx = rightSidebarIconOrder.indexOf("info");
+      if (infoIdx !== -1) {
+        rightSidebarIconOrder.splice(infoIdx + 1, 0, "git");
+      } else {
+        rightSidebarIconOrder.unshift("git");
+      }
+    }
+
     set({
       isLeftSidebarCollapsed: settings.isLeftSidebarCollapsed,
       isRightSidebarCollapsed: settings.isRightSidebarCollapsed,
@@ -288,15 +313,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       expandedFolders: settings.expandedFolders || [],
       pinnedFolders: normalizeUniquePaths(settings.pinnedFolders || []),
       openFiles: limitedTabsState.openFiles,
-      rightSidebarIconOrder: settings.rightSidebarIconOrder || ["info", "outline", "help"],
+      rightSidebarIconOrder,
     });
 
     if (
       limitedTabsState.tabs.length !== normalizedTabs.length ||
       limitedTabsState.activeTabId !== settings.activeTabId
     ) {
-      saveSetting("tabs", limitedTabsState.tabs);
-      saveSetting("activeTabId", limitedTabsState.activeTabId);
+      persistTabsState(limitedTabsState.tabs, limitedTabsState.activeTabId);
     }
 
     if (limitedTabsState.closedTabs.length > 0) {
@@ -304,11 +328,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
+  setHoveredPath: (path: string | null) => set({ hoveredPath: path }),
+
   openTab: (tab: FileTab) =>
     set((state) => {
       const existing = state.tabs.find((t) => t.id === tab.id);
       if (existing) {
-        saveSetting('activeTabId', tab.id);
+        void persistActiveTabId(tab.id);
         return { activeTabId: tab.id };
       }
       const limitedTabsState = enforceTabLimit(
@@ -316,8 +342,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         tab.id,
         state.maxOpenTabs,
       );
-      saveSetting('tabs', limitedTabsState.tabs);
-      saveSetting('activeTabId', limitedTabsState.activeTabId);
+      persistTabsState(limitedTabsState.tabs, limitedTabsState.activeTabId);
       if (limitedTabsState.closedTabs.length > 0) {
         queueMicrotask(() => {
           get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");
@@ -339,8 +364,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const idx = state.tabs.findIndex((t) => t.id === id);
         activeTabId = tabs[idx]?.id ?? tabs[idx - 1]?.id ?? null;
       }
-      saveSetting('tabs', tabs);
-      saveSetting('activeTabId', activeTabId);
+      persistTabsState(tabs, activeTabId);
       return { tabs, openFiles, activeTabId };
     }),
 
@@ -352,8 +376,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (activeTabId && ids.includes(activeTabId)) {
         activeTabId = tabs[tabs.length - 1]?.id ?? null;
       }
-      saveSetting('tabs', tabs);
-      saveSetting('activeTabId', activeTabId);
+      persistTabsState(tabs, activeTabId);
       return { tabs, openFiles, activeTabId };
     }),
 
@@ -383,7 +406,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setActiveTab: (id: string) => {
     set({ activeTabId: id });
-    saveSetting('activeTabId', id);
+    void persistActiveTabId(id);
   },
 
   updateContent: (id: string, content: string) =>
@@ -391,11 +414,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const newTabs = state.tabs.map((t) =>
         t.id === id ? { ...t, content, isDirty: true } : t
       );
-      // Note: We might not want to save content to settings on every keystroke
-      // but the user wants to recover state. Let's save it for now, 
-      // though usually content should be saved to file.
-      // However, recover "dirty" state might be useful.
-      saveSetting('tabs', newTabs);
+      const updatedTab = newTabs.find((tab) => tab.id === id);
+      const tabIndex = newTabs.findIndex((tab) => tab.id === id);
+      if (updatedTab && tabIndex !== -1) {
+        void persistSingleTabState(updatedTab, tabIndex);
+      }
       return { tabs: newTabs };
     }),
 
@@ -404,7 +427,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const newTabs = state.tabs.map((t) =>
         t.id === id ? { ...t, isDirty: false } : t
       );
-      saveSetting('tabs', newTabs);
+      const updatedTab = newTabs.find((tab) => tab.id === id);
+      const tabIndex = newTabs.findIndex((tab) => tab.id === id);
+      if (updatedTab && tabIndex !== -1) {
+        void persistSingleTabState(updatedTab, tabIndex);
+      }
       return { tabs: newTabs };
     }),
 
@@ -440,9 +467,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const nextActiveTabId = state.activeTabId === id ? nextPath : state.activeTabId;
       const nextOpenFiles = nextTabs.map((tab) => tab.path);
 
-      saveSetting('tabs', nextTabs);
-      saveSetting('activeTabId', nextActiveTabId);
-      saveSetting('pinnedFiles', nextPinnedFiles);
+      persistTabsState(nextTabs, nextActiveTabId);
+      persistPinnedFilesState(nextPinnedFiles);
 
       return {
         tabs: nextTabs,
@@ -454,29 +480,31 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   addRootPath: (path: string) =>
     set((state) => {
-      const newRootPaths = state.rootPaths.includes(path)
+      const normalizedPath = normalizePath(path);
+      const newRootPaths = state.rootPaths.includes(normalizedPath)
         ? state.rootPaths
-        : [...state.rootPaths, path];
+        : [...state.rootPaths, normalizedPath];
 
-      const newExpanded = state.expandedFolders.includes(path)
+      const newExpanded = state.expandedFolders.includes(normalizedPath)
         ? state.expandedFolders
-        : [...state.expandedFolders, path];
+        : [...state.expandedFolders, normalizedPath];
 
-      saveSetting('rootPaths', newRootPaths);
-      saveSetting('expandedFolders', newExpanded);
+      void persistRootPathsState(newRootPaths);
+      void invoke("record_project_opened", { path: normalizedPath });
+      persistExpandedFoldersState(newExpanded);
       return { rootPaths: newRootPaths, expandedFolders: newExpanded };
     }),
 
   removeRootPath: (path: string) =>
     set((state) => {
       const newRootPaths = state.rootPaths.filter((p) => p !== path);
-      saveSetting('rootPaths', newRootPaths);
+      void persistRootPathsState(newRootPaths);
       return { rootPaths: newRootPaths };
     }),
 
   setDefaultFolders: (folders: DefaultFolder[]) => {
     set({ defaultFolders: folders });
-    saveSetting('defaultFolders', folders);
+    void persistDefaultFoldersState(folders);
   },
 
   updateDefaultFolder: (id: string, path: string, name?: string) => {
@@ -484,20 +512,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       f.id === id ? { ...f, path, name: name || path.split(/[/\\]/).pop() || f.name } : f
     );
     set({ defaultFolders: folders });
-    saveSetting('defaultFolders', folders);
+    void persistDefaultFoldersState(folders);
   },
 
   addDefaultFolder: (name: string, path: string) => {
     const newFolder = { id: crypto.randomUUID(), name, path };
     const folders = [...get().defaultFolders, newFolder];
     set({ defaultFolders: folders });
-    saveSetting('defaultFolders', folders);
+    void persistDefaultFoldersState(folders);
   },
 
   removeDefaultFolder: (id: string) => {
     const folders = get().defaultFolders.filter(f => f.id !== id);
     set({ defaultFolders: folders });
-    saveSetting('defaultFolders', folders);
+    void persistDefaultFoldersState(folders);
   },
 
   pinFile: (file: PinnedFile) => {
@@ -506,7 +534,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     const nextPinnedFiles = normalizePinnedFiles([...get().pinnedFiles, file]);
     set({ pinnedFiles: nextPinnedFiles });
-    saveSetting('pinnedFiles', nextPinnedFiles);
+    persistPinnedFilesState(nextPinnedFiles);
   },
 
   unpinFile: (path: string) => {
@@ -515,7 +543,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       (item) => normalizePath(item.path) !== normalizedPath
     );
     set({ pinnedFiles: nextPinnedFiles });
-    saveSetting('pinnedFiles', nextPinnedFiles);
+    persistPinnedFilesState(nextPinnedFiles);
   },
 
   rebasePinnedFilePath: (oldPath: string, newPath: string, nextName?: string) => {
@@ -535,7 +563,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     );
 
     set({ pinnedFiles: nextPinnedFiles });
-    saveSetting('pinnedFiles', nextPinnedFiles);
+    persistPinnedFilesState(nextPinnedFiles);
   },
 
   removePinnedFile: (path: string) => {
@@ -546,7 +574,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       (item) => normalizePath(item.path) !== normalizedPath
     );
     set({ pinnedFiles: nextPinnedFiles });
-    saveSetting('pinnedFiles', nextPinnedFiles);
+    persistPinnedFilesState(nextPinnedFiles);
   },
 
   pinFolder: (path: string) => {
@@ -558,14 +586,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     const nextPinnedFolders = normalizeUniquePaths([...pinnedFolders, normalizedPath]);
     set({ pinnedFolders: nextPinnedFolders });
-    saveSetting('pinnedFolders', nextPinnedFolders);
+    persistPinnedFoldersState(nextPinnedFolders);
   },
 
   unpinFolder: (path: string) => {
     const normalizedPath = normalizePath(path);
     const nextPinnedFolders = get().pinnedFolders.filter((item) => item !== normalizedPath);
     set({ pinnedFolders: nextPinnedFolders });
-    saveSetting('pinnedFolders', nextPinnedFolders);
+    persistPinnedFoldersState(nextPinnedFolders);
   },
 
   rebasePinnedFolderPaths: (oldPath: string, newPath: string) => {
@@ -586,7 +614,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
 
     set({ pinnedFolders: nextPinnedFolders });
-    saveSetting('pinnedFolders', nextPinnedFolders);
+    persistPinnedFoldersState(nextPinnedFolders);
   },
 
   removePinnedFoldersUnder: (path: string) => {
@@ -598,7 +626,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     );
 
     set({ pinnedFolders: nextPinnedFolders });
-    saveSetting('pinnedFolders', nextPinnedFolders);
+    persistPinnedFoldersState(nextPinnedFolders);
   },
 
   toggleLeftSidebar: () => {
@@ -657,9 +685,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       activeTabId: limitedTabsState.activeTabId,
       openFiles: limitedTabsState.openFiles,
     });
-    saveSetting('maxOpenTabs', nextMaxOpenTabs);
-    saveSetting('tabs', limitedTabsState.tabs);
-    saveSetting('activeTabId', limitedTabsState.activeTabId);
+    void saveSetting('maxOpenTabs', nextMaxOpenTabs);
+    persistTabsState(limitedTabsState.tabs, limitedTabsState.activeTabId);
     if (limitedTabsState.closedTabs.length > 0) {
       get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");
     }
@@ -768,7 +795,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
       });
 
-      saveSetting("tabs", nextTabs);
+      const updatedTab = nextTabs.find((tab) => tab.id === id);
+      const tabIndex = nextTabs.findIndex((tab) => tab.id === id);
+      if (updatedTab && tabIndex !== -1) {
+        void persistSingleTabState(updatedTab, tabIndex);
+      }
       return { tabs: nextTabs };
     }),
   toggleLivePreviewMode: (id: string) =>
@@ -786,7 +817,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
       });
 
-      saveSetting("tabs", nextTabs);
+      const updatedTab = nextTabs.find((tab) => tab.id === id);
+      const tabIndex = nextTabs.findIndex((tab) => tab.id === id);
+      if (updatedTab && tabIndex !== -1) {
+        void persistSingleTabState(updatedTab, tabIndex);
+      }
       return { tabs: nextTabs };
     }),
   navigateToMarkdownHeading: (target) => set({ markdownOutlineTarget: target }),
@@ -794,7 +829,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setRightSidebarIconOrder: (order: string[]) => {
     const sanitizedOrder = order.filter((id) => id !== "share");
     set({ rightSidebarIconOrder: sanitizedOrder });
-    saveSetting('rightSidebarIconOrder', sanitizedOrder);
+    void saveSetting('rightSidebarIconOrder', sanitizedOrder);
   },
   toggleFolderExpanded: (path: string) => {
     const { expandedFolders } = get();
@@ -803,7 +838,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ? expandedFolders.filter(p => p !== path)
       : [...expandedFolders, path];
     set({ expandedFolders: newExpanded });
-    saveSetting('expandedFolders', newExpanded);
+    persistExpandedFoldersState(newExpanded);
   },
   setFolderExpanded: (path: string, expanded: boolean) => {
     const { expandedFolders } = get();
@@ -814,10 +849,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ? [...expandedFolders, path]
       : expandedFolders.filter(p => p !== path);
     set({ expandedFolders: newExpanded });
-    saveSetting('expandedFolders', newExpanded);
+    persistExpandedFoldersState(newExpanded);
   },
   collapseAllFolders: () => {
     set({ expandedFolders: [] });
-    saveSetting('expandedFolders', []);
+    persistExpandedFoldersState([]);
   },
 }));

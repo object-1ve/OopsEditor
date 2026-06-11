@@ -2,9 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "opener:default",
@@ -16,18 +14,10 @@
     {
       "identifier": "fs:allow-read-file",
       "allow": [
-        {
-          "path": "C:/**"
-        },
-        {
-          "path": "D:/**"
-        },
-        {
-          "path": "E:/**"
-        },
-        {
-          "path": "F:/**"
-        }
+        { "path": "C:/**" },
+        { "path": "D:/**" },
+        { "path": "E:/**" },
+        { "path": "F:/**" }
       ]
     },
     "fs:allow-read-text-file",
@@ -44,11 +34,6 @@
     "core:window:allow-set-position",
     "core:window:allow-inner-size",
     "core:window:allow-inner-position",
-    "store:default",
-    "store:allow-load",
-    "store:allow-get",
-    "store:allow-set",
-    "store:allow-save",
     "allow-all"
   ]
 }

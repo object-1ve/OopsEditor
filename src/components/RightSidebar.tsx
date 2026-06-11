@@ -6,14 +6,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Info, HelpCircle, ListTree } from "lucide-react";
+import { Info, HelpCircle, ListTree, GitBranch } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "../store/editor";
 import { parseMarkdownHeadings } from "../utils/markdown";
+import GitPanel from "./GitPanel";
 
 const COLLAPSED_WIDTH = 40;
 const DEFAULT_OUTLINE_WIDTH = 280;
 const DEFAULT_INFO_WIDTH = 280;
+const DEFAULT_GIT_WIDTH = 280;
 
 function formatFileSize(bytes: number | undefined): string {
   if (bytes === undefined) return "未知";
@@ -54,7 +56,7 @@ export default function RightSidebar() {
     setRightSidebarIconOrder,
   } = useEditorStore();
   const isResizing = useRef(false);
-  const [activePanel, setActivePanel] = useState<"outline" | "info" | null>(null);
+  const [activePanel, setActivePanel] = useState<"outline" | "info" | "git" | null>(null);
   const [draggedIcon, setDraggedIcon] = useState<string | null>(null);
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
@@ -68,9 +70,10 @@ export default function RightSidebar() {
   const isPanelOpen = activePanel !== null;
   const isOutlineOpen = isMarkdownTab && activePanel === "outline";
   const isInfoOpen = activePanel === "info";
+  const isGitOpen = activePanel === "git";
 
   const displayWidth = isPanelOpen
-    ? Math.max(rightSidebarWidth, activePanel === "outline" ? DEFAULT_OUTLINE_WIDTH : DEFAULT_INFO_WIDTH)
+    ? Math.max(rightSidebarWidth, activePanel === "outline" ? DEFAULT_OUTLINE_WIDTH : activePanel === "git" ? DEFAULT_GIT_WIDTH : DEFAULT_INFO_WIDTH)
     : COLLAPSED_WIDTH;
 
   useEffect(() => {
@@ -128,10 +131,10 @@ export default function RightSidebar() {
     document.body.style.cursor = "default";
   }, [handleMouseMove]);
 
-  const togglePanel = useCallback((panel: "outline" | "info") => {
+  const togglePanel = useCallback((panel: "outline" | "info" | "git") => {
     setActivePanel((current) => {
       const nextPanel = current === panel ? null : panel;
-      const defaultWidth = panel === "outline" ? DEFAULT_OUTLINE_WIDTH : DEFAULT_INFO_WIDTH;
+      const defaultWidth = panel === "outline" ? DEFAULT_OUTLINE_WIDTH : panel === "git" ? DEFAULT_GIT_WIDTH : DEFAULT_INFO_WIDTH;
       if (nextPanel === panel && rightSidebarWidth < defaultWidth) {
         setRightSidebarWidth(defaultWidth);
       }
@@ -206,6 +209,21 @@ export default function RightSidebar() {
             onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
             isDragging={draggedIcon === "info"}
+          />
+        );
+      case "git":
+        return (
+          <SidebarIcon
+            key="git"
+            icon={<GitBranch size={18} />}
+            title="Git"
+            isActive={isGitOpen}
+            onClick={() => togglePanel("git")}
+            onDragStart={(e) => handleDragStart(e, "git")}
+            onDragEnter={(e) => handleDragEnter(e, "git")}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+            isDragging={draggedIcon === "git"}
           />
         );
       case "outline":
@@ -333,6 +351,10 @@ export default function RightSidebar() {
             )}
           </div>
         </div>
+      )}
+
+      {isGitOpen && (
+        <GitPanel />
       )}
     </div>
   );

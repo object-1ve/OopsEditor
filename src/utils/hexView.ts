@@ -109,13 +109,20 @@ export function bytesToAsciiView(bytes: Uint8Array): string {
     return "";
   }
 
+  const ASCII_GROUP = 4;
   const lines: string[] = [];
   for (let i = 0; i < bytes.length; i += BYTES_PER_LINE) {
     const chunk = bytes.slice(i, i + BYTES_PER_LINE);
-    const text = Array.from(chunk, (byte) =>
+    const chars = Array.from(chunk, (byte) =>
       byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : "."
-    ).join("");
-    lines.push(text);
+    );
+
+    // 4字符一组，组内紧密，组间用双空格分隔，与 hex 视图格式对齐
+    const groups: string[] = [];
+    for (let j = 0; j < chars.length; j += ASCII_GROUP) {
+      groups.push(chars.slice(j, j + ASCII_GROUP).join(""));
+    }
+    lines.push(groups.join("  "));
   }
 
   return lines.join("\n");

@@ -8,6 +8,30 @@ use tauri::Manager;
 mod terminal;
 use terminal::{close_terminal, create_terminal, resize_terminal, write_to_terminal};
 
+mod git;
+use git::{
+    git_add, git_check_repo, git_commit, git_get_status, git_get_user, git_init, git_pull,
+    git_push, git_remote_add, git_remote_get, git_resolve_repo_root,
+};
+
+mod db;
+use db::{
+    add_expanded_folder, add_pinned_file, add_pinned_folder, add_project, clear_all_tabs,
+    clear_expanded_folders, delete_project, delete_setting, delete_tab, get_all_projects,
+    get_all_settings, get_all_tabs, get_expanded_folders, get_pinned_files, get_pinned_folders,
+    get_project_by_path, get_project_count, get_recent_projects, get_setting, get_tab_by_file_id,
+    get_tab_count, init_project_database, migrate_from_settings_json, record_project_opened,
+    remove_expanded_folder, remove_pinned_file, remove_pinned_folder, search_projects, set_setting,
+    sync_default_projects, sync_expanded_folders, sync_pinned_files, sync_pinned_folders,
+    sync_root_projects, toggle_pin_project, update_project, update_tab_content, update_tab_order,
+    upsert_tab,
+};
+
+mod sqlite;
+use sqlite::{get_sqlite_table_data, get_sqlite_tables};
+
+// ── 原有命令 ──
+
 #[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
     let bytes = fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;
@@ -250,6 +274,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
+            // 初始化项目管理数据库
+            let _ = db::init_project_database(app.handle().clone());
+
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let show_i = MenuItem::with_id(app, "show", "显示", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
@@ -265,6 +292,7 @@ pub fn run() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.unminimize();
                             let _ = window.set_focus();
                         }
                     }
@@ -279,6 +307,7 @@ pub fn run() {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.unminimize();
                             let _ = window.set_focus();
                         }
                     }
@@ -289,6 +318,12 @@ pub fn run() {
         });
 
     builder
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .invoke_handler(generate_handler())
         .run(tauri::generate_context!())
         .expect("启动应用失败");
@@ -353,6 +388,66 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         create_terminal,
         write_to_terminal,
         resize_terminal,
-        close_terminal
+        close_terminal,
+        // 项目管理数据库命令
+        init_project_database,
+        get_all_projects,
+        add_project,
+        update_project,
+        delete_project,
+        toggle_pin_project,
+        record_project_opened,
+        search_projects,
+        get_project_by_path,
+        sync_root_projects,
+        sync_default_projects,
+        get_project_count,
+        get_recent_projects,
+        migrate_from_settings_json,
+        // 标签页数据库命令
+        get_all_tabs,
+        get_tab_by_file_id,
+        upsert_tab,
+        delete_tab,
+        update_tab_content,
+        update_tab_order,
+        clear_all_tabs,
+        get_tab_count,
+        // 应用设置 (key-value)
+        get_setting,
+        set_setting,
+        get_all_settings,
+        delete_setting,
+        // 已固定文件
+        get_pinned_files,
+        add_pinned_file,
+        remove_pinned_file,
+        sync_pinned_files,
+        // 已固定文件夹
+        get_pinned_folders,
+        add_pinned_folder,
+        remove_pinned_folder,
+        sync_pinned_folders,
+        // 展开的文件夹
+        get_expanded_folders,
+        add_expanded_folder,
+        remove_expanded_folder,
+        sync_expanded_folders,
+        clear_expanded_folders,
+        // SQLite 查看器命令
+        get_sqlite_tables,
+        get_sqlite_table_data,
+        // Git 命令
+        git_check_repo,
+        git_resolve_repo_root,
+        git_init,
+        git_get_status,
+        git_add,
+        git_commit,
+        git_push,
+        git_pull,
+        git_remote_add,
+        git_remote_get,
+        git_get_user,
     ]
 }
