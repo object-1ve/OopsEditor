@@ -7,6 +7,7 @@ interface ContextMenuItem {
   onClick: () => void;
   danger?: boolean;
   separator?: boolean;
+  active?: boolean;
 }
 
 interface ContextMenuProps {
@@ -103,6 +104,7 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
                 onClose();
               }}
               className={`group flex w-full items-center gap-3 px-3 py-1.5 text-xs transition-colors ${
+                item.active ? "bg-[#f3e3d6] text-[#b85a3e] font-medium" :
                 item.danger
                   ? "text-error hover:bg-error/10 hover:text-error"
                   : "text-[#3b3027] hover:bg-[#f3e3d6] hover:text-[#b85a3e]"

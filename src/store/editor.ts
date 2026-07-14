@@ -159,6 +159,9 @@ interface EditorState {
   hoveredPath: string | null;
   markdownOutlineTarget: MarkdownOutlineTarget | null;
   rightSidebarIconOrder: string[];
+  sidebarSortField: 'name' | 'modified';
+  sidebarSortOrder: 'asc' | 'desc';
+  rootPathOrder: string[];
 
   init: () => Promise<void>;
   setHoveredPath: (path: string | null) => void;
@@ -216,6 +219,9 @@ interface EditorState {
   navigateToMarkdownHeading: (target: MarkdownOutlineTarget) => void;
   clearMarkdownOutlineTarget: () => void;
   setRightSidebarIconOrder: (order: string[]) => void;
+  setSidebarSortField: (field: 'name' | 'modified') => void;
+  setSidebarSortOrder: (order: 'asc' | 'desc') => void;
+  setRootPathOrder: (order: string[]) => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -243,6 +249,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   hoveredPath: null,
   markdownOutlineTarget: null,
   rightSidebarIconOrder: ["info", "git", "outline", "help"],
+  sidebarSortField: 'modified',
+  sidebarSortOrder: 'desc',
+  rootPathOrder: [],
 
   init: async () => {
     const settings = await loadSettings();
@@ -314,6 +323,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       pinnedFolders: normalizeUniquePaths(settings.pinnedFolders || []),
       openFiles: limitedTabsState.openFiles,
       rightSidebarIconOrder,
+      sidebarSortField: settings.sidebarSortField,
+      sidebarSortOrder: settings.sidebarSortOrder,
+      rootPathOrder: settings.rootPathOrder || settings.rootPaths || [],
     });
 
     if (
@@ -485,21 +497,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         ? state.rootPaths
         : [...state.rootPaths, normalizedPath];
 
+      const newRootPathOrder = state.rootPathOrder.includes(normalizedPath)
+        ? state.rootPathOrder
+        : [...state.rootPathOrder, normalizedPath];
+
       const newExpanded = state.expandedFolders.includes(normalizedPath)
         ? state.expandedFolders
         : [...state.expandedFolders, normalizedPath];
 
       void persistRootPathsState(newRootPaths);
+      void saveSetting('rootPathOrder', newRootPathOrder);
       void invoke("record_project_opened", { path: normalizedPath });
       persistExpandedFoldersState(newExpanded);
-      return { rootPaths: newRootPaths, expandedFolders: newExpanded };
+      return { rootPaths: newRootPaths, rootPathOrder: newRootPathOrder, expandedFolders: newExpanded };
     }),
 
   removeRootPath: (path: string) =>
     set((state) => {
       const newRootPaths = state.rootPaths.filter((p) => p !== path);
+      const newRootPathOrder = state.rootPathOrder.filter((p) => p !== path);
       void persistRootPathsState(newRootPaths);
-      return { rootPaths: newRootPaths };
+      void saveSetting('rootPathOrder', newRootPathOrder);
+      return { rootPaths: newRootPaths, rootPathOrder: newRootPathOrder };
     }),
 
   setDefaultFolders: (folders: DefaultFolder[]) => {
@@ -830,6 +849,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const sanitizedOrder = order.filter((id) => id !== "share");
     set({ rightSidebarIconOrder: sanitizedOrder });
     void saveSetting('rightSidebarIconOrder', sanitizedOrder);
+  },
+  setSidebarSortField: (field: 'name' | 'modified') => {
+    set({ sidebarSortField: field });
+    void saveSetting('sidebarSortField', field);
+  },
+  setSidebarSortOrder: (order: 'asc' | 'desc') => {
+    set({ sidebarSortOrder: order });
+    void saveSetting('sidebarSortOrder', order);
+  },
+  setRootPathOrder: (order: string[]) => {
+    set({ rootPathOrder: order });
+    void saveSetting('rootPathOrder', order);
   },
   toggleFolderExpanded: (path: string) => {
     const { expandedFolders } = get();

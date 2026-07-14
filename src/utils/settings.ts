@@ -37,6 +37,9 @@ export interface AppSettings {
   pinnedFolders: string[];
   rightSidebarIconOrder?: string[];
   maxOpenTabs: number;
+  sidebarSortField: 'name' | 'modified';
+  sidebarSortOrder: 'asc' | 'desc';
+  rootPathOrder?: string[];
 }
 
 const DEFAULT_RIGHT_SIDEBAR_ICON_ORDER = ["info", "git", "outline", "help"] as const;
@@ -79,6 +82,8 @@ export const defaultSettings: AppSettings = {
   pinnedFolders: [],
   rightSidebarIconOrder: [...DEFAULT_RIGHT_SIDEBAR_ICON_ORDER],
   maxOpenTabs: DEFAULT_MAX_OPEN_TABS,
+  sidebarSortField: 'modified',
+  sidebarSortOrder: 'desc',
 };
 
 // ── SQLite-backed save / load ─────────────────────────────────
@@ -140,6 +145,16 @@ export async function loadSettings(): Promise<AppSettings> {
 
     const savedMaxOpenTabs = get<number>('maxOpenTabs');
     settings.maxOpenTabs = sanitizeMaxOpenTabs(savedMaxOpenTabs);
+
+    const savedSortField = get<'name' | 'modified'>('sidebarSortField');
+    if (savedSortField === 'name' || savedSortField === 'modified') {
+      settings.sidebarSortField = savedSortField;
+    }
+
+    const savedSortOrder = get<'asc' | 'desc'>('sidebarSortOrder');
+    if (savedSortOrder === 'asc' || savedSortOrder === 'desc') {
+      settings.sidebarSortOrder = savedSortOrder;
+    }
 
     const workspaceSession = await loadWorkspaceSession(get);
     settings.tabs = workspaceSession.tabs;

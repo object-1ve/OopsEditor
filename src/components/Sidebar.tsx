@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Search, X, Edit2, Trash2, ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin, ChevronsUp, RotateCw } from "lucide-react";
+import { 
+  ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Search, X, Edit2, Trash2, 
+  ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin, 
+  ChevronsUp, RotateCw, ArrowDownAZ, ArrowUpAZ, Clock,
+  SortAsc, SortDesc
+} from "lucide-react";
 import { useEditorStore, type DefaultFolder } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -86,7 +91,13 @@ async function openFileTab(
   }
 }
 
-const sortTreeEntries = (entries: DirEntry[], pinnedFolders: string[], defaultFolders: DefaultFolder[]) => {
+const sortTreeEntries = (
+  entries: DirEntry[],
+  pinnedFolders: string[],
+  defaultFolders: DefaultFolder[],
+  sortField: 'name' | 'modified' = 'name',
+  sortOrder: 'asc' | 'desc' = 'asc'
+) => {
   const pinnedSet = new Set(pinnedFolders.map(normalizePath));
   const defaultPathsSet = new Set(defaultFolders.map(f => normalizePath(f.path)));
 
@@ -113,13 +124,15 @@ const sortTreeEntries = (entries: DirEntry[], pinnedFolders: string[], defaultFo
       return a.is_dir ? -1 : 1;
     }
 
-    // 4. 修改时间
-    if (a.modified_at !== b.modified_at) {
-      return b.modified_at - a.modified_at;
+    // 4. 用户选择的排序逻辑
+    let result = 0;
+    if (sortField === 'modified') {
+      result = a.modified_at - b.modified_at;
+    } else {
+      result = a.name.localeCompare(b.name, "zh-CN");
     }
 
-    // 5. 名称排序
-    return a.name.localeCompare(b.name, "zh-CN");
+    return sortOrder === 'asc' ? result : -result;
   });
 };
 
@@ -141,6 +154,8 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
     toggleFolderExpanded,
     rebasePinnedFolderPaths,
     setHoveredPath,
+    sidebarSortField,
+    sidebarSortOrder,
   } = useEditorStore();
   const isOpen = expandedFolders.includes(path);
   const isDefault = is_dir && defaultFolders.some(f => normalizePath(f.path) === normalizePath(path));
@@ -149,7 +164,7 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
-  const sortedChildren = useMemo(() => sortTreeEntries(children, pinnedFolders, defaultFolders), [children, pinnedFolders, defaultFolders]);
+  const sortedChildren = useMemo(() => sortTreeEntries(children, pinnedFolders, defaultFolders, sidebarSortField, sidebarSortOrder), [children, pinnedFolders, defaultFolders, sidebarSortField, sidebarSortOrder]);
 
   const refreshChildren = useCallback(async () => {
     if (is_dir && isOpen) {
@@ -335,13 +350,32 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
   );
 }
 
-function RootFolder({ path, onContextMenu }: { path: string; onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void }) {
-  const { removeRootPath, expandedFolders, pinnedFolders, defaultFolders, toggleFolderExpanded, setHoveredPath } = useEditorStore();
+function RootFolder({ 
+  path, 
+  onContextMenu,
+  onDragStart,
+  onDragEnter,
+  onDragOver,
+  onDragEnd,
+  isDragging
+}: { 
+  path: string; 
+  onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragEnter: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragEnd: (e: React.DragEvent) => void;
+  isDragging: boolean;
+}) {
+  const { 
+    removeRootPath, expandedFolders, pinnedFolders, defaultFolders, 
+    toggleFolderExpanded, setHoveredPath, sidebarSortField, sidebarSortOrder 
+  } = useEditorStore();
   const isOpen = expandedFolders.includes(path);
   const isDefault = defaultFolders.some(f => normalizePath(f.path) === normalizePath(path));
   const isPinned = isDefault || pinnedFolders.includes(normalizePath(path));
   const [entries, setEntries] = useState<DirEntry[]>([]);
-  const sortedEntries = useMemo(() => sortTreeEntries(entries, pinnedFolders, defaultFolders), [entries, pinnedFolders, defaultFolders]);
+  const sortedEntries = useMemo(() => sortTreeEntries(entries, pinnedFolders, defaultFolders, sidebarSortField, sidebarSortOrder), [entries, pinnedFolders, defaultFolders, sidebarSortField, sidebarSortOrder]);
 
   const loadRoot = useCallback(async () => {
     try {
@@ -373,9 +407,16 @@ function RootFolder({ path, onContextMenu }: { path: string; onContextMenu: (e: 
   };
 
   return (
-    <div className="mb-2">
+    <div 
+      className={`mb-2 transition-all duration-200 ${isDragging ? "opacity-30 scale-[0.98] bg-surface/20" : "opacity-100"}`}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+    >
       <div 
-        className="pl-2 pr-3 py-1.5 flex items-center justify-between group/folder cursor-pointer select-none hover:bg-surface/30 transition-colors"
+        className="pl-2 pr-3 py-1.5 flex items-center justify-between group/folder cursor-grab active:cursor-grabbing select-none hover:bg-surface/30 transition-colors"
         onClick={() => toggleFolderExpanded(path)}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}
@@ -450,39 +491,83 @@ export default function Sidebar() {
     defaultFolders, addDefaultFolder, removeDefaultFolder, updateDefaultFolder,
     pinnedFiles, removePinnedFile,
     pinnedFolders, pinFolder, unpinFolder, removePinnedFoldersUnder, collapseAllFolders, showModal,
-    setHoveredPath, hoveredPath, setFolderExpanded
+    setHoveredPath, hoveredPath, setFolderExpanded,
+    sidebarSortField, sidebarSortOrder, setSidebarSortField, setSidebarSortOrder,
+    rootPathOrder, setRootPathOrder
   } = useEditorStore();
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DirEntry } | null>(null);
   const [emptyAreaContextMenu, setEmptyAreaContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [defaultFolderContextMenu, setDefaultFolderContextMenu] = useState<{ x: number; y: number; folderId: string } | null>(null);
   const [pinnedFileContextMenu, setPinnedFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const [sortContextMenu, setSortContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [draggedRootPath, setDraggedRootPath] = useState<string | null>(null);
   const isResizing = useRef(false);
   const sortedRootPaths = useMemo(() => {
-    const pinnedSet = new Set(pinnedFolders.map(normalizePath));
-    const defaultPathsSet = new Set(defaultFolders.map(f => normalizePath(f.path)));
+    // If rootPathOrder is empty, fallback to default sorting
+    if (!rootPathOrder || rootPathOrder.length === 0) {
+      const pinnedSet = new Set(pinnedFolders.map(normalizePath));
+      const defaultPathsSet = new Set(defaultFolders.map(f => normalizePath(f.path)));
 
+      return [...rootPaths].sort((a, b) => {
+        const aPath = normalizePath(a);
+        const bPath = normalizePath(b);
+
+        const aDefault = defaultPathsSet.has(aPath);
+        const bDefault = defaultPathsSet.has(bPath);
+        if (aDefault !== bDefault) return aDefault ? -1 : 1;
+
+        const aPinned = pinnedSet.has(aPath);
+        const bPinned = pinnedSet.has(bPath);
+        if (aPinned !== bPinned) return aPinned ? -1 : 1;
+
+        return 0;
+      });
+    }
+
+    // Sort rootPaths based on rootPathOrder
     return [...rootPaths].sort((a, b) => {
-      const aPath = normalizePath(a);
-      const bPath = normalizePath(b);
-
-      // 1. 默认文件夹优先级最高
-      const aDefault = defaultPathsSet.has(aPath);
-      const bDefault = defaultPathsSet.has(bPath);
-      if (aDefault !== bDefault) {
-        return aDefault ? -1 : 1;
-      }
-
-      // 2. 普通置顶文件夹
-      const aPinned = pinnedSet.has(aPath);
-      const bPinned = pinnedSet.has(bPath);
-      if (aPinned !== bPinned) {
-        return aPinned ? -1 : 1;
-      }
-
-      return 0;
+      const aIdx = rootPathOrder.indexOf(a);
+      const bIdx = rootPathOrder.indexOf(b);
+      
+      // If one path is not in the order list, move it to the end
+      if (aIdx === -1 && bIdx === -1) return 0;
+      if (aIdx === -1) return 1;
+      if (bIdx === -1) return -1;
+      
+      return aIdx - bIdx;
     });
-  }, [rootPaths, pinnedFolders, defaultFolders]);
+  }, [rootPaths, pinnedFolders, defaultFolders, rootPathOrder]);
+
+  const handleDragStart = (e: React.DragEvent, path: string) => {
+    setDraggedRootPath(path);
+    e.dataTransfer.setData("text/plain", path);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragEnter = (e: React.DragEvent, targetPath: string) => {
+    e.preventDefault();
+    if (!draggedRootPath || draggedRootPath === targetPath) return;
+
+    const newOrder = [...sortedRootPaths];
+    const draggedIdx = newOrder.indexOf(draggedRootPath);
+    const targetIdx = newOrder.indexOf(targetPath);
+
+    if (draggedIdx !== -1 && targetIdx !== -1) {
+      newOrder.splice(draggedIdx, 1);
+      newOrder.splice(targetIdx, 0, draggedRootPath);
+      setRootPathOrder(newOrder);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDragEnd = () => {
+    setDraggedRootPath(null);
+  };
 
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -915,6 +1000,34 @@ export default function Sidebar() {
     ];
   }, [handlePinnedFileAction, pinnedFileContextMenu, pinnedFiles]);
 
+  const sortMenuItems = useMemo(() => [
+    { 
+      label: "按名称排序", 
+      icon: sidebarSortOrder === 'asc' ? <ArrowUpAZ size={14} /> : <ArrowDownAZ size={14} />, 
+      onClick: () => setSidebarSortField('name'),
+      active: sidebarSortField === 'name'
+    },
+    { 
+      label: "按修改时间排序", 
+      icon: <Clock size={14} />, 
+      onClick: () => setSidebarSortField('modified'),
+      active: sidebarSortField === 'modified'
+    },
+    { separator: true, label: "", onClick: () => {} },
+    { 
+      label: "升序", 
+      icon: <SortAsc size={14} />, 
+      onClick: () => setSidebarSortOrder('asc'),
+      active: sidebarSortOrder === 'asc'
+    },
+    { 
+      label: "降序", 
+      icon: <SortDesc size={14} />, 
+      onClick: () => setSidebarSortOrder('desc'),
+      active: sidebarSortOrder === 'desc'
+    },
+  ], [sidebarSortField, sidebarSortOrder, setSidebarSortField, setSidebarSortOrder]);
+
   return (
     <div 
       className="h-full bg-deepest border-r border-border flex flex-col overflow-hidden relative group/sidebar"
@@ -937,6 +1050,20 @@ export default function Sidebar() {
           <FolderOpen size={14} />
         </button>
         <div className="flex items-center gap-1 no-drag">
+          <button 
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setSortContextMenu({ x: rect.left, y: rect.bottom + 4 });
+            }}
+            className={`p-1 rounded hover:bg-surface transition-colors cursor-pointer ${sortContextMenu ? "text-accent bg-surface" : "text-text-muted hover:text-accent"}`}
+            title="排序选项"
+          >
+            {sidebarSortField === 'name' ? (
+              sidebarSortOrder === 'asc' ? <ArrowUpAZ size={14} /> : <ArrowDownAZ size={14} />
+            ) : (
+              <Clock size={14} />
+            )}
+          </button>
           <button 
             onClick={() => setIsSearchOpen(!isSearchOpen)}
             className={`p-1 rounded hover:bg-surface transition-colors cursor-pointer ${isSearchOpen ? "text-accent bg-surface" : "text-text-muted hover:text-accent"}`}
@@ -1016,7 +1143,16 @@ export default function Sidebar() {
 
         {rootPaths.length > 0 ? (
           sortedRootPaths.map((path) => (
-            <RootFolder key={path} path={path} onContextMenu={handleContextMenu} />
+            <RootFolder 
+              key={path} 
+              path={path} 
+              onContextMenu={handleContextMenu}
+              onDragStart={(e) => handleDragStart(e, path)}
+              onDragEnter={(e) => handleDragEnter(e, path)}
+              onDragOver={handleDragOver}
+              onDragEnd={handleDragEnd}
+              isDragging={draggedRootPath === path}
+            />
           ))
         ) : (
           <div className="h-full flex flex-col items-center justify-center p-6 text-center space-y-4">
@@ -1102,6 +1238,15 @@ export default function Sidebar() {
           y={pinnedFileContextMenu.y}
           items={pinnedFileMenuItems}
           onClose={() => setPinnedFileContextMenu(null)}
+        />
+      )}
+      
+      {sortContextMenu && (
+        <ContextMenu
+          x={sortContextMenu.x}
+          y={sortContextMenu.y}
+          items={sortMenuItems}
+          onClose={() => setSortContextMenu(null)}
         />
       )}
     </div>
