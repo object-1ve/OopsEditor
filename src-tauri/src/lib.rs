@@ -111,8 +111,11 @@ fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
             .map(|duration| duration.as_millis() as u64)
             .unwrap_or(0);
 
+        // 统一路径分隔符为正斜杠，避免父目录用 '/' 而子项拼接用 '\' 产生混合格式
+        let normalized_path = path.to_string_lossy().replace('\\', "/");
+
         result.push(DirEntry {
-            path: path.to_string_lossy().to_string(),
+            path: normalized_path,
             name,
             is_dir,
             size,
@@ -210,8 +213,20 @@ fn open_terminal(path: String) -> Result<(), String> {
 fn reveal_in_explorer(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        // 前端路径统一为正斜杠（见 list_dir），explorer 需要反斜杠才能定位文件，
+        // 否则 /select 找不到目标会回退打开"桌面"。
+        let win_path = path.replace('/', "\\");
+        let p = std::path::Path::new(&win_path);
+        if !p.exists() {
+            return Err(format!("路径不存在: {}", path));
+        }
+        // explorer /select,"<path>"："/select," 必须与路径紧贴为同一命令行 token，
+        // 且含空格的路径需用引号包裹。用 raw_arg 手工构造，避免 Rust Command
+        // 自动把整个 "/select,<path>" 包进引号导致 explorer 无法识别 /select 开关。
+        let arg = format!("/select,\"{}\"", win_path);
         std::process::Command::new("explorer")
-            .args(["/select,", &path])
+            .raw_arg(arg)
             .spawn()
             .map_err(|e| format!("无法打开资源管理器: {}", e))?;
     }

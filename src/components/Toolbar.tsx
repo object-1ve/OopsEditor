@@ -1,5 +1,5 @@
-import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin } from "lucide-react";
-import { useEditorStore } from "../store/editor";
+import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, SplitSquareHorizontal } from "lucide-react";
+import { useEditorStore, type EditorPane } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
 import ContextMenu from "./ContextMenu";
@@ -22,38 +22,60 @@ const canSaveToDefaultFolder = (language: string) => {
   return true;
 };
 
-export default function Toolbar() {
-  const { 
-    tabs, 
-    activeTabId, 
-    setActiveTab, 
-    closeTab, 
-    closeTabs,
-    openTab, 
-    showNotification, 
+interface ToolbarProps {
+  pane?: EditorPane;
+}
+
+export default function Toolbar({ pane = "primary" }: ToolbarProps) {
+  const store = useEditorStore();
+  const {
+    tabs,
+    activeTabId,
+    secondaryTabs,
+    secondaryActiveTabId,
+    isSplit,
+    focusedPane,
+    toggleSplit,
+    setSplit,
+    setFocusedPane,
+    setActiveTabInPane,
+    closeTabInPane,
+    closeTabsInPane,
+    openTabInPane,
+    showNotification,
     defaultFolders,
     pinnedFiles,
     pinFile,
     unpinFile,
     replaceTabFileLocation,
-    showModal 
-  } = useEditorStore();
+    showModal,
+  } = store;
 
-  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, tabId: string } | null>(null);
+  const isSecondary = pane === "secondary";
+  // 副窗口持有独立的标签列表，与主窗口互不影响；同 id 标签共享内容（由 updateContent 同步）
+  const paneTabs = isSecondary ? secondaryTabs : tabs;
+  const paneActiveTabId = isSecondary ? secondaryActiveTabId : activeTabId;
+  const isFocused = isSplit && focusedPane === pane;
 
-  const handleCloseTab = useCallback((e: React.MouseEvent | { stopPropagation: () => void }, tab: any) => {
+  const setActive = useCallback((id: string) => {
+    setActiveTabInPane(id, pane);
+  }, [setActiveTabInPane, pane]);
+
+  const handleClose = useCallback((e: React.MouseEvent | { stopPropagation: () => void }, tab: any) => {
     e.stopPropagation();
     if (tab.isDirty) {
       showModal({
         title: "确认关闭",
         message: `文件 "${tab.name}" 尚未保存，关闭将丢失所有更改。确定要关闭吗？`,
         kind: "warning",
-        onConfirm: () => closeTab(tab.id),
+        onConfirm: () => closeTabInPane(tab.id, pane),
       });
     } else {
-      closeTab(tab.id);
+      closeTabInPane(tab.id, pane);
     }
-  }, [closeTab, showModal]);
+  }, [closeTabInPane, showModal, pane]);
+
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, tabId: string } | null>(null);
 
   const handleContextMenu = (e: React.MouseEvent, tabId: string) => {
     e.preventDefault();
@@ -64,12 +86,12 @@ export default function Toolbar() {
   const handleCloseOthers = useCallback(() => {
     if (!contextMenu) return;
     const currentTabId = contextMenu.tabId;
-    const otherTabs = tabs.filter(t => t.id !== currentTabId);
+    const otherTabs = paneTabs.filter(t => t.id !== currentTabId);
     const cleanTabs = otherTabs.filter(t => !t.isDirty);
     const dirtyTabs = otherTabs.filter(t => t.isDirty);
 
     if (cleanTabs.length > 0) {
-      closeTabs(cleanTabs.map((tab) => tab.id));
+      closeTabsInPane(cleanTabs.map((tab) => tab.id), pane);
     }
 
     if (dirtyTabs.length > 0) {
@@ -77,22 +99,22 @@ export default function Toolbar() {
         title: "确认关闭其他文件",
         message: `有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
         kind: "warning",
-        onConfirm: () => closeTabs(dirtyTabs.map((tab) => tab.id)),
+        onConfirm: () => closeTabsInPane(dirtyTabs.map((tab) => tab.id), pane),
       });
     }
     setContextMenu(null);
-  }, [contextMenu, tabs, closeTabs, showModal]);
+  }, [contextMenu, paneTabs, closeTabsInPane, showModal, pane]);
 
   const handleCloseLeft = useCallback(() => {
     if (!contextMenu) return;
     const currentTabId = contextMenu.tabId;
-    const idx = tabs.findIndex(t => t.id === currentTabId);
-    const leftTabs = tabs.slice(0, idx);
+    const idx = paneTabs.findIndex(t => t.id === currentTabId);
+    const leftTabs = paneTabs.slice(0, idx);
     const cleanTabs = leftTabs.filter(t => !t.isDirty);
     const dirtyTabs = leftTabs.filter(t => t.isDirty);
 
     if (cleanTabs.length > 0) {
-      closeTabs(cleanTabs.map((tab) => tab.id));
+      closeTabsInPane(cleanTabs.map((tab) => tab.id), pane);
     }
 
     if (dirtyTabs.length > 0) {
@@ -100,22 +122,22 @@ export default function Toolbar() {
         title: "确认关闭左侧文件",
         message: `左侧有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
         kind: "warning",
-        onConfirm: () => closeTabs(dirtyTabs.map((tab) => tab.id)),
+        onConfirm: () => closeTabsInPane(dirtyTabs.map((tab) => tab.id), pane),
       });
     }
     setContextMenu(null);
-  }, [contextMenu, tabs, closeTabs, showModal]);
+  }, [contextMenu, paneTabs, closeTabsInPane, showModal, pane]);
 
   const handleCloseRight = useCallback(() => {
     if (!contextMenu) return;
     const currentTabId = contextMenu.tabId;
-    const idx = tabs.findIndex(t => t.id === currentTabId);
-    const rightTabs = tabs.slice(idx + 1);
+    const idx = paneTabs.findIndex(t => t.id === currentTabId);
+    const rightTabs = paneTabs.slice(idx + 1);
     const cleanTabs = rightTabs.filter(t => !t.isDirty);
     const dirtyTabs = rightTabs.filter(t => t.isDirty);
 
     if (cleanTabs.length > 0) {
-      closeTabs(cleanTabs.map((tab) => tab.id));
+      closeTabsInPane(cleanTabs.map((tab) => tab.id), pane);
     }
 
     if (dirtyTabs.length > 0) {
@@ -123,16 +145,16 @@ export default function Toolbar() {
         title: "确认关闭右侧文件",
         message: `右侧有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
         kind: "warning",
-        onConfirm: () => closeTabs(dirtyTabs.map((tab) => tab.id)),
+        onConfirm: () => closeTabsInPane(dirtyTabs.map((tab) => tab.id), pane),
       });
     }
     setContextMenu(null);
-  }, [contextMenu, tabs, closeTabs, showModal]);
+  }, [contextMenu, paneTabs, closeTabsInPane, showModal, pane]);
 
   const handleSaveToDefaultFolder = useCallback(async (defaultFolderPath: string, defaultFolderName: string) => {
     if (!contextMenu) return;
 
-    const tab = tabs.find((item) => item.id === contextMenu.tabId);
+    const tab = paneTabs.find((item) => item.id === contextMenu.tabId);
     if (!tab) return;
 
     if (!canSaveToDefaultFolder(tab.language)) {
@@ -183,11 +205,11 @@ export default function Toolbar() {
       showNotification(`保存到默认文件夹失败: ${err}`, "error");
       setContextMenu(null);
     }
-  }, [contextMenu, tabs, replaceTabFileLocation, showNotification, showModal]);
+  }, [contextMenu, paneTabs, tabs, replaceTabFileLocation, showNotification, showModal]);
 
   const contextMenuItems = useMemo(() => {
     if (!contextMenu) return [];
-    const tab = tabs.find(t => t.id === contextMenu.tabId);
+    const tab = paneTabs.find(t => t.id === contextMenu.tabId);
     if (!tab) return [];
     const isPinnedToSidebar = pinnedFiles.some((item) => item.path === tab.path);
 
@@ -232,35 +254,33 @@ export default function Toolbar() {
         },
       },
       { separator: true, label: "", onClick: () => {} },
-      { 
-        label: "关闭标签页", 
-        icon: <X size={14} />, 
-        onClick: () => handleCloseTab({ stopPropagation: () => {} } as any, tab) 
+      {
+        label: "关闭标签页",
+        icon: <X size={14} />,
+        onClick: () => handleClose({ stopPropagation: () => {} } as any, tab)
       },
       { separator: true, label: "", onClick: () => {} },
-      { 
-        label: "关闭其他标签页", 
-        icon: <CopyX size={14} />, 
-        onClick: handleCloseOthers 
+      {
+        label: "关闭其他标签页",
+        icon: <CopyX size={14} />,
+        onClick: handleCloseOthers
       },
-      { 
-        label: "关闭左侧标签页", 
-        icon: <ChevronLeft size={14} />, 
-        onClick: handleCloseLeft 
+      {
+        label: "关闭左侧标签页",
+        icon: <ChevronLeft size={14} />,
+        onClick: handleCloseLeft
       },
-      { 
-        label: "关闭右侧标签页", 
-        icon: <ChevronRight size={14} />, 
-        onClick: handleCloseRight 
+      {
+        label: "关闭右侧标签页",
+        icon: <ChevronRight size={14} />,
+        onClick: handleCloseRight
       },
     ];
-  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleCloseTab, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, pinFile, showNotification, unpinFile]);
+  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, pinFile, showNotification, unpinFile]);
 
   const handleDoubleClick = useCallback(async (e: React.MouseEvent) => {
-    // 只有在标签栏空白处双击才触发（或者在整个工具栏双击，但要避开按钮）
     if (e.target !== e.currentTarget) return;
 
-    // 获取当前时间并格式化为 YYYY-MM-DD_HH-mm-ss
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -268,28 +288,26 @@ export default function Toolbar() {
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
-    
+
     const fileName = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}.txt`;
     const defaultPath = defaultFolders[0]?.path || "d:/Desktop/oops_try/OopsEditor/src";
     const filePath = `${defaultPath}/${fileName}`;
-    
+
     try {
-      // 创建文件（空内容）
       await invoke("save_file", { path: filePath, content: "" });
-      
-      // 在编辑器中打开
-      openTab({
+
+      const newTab = {
         id: filePath,
         name: fileName,
         path: filePath,
         language: "plaintext",
         content: "",
         isDirty: false,
-      });
-      
+      };
+      openTabInPane(newTab, pane);
+
       showNotification(`已创建并打开新文件: ${fileName}`, "success");
 
-      // 延迟一小段时间确保系统文件刷新，然后触发同步
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: defaultPath } }));
       }, 200);
@@ -297,29 +315,32 @@ export default function Toolbar() {
       console.error("Failed to create file:", err);
       showNotification(`创建文件失败: ${err}`, "error");
     }
-  }, [defaultFolders, openTab, showNotification]);
+  }, [defaultFolders, openTabInPane, pane, showNotification]);
 
   return (
-    <div 
-      className="flex items-center h-10 bg-secondary border-b border-border select-none relative z-10 cursor-default"
+    <div
+      className={`flex items-center h-10 bg-secondary border-b border-border select-none relative z-10 cursor-default transition-colors ${
+        isSplit ? (isFocused ? "border-b-2 border-b-accent" : "opacity-80") : ""
+      }`}
       onDoubleClick={handleDoubleClick}
+      onMouseDown={() => isSplit && setFocusedPane(pane)}
     >
       {/* Tabs */}
       <div className="flex items-center flex-1 overflow-x-auto h-full relative" onDoubleClick={handleDoubleClick}>
         <div className="flex items-center h-full" onDoubleClick={handleDoubleClick}>
-          {tabs.map((tab) => (
+          {paneTabs.map((tab) => (
             <div
               key={tab.id}
               className={`group relative flex items-center gap-1.5 px-3 h-full text-sm cursor-pointer transition-all duration-150 min-w-0 shrink-0 select-none ${
-                tab.id === activeTabId
+                tab.id === paneActiveTabId
                   ? "bg-primary text-text-primary"
                   : "bg-secondary text-text-muted hover:text-text-secondary hover:bg-surface/50"
               }`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => setActive(tab.id)}
               onDoubleClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
             >
-              {tab.id === activeTabId && (
+              {tab.id === paneActiveTabId && (
                 <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-accent to-accent-bright rounded-full" />
               )}
 
@@ -332,7 +353,7 @@ export default function Toolbar() {
               {tab.isDirty && <span className="text-accent-warm text-xs shrink-0">&#9679;</span>}
               <button
                 className="ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 cursor-pointer text-text-muted hover:text-text-primary"
-                onClick={(e) => handleCloseTab(e, tab)}
+                onClick={(e) => handleClose(e, tab)}
                 onDoubleClick={(e) => e.stopPropagation()}
               >
                 <X size={11} />
@@ -340,6 +361,28 @@ export default function Toolbar() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Split controls */}
+      <div className="flex items-center gap-1 px-2 shrink-0">
+        {!isSplit && pane === "primary" && (
+          <button
+            className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
+            onClick={() => toggleSplit()}
+            title="分屏显示"
+          >
+            <SplitSquareHorizontal size={16} />
+          </button>
+        )}
+        {isSplit && pane === "secondary" && (
+          <button
+            className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-error transition-colors cursor-pointer"
+            onClick={() => setSplit(false)}
+            title="关闭分屏"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
 
       {/* Context Menu */}

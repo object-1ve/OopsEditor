@@ -47,9 +47,9 @@ function isValidRestoredWindowPosition(
 }
 
 function App() {
-  const { 
-    isLeftSidebarCollapsed, 
-    isRightSidebarCollapsed, 
+  const {
+    isLeftSidebarCollapsed,
+    isRightSidebarCollapsed,
     isTerminalVisible,
     terminalHeight,
     toggleTerminal,
@@ -63,7 +63,12 @@ function App() {
     closeTerminalsToLeft,
     closeTerminalsToRight,
     init,
-    hoveredPath
+    hoveredPath,
+    isSplit,
+    splitRatio,
+    setSplitRatio,
+    setFocusedPane,
+    secondaryActiveTabId
   } = useEditorStore();
 
   const [isDragging, setIsDragging] = useState(false);
@@ -80,6 +85,8 @@ function App() {
   const isDraggingOverEditorRef = useRef(false);
   const lastRestorableTerminalHeightRef = useRef(terminalHeight);
   const dragStartTerminalHeightRef = useRef(terminalHeight);
+  const isResizingSplit = useRef(false);
+  const splitWorkspaceRef = useRef<HTMLDivElement>(null);
 
   const setTerminalDragState = useCallback((value: boolean) => {
     isDraggingOverTerminalRef.current = value;
@@ -136,6 +143,28 @@ function App() {
     document.addEventListener("mouseup", stopResizingTerminal);
     document.body.style.cursor = "row-resize";
   }, [handleTerminalMouseMove, isTerminalExpanded, stopResizingTerminal, terminalHeight]);
+
+  const handleSplitMouseMove = useCallback((e: MouseEvent) => {
+    if (!isResizingSplit.current || !splitWorkspaceRef.current) return;
+    const rect = splitWorkspaceRef.current.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    setSplitRatio(ratio);
+  }, [setSplitRatio]);
+
+  const stopResizingSplit = useCallback(() => {
+    isResizingSplit.current = false;
+    document.removeEventListener("mousemove", handleSplitMouseMove);
+    document.removeEventListener("mouseup", stopResizingSplit);
+    document.body.style.cursor = "default";
+  }, [handleSplitMouseMove]);
+
+  const startResizingSplit = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingSplit.current = true;
+    document.addEventListener("mousemove", handleSplitMouseMove);
+    document.addEventListener("mouseup", stopResizingSplit);
+    document.body.style.cursor = "col-resize";
+  }, [handleSplitMouseMove, stopResizingSplit]);
 
   const toggleTerminalExpanded = useCallback(() => {
     if (isTerminalExpanded) {
@@ -269,23 +298,23 @@ function App() {
   }, []);
 
   const isPointInsideEditor = useCallback((position?: { x: number; y: number }) => {
-    if (!position || !editorRef.current) return false;
-    
+    if (!position) return false;
+    // 分屏时用分屏工作区判定，单屏时用 editorRef
+    const target = isSplit ? splitWorkspaceRef.current : editorRef.current;
+    if (!target) return false;
+
     const factor = window.devicePixelRatio || 1;
     const logicalX = position.x / factor;
     const logicalY = position.y / factor;
 
-    const rect = editorRef.current.getBoundingClientRect();
-
-    // 如果终端可见，编辑区只占 editorWorkspaceRef 上方部分
-    // editorRef 已经是正确的编辑区域 DOM，直接用它的 rect 即可
+    const rect = target.getBoundingClientRect();
     return (
       logicalX >= rect.left &&
       logicalX <= rect.right &&
       logicalY >= rect.top &&
       logicalY <= rect.bottom
     );
-  }, []);
+  }, [isSplit]);
 
   const insertPathsIntoTerminal = useCallback(async (paths: string[]) => {
     const { activeTerminalId, showNotification } = useEditorStore.getState();
@@ -380,13 +409,28 @@ function App() {
             setEditorDragState(false);
           } else if (event.payload.type === "over") {
             const overTerminal = isPointInsideTerminal(event.payload.position);
-            const overEditor = !overTerminal && isPointInsideEditor(event.payload.position) && isMarkdownEditable(useEditorStore.getState().tabs, useEditorStore.getState().activeTabId);
+            const dropState = useEditorStore.getState();
+            const focusedTabId = dropState.isSplit && dropState.focusedPane === 'secondary'
+              ? dropState.secondaryActiveTabId
+              : dropState.activeTabId;
+            // 合并主副窗口标签以判定焦点窗口的活动标签是否可编辑 markdown
+            const allTabs = dropState.isSplit
+              ? [...dropState.tabs, ...dropState.secondaryTabs]
+              : dropState.tabs;
+            const overEditor = !overTerminal && isPointInsideEditor(event.payload.position) && isMarkdownEditable(allTabs, focusedTabId);
             setTerminalDragState(overTerminal);
             setEditorDragState(overEditor);
           } else if (event.payload.type === "drop") {
             // 在 drop 时重新判定一次落点，确保准确性
             const droppedInTerminal = isPointInsideTerminal(event.payload.position);
-            const droppedInEditor = !droppedInTerminal && isPointInsideEditor(event.payload.position) && isMarkdownEditable(useEditorStore.getState().tabs, useEditorStore.getState().activeTabId);
+            const dropState = useEditorStore.getState();
+            const focusedTabId = dropState.isSplit && dropState.focusedPane === 'secondary'
+              ? dropState.secondaryActiveTabId
+              : dropState.activeTabId;
+            const allTabs = dropState.isSplit
+              ? [...dropState.tabs, ...dropState.secondaryTabs]
+              : dropState.tabs;
+            const droppedInEditor = !droppedInTerminal && isPointInsideEditor(event.payload.position) && isMarkdownEditable(allTabs, focusedTabId);
             
             setIsDragging(false);
             setTerminalDragState(false);
@@ -502,17 +546,43 @@ function App() {
 
         {/* Center Main Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <Toolbar />
           <div ref={editorWorkspaceRef} className="flex-1 overflow-hidden relative z-0 flex flex-col">
-            <div className="flex-1 overflow-hidden relative flex flex-col">
-              <div ref={editorRef} className="flex-1 overflow-hidden">
-                <Editor />
+            {isSplit ? (
+              <div ref={splitWorkspaceRef} className="flex-1 flex overflow-hidden">
+                {/* Primary Pane */}
+                <div className="flex flex-col overflow-hidden min-w-0" style={{ width: `${splitRatio * 100}%` }} onMouseDown={() => setFocusedPane('primary')}>
+                  <Toolbar pane="primary" />
+                  <div className="flex-1 overflow-hidden">
+                    <Editor />
+                  </div>
+                </div>
+                {/* Resize Handle */}
+                <div
+                  onMouseDown={startResizingSplit}
+                  className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-accent/60 active:bg-accent transition-colors relative z-20"
+                >
+                  <div className="absolute inset-y-0 -left-1 -right-1" />
+                </div>
+                {/* Secondary Pane */}
+                <div className="flex flex-col overflow-hidden min-w-0 flex-1" onMouseDown={() => setFocusedPane('secondary')}>
+                  <Toolbar pane="secondary" />
+                  <div className="flex-1 overflow-hidden">
+                    <Editor tabId={secondaryActiveTabId} />
+                  </div>
+                </div>
               </div>
-            </div>
-            
+            ) : (
+              <div className="flex-1 overflow-hidden relative flex flex-col">
+                <Toolbar />
+                <div ref={editorRef} className="flex-1 overflow-hidden">
+                  <Editor />
+                </div>
+              </div>
+            )}
+
             {/* Integrated Terminal */}
             {isTerminalVisible && (
-              <div 
+              <div
                 ref={terminalDropZoneRef}
                 style={isTerminalExpanded ? undefined : { height: terminalHeight }}
                 className={`border-t border-border bg-deepest flex flex-col ${
@@ -526,7 +596,7 @@ function App() {
                     className="absolute -top-1 left-0 right-0 h-2 cursor-row-resize z-50 hover:bg-accent/30 active:bg-accent/50 transition-colors"
                   />
                 )}
-                
+
                 {/* Terminal Header/Handle */}
                 <div className="h-8 bg-surface border-b border-border flex items-center justify-between shrink-0 select-none">
                   <div
@@ -567,7 +637,7 @@ function App() {
                       ))}
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center px-1 gap-1">
                     <button
                       onClick={toggleTerminalExpanded}
@@ -576,14 +646,14 @@ function App() {
                     >
                       {isTerminalExpanded ? <Minimize2 size={14} /> : <ChevronsUp size={14} />}
                     </button>
-                    <button 
+                    <button
                       onClick={() => addTerminal()}
                       className="p-1.5 hover:bg-white/5 rounded transition-colors text-text-muted hover:text-accent cursor-pointer"
                       title="新建终端"
                     >
                       <Plus size={14} />
                     </button>
-                    <button 
+                    <button
                       onClick={toggleTerminal}
                       className="p-1.5 hover:bg-white/5 rounded transition-colors text-text-muted hover:text-text cursor-pointer"
                       title="关闭面板"
@@ -594,7 +664,7 @@ function App() {
                 </div>
                 <div className={`flex-1 overflow-hidden relative ${isDraggingOverTerminal ? "ring-2 ring-inset ring-accent/70 bg-accent/5" : ""}`}>
                   {terminals.map((t) => (
-                    <TerminalView 
+                    <TerminalView
                       key={t.id}
                       id={t.id}
                       path={t.path}
@@ -618,7 +688,7 @@ function App() {
                     onClose={() => setTerminalContextMenu(null)}
                   />
                 )}
-               </div>
+              </div>
             )}
           </div>
 

@@ -27,6 +27,12 @@ import {
   createMarkdownHeadingIdFactory,
   extractTextFromReactNode,
 } from "../../utils/markdown";
+import {
+  getMonacoViewState,
+  getPreviewScrollTop,
+  setMonacoViewState,
+  setPreviewScrollTop,
+} from "../../utils/scrollMemory";
 import ContextMenu from "../ContextMenu";
 import ImagePreview from "../ImagePreview";
 import WordPreview from "../WordPreview";
@@ -171,6 +177,41 @@ function usePreviewResource(
   }, [activeTab.language, activeTab.path, showNotification]);
 
   return { previewUrl, previewError };
+}
+
+// 在 Monaco onMount 中恢复该标签页保存的视图状态（滚动位置 + 光标 + 折叠），
+// 并在滚动/光标变化时持续保存，保证切换标签页后能回到上次位置。
+// 不在卸载时保存：Monaco editor 在 key 变化卸载后会被 dispose，
+// 此时 saveViewState() 返回 null 会覆盖此前滚动时已保存的正确状态。
+function useMonacoScrollMemory(tabId: string) {
+  return useCallback(
+    (editor: any) => {
+      const saved = getMonacoViewState(tabId);
+      if (saved) {
+        editor.restoreViewState(saved);
+      }
+
+      const save = () => {
+        try {
+          const state = editor.saveViewState();
+          if (state) {
+            setMonacoViewState(tabId, state);
+          }
+        } catch {
+          // editor 已 dispose 时 saveViewState 会抛错，忽略即可。
+        }
+      };
+
+      const scrollDisposable = editor.onDidScrollChange(save);
+      const cursorDisposable = editor.onDidChangeCursorSelection(save);
+
+      return () => {
+        scrollDisposable.dispose();
+        cursorDisposable.dispose();
+      };
+    },
+    [tabId],
+  );
 }
 
 function ImageModeView({
@@ -361,6 +402,8 @@ interface MarkdownPreviewPaneProps {
   syncOutlineTarget?: boolean;
   onScroll?: (event: UIEvent<HTMLDivElement>) => void;
   containerRef?: RefObject<HTMLDivElement | null>;
+  // 切换标签页后恢复预览上次的滚动位置；关闭仅在预览模式 / 实时模式间切换标签时启用。
+  persistScroll?: boolean;
 }
 
 function MarkdownPreviewPane({
@@ -374,6 +417,7 @@ function MarkdownPreviewPane({
   syncOutlineTarget = true,
   onScroll,
   containerRef,
+  persistScroll = false,
 }: MarkdownPreviewPaneProps) {
   const internalRef = useRef<HTMLDivElement>(null);
   const markdownPreviewRef = containerRef || internalRef;
@@ -446,6 +490,53 @@ function MarkdownPreviewPane({
     setPreviewContextMenu(null);
   }, [activeTab.id, contextMenuItems]);
 
+  // 切换标签页后，恢复该预览容器上次的滚动位置。
+  // Markdown 内含异步加载的图片会持续撑高容器，需要多帧重试直到 scrollHeight 足够。
+  useEffect(() => {
+    if (!persistScroll) return;
+    const container = markdownPreviewRef.current;
+    if (!container) return;
+
+    const savedTop = getPreviewScrollTop(activeTab.id);
+    if (savedTop == null || savedTop <= 0) return;
+
+    let cancelled = false;
+    let attempts = 0;
+
+    const restore = () => {
+      if (cancelled) return;
+      attempts += 1;
+
+      // 仅在容器已足够高时恢复，避免内容未渲染完导致位置被夹到 maxScrollTop。
+      if (container.scrollHeight - container.clientHeight >= savedTop) {
+        container.scrollTop = savedTop;
+        return;
+      }
+
+      if (attempts < 10) {
+        requestAnimationFrame(restore);
+      }
+    };
+
+    requestAnimationFrame(restore);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab.id, activeTab.content, persistScroll]);
+
+  const handlePersistScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      if (persistScroll) {
+        const container = markdownPreviewRef.current;
+        if (container) {
+          setPreviewScrollTop(activeTab.id, container.scrollTop);
+        }
+      }
+      onScroll?.(event);
+    },
+    [activeTab.id, onScroll, persistScroll],
+  );
+
   const getPreviewSelectionText = useCallback(() => {
     const container = markdownPreviewRef.current;
     const selection = window.getSelection();
@@ -507,7 +598,7 @@ function MarkdownPreviewPane({
       ref={markdownPreviewRef}
       className={wrapperClassName}
       onContextMenu={handlePreviewContextMenu}
-      onScroll={onScroll}
+      onScroll={handlePersistScroll}
     >
       <div className={contentClassName}>
         <ReactMarkdown
@@ -562,6 +653,7 @@ function MarkdownPreviewModeView({
         contextMenuItems={previewContextMenuItems}
         wrapperClassName="h-full overflow-auto p-8 bg-primary markdown-preview prose max-w-none relative"
         contentClassName="mx-auto max-w-4xl"
+        persistScroll
       />
       <button
         onClick={() => togglePreviewMode(activeTab.id)}
@@ -591,6 +683,15 @@ function Base64ModeView({
     endByte: number;
   } | null>(null);
   const base64Preview = useMemo(() => decodeHexPreview(activeTab.content), [activeTab.content]);
+  const restoreHexScroll = useMonacoScrollMemory(`${activeTab.id}:base64`);
+  const hexMemoryCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      hexMemoryCleanupRef.current?.();
+      hexMemoryCleanupRef.current = null;
+    };
+  }, []);
 
   const syncAsciiSelectionHighlight = useCallback((nextRange: {
     startByte: number;
@@ -672,6 +773,8 @@ function Base64ModeView({
               applyTheme(monaco);
               monacoRef.current = monaco;
               onEditorMount(editor, monaco);
+              hexMemoryCleanupRef.current?.();
+              hexMemoryCleanupRef.current = restoreHexScroll(editor);
               editor.onDidChangeCursorSelection((event) => {
                 const model = editor.getModel();
                 const selection = event.selection;
@@ -1008,6 +1111,15 @@ function TextModeView({
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const isSyncingRef = useRef(false);
+  const restoreMonacoScroll = useMonacoScrollMemory(activeTab.id);
+  const monacoMemoryCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      monacoMemoryCleanupRef.current?.();
+      monacoMemoryCleanupRef.current = null;
+    };
+  }, []);
 
   // Editor -> Preview 同步
   const handleEditorScroll = useCallback(() => {
@@ -1108,6 +1220,8 @@ function TextModeView({
         editorRef.current = editor;
         applyTheme(monaco);
         onEditorMount(editor, monaco);
+        monacoMemoryCleanupRef.current?.();
+        monacoMemoryCleanupRef.current = restoreMonacoScroll(editor);
       }}
       options={{
         fontSize: 14,
@@ -1168,6 +1282,7 @@ function TextModeView({
             syncOutlineTarget={false}
             onScroll={handlePreviewScroll}
             containerRef={previewContainerRef}
+            persistScroll
           />
         </div>
       </div>

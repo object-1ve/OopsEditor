@@ -29,6 +29,7 @@ import {
 import ContextMenu from "./ContextMenu";
 import { resolveEditorMode } from "./editor-modes";
 import { saveTab } from "../services/editorSave";
+import { clipboardToMarkdownTable, tsvToMarkdownTable } from "../utils/clipboardTable";
 
 /* Bright terracotta-themed Monaco editor */
 const TERRACOTTA_THEME = {
@@ -100,9 +101,10 @@ function applyTerracottaTheme(monaco: Parameters<OnMount>[1]) {
   monaco.editor.setTheme("terracotta-dark");
 }
 
-export default function Editor() {
+export default function Editor({ tabId }: { tabId?: string | null } = {}) {
   const {
     tabs,
+    secondaryTabs,
     activeTabId,
     updateContent,
     togglePreviewMode,
@@ -113,7 +115,16 @@ export default function Editor() {
     editorWordWrap,
   } = useEditorStore();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  const activeTab = tabs.find((t) => t.id === activeTabId);
+  const pasteCleanupRef = useRef<(() => void) | null>(null);
+  // tabId 显式为 null 表示该窗口无标签（分屏副窗口）；undefined 时回退到全局活动标签
+  const currentTabId = tabId !== undefined ? tabId : activeTabId;
+  // 分屏副窗口的标签可能在 secondaryTabs 而非全局 tabs
+  const activeTab = tabId !== undefined
+    ? (tabs.find((t) => t.id === currentTabId) ?? secondaryTabs.find((t) => t.id === currentTabId))
+    : tabs.find((t) => t.id === currentTabId);
+  // 保持 Monaco action 闭包内能读到最新的 currentTabId
+  const currentTabIdRef = useRef(currentTabId);
+  currentTabIdRef.current = currentTabId;
   const [editorContextMenu, setEditorContextMenu] = useState<{
     x: number;
     y: number;
@@ -152,7 +163,14 @@ export default function Editor() {
       if (!detail?.paths?.length) return;
 
       const state = useEditorStore.getState();
-      const tab = state.tabs.find((t) => t.id === state.activeTabId);
+      // 分屏时只处理焦点窗口对应的标签，避免两个 Editor 实例重复插入
+      // tabId !== undefined 表示这是分屏副窗口实例
+      if (state.isSplit && state.focusedPane !== (tabId !== undefined ? 'secondary' : 'primary')) {
+        return;
+      }
+      const id = currentTabIdRef.current;
+      const tab = state.tabs.find((t) => t.id === id)
+        ?? state.secondaryTabs.find((t) => t.id === id);
       if (
         !tab ||
         tab.language !== "markdown" ||
@@ -186,7 +204,9 @@ export default function Editor() {
 
   const persistTab = useCallback(async (id: string) => {
     const state = useEditorStore.getState();
-    const tab = state.tabs.find((item) => item.id === id);
+    // 兼顾主窗口 tabs 与副窗口 secondaryTabs
+    const tab = state.tabs.find((item) => item.id === id)
+      ?? state.secondaryTabs.find((item) => item.id === id);
     if (!tab) {
       return;
     }
@@ -239,13 +259,47 @@ export default function Editor() {
       });
     });
 
+    // Markdown 编辑模式下，把粘贴的表格（HTML <table> 或 TSV）转为 GFM 表格语法
+    const domNode = editor.getDomNode();
+    if (domNode) {
+      const handlePaste = (e: ClipboardEvent) => {
+        const state = useEditorStore.getState();
+        const id = currentTabIdRef.current;
+        if (!id) return;
+        const tab = state.tabs.find((t) => t.id === id)
+          ?? state.secondaryTabs.find((t) => t.id === id);
+        if (!tab || tab.language !== "markdown" || tab.isPreviewMode || tab.isLivePreviewMode || tab.isReadOnly) {
+          return;
+        }
+
+        const md = clipboardToMarkdownTable(e.clipboardData);
+        if (!md) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        const selection = editor.getSelection();
+        const range = selection
+          ? new monaco.Range(
+              selection.startLineNumber,
+              selection.startColumn,
+              selection.endLineNumber,
+              selection.endColumn,
+            )
+          : new monaco.Range(1, 1, 1, 1);
+        editor.executeEdits("paste-table", [{ range, text: md, forceMoveMarkers: true }]);
+        editor.focus();
+      };
+      domNode.addEventListener("paste", handlePaste);
+      pasteCleanupRef.current = () => domNode.removeEventListener("paste", handlePaste);
+    }
+
     editor.addAction({
       id: "save-file",
       label: "保存文件",
       keybindings: [2048 | 49],
       run: () => {
         const state = useEditorStore.getState();
-        const id = state.activeTabId;
+        const id = currentTabIdRef.current;
         if (id) {
           void persistTab(id)
             .then(() => {
@@ -266,8 +320,9 @@ export default function Editor() {
       contextMenuGroupId: "navigation",
       run: () => {
         const state = useEditorStore.getState();
-        if (state.activeTabId) {
-          state.togglePreviewMode(state.activeTabId);
+        const id = currentTabIdRef.current;
+        if (id) {
+          state.togglePreviewMode(id);
         }
       },
     });
@@ -277,16 +332,18 @@ export default function Editor() {
   useEffect(() => {
     return () => {
       unregisterEditorInsert();
+      pasteCleanupRef.current?.();
+      pasteCleanupRef.current = null;
     };
   }, []);
 
   const handleChange = useCallback(
     (value: string | undefined) => {
-      if (activeTabId && value !== undefined) {
-        updateContent(activeTabId, value);
+      if (currentTabId && value !== undefined) {
+        updateContent(currentTabId, value);
       }
     },
-    [activeTabId, updateContent],
+    [currentTabId, updateContent],
   );
 
   const handleEditorUndo = useCallback(() => {
@@ -298,8 +355,7 @@ export default function Editor() {
   }, []);
 
   const handleEditorSave = useCallback(() => {
-    const state = useEditorStore.getState();
-    const id = state.activeTabId;
+    const id = currentTabIdRef.current;
     if (!id) {
       return;
     }
@@ -368,7 +424,14 @@ export default function Editor() {
 
     try {
       const text = await navigator.clipboard.readText();
-      editor.trigger("context-menu", "type", { text });
+      // Markdown 编辑模式下，把 TSV 表格转为 GFM 语法（右键粘贴拿不到 HTML，仅处理 TSV）
+      const state = useEditorStore.getState();
+      const id = currentTabIdRef.current;
+      const tab = id ? (state.tabs.find((t) => t.id === id) ?? state.secondaryTabs.find((t) => t.id === id)) : null;
+      const md = tab && tab.language === "markdown" && !tab.isPreviewMode && !tab.isLivePreviewMode && !tab.isReadOnly
+        ? tsvToMarkdownTable(text)
+        : null;
+      editor.trigger("context-menu", "type", { text: md ?? text });
     } catch {
       showNotification("粘贴失败，请检查剪贴板权限", "error");
     }
@@ -382,12 +445,12 @@ export default function Editor() {
             {
               label: activeTab.isLivePreviewMode ? "关闭实时模式" : "开启实时模式",
               icon: <Columns2 size={14} />,
-              onClick: () => activeTabId && toggleLivePreviewMode(activeTabId),
+              onClick: () => currentTabId && toggleLivePreviewMode(currentTabId),
             },
             {
               label: activeTab.isPreviewMode ? "返回编辑模式" : "切换预览模式",
               icon: <FilePenLine size={14} />,
-              onClick: () => activeTabId && togglePreviewMode(activeTabId),
+              onClick: () => currentTabId && togglePreviewMode(currentTabId),
             },
             { separator: true, label: "", onClick: () => {} },
           ]
@@ -454,7 +517,7 @@ export default function Editor() {
   }, [
     activeTab?.isReadOnly,
     activeTab?.language,
-    activeTabId,
+    currentTabId,
     editorContextMenu?.hasSelection,
     handleEditorCopy,
     handleEditorCut,

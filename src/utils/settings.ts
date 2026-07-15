@@ -26,6 +26,7 @@ export interface AppSettings {
   rightSidebarWidth: number;
   terminalHeight: number;
   editorWordWrap: boolean;
+  autoSaveOnEdit: boolean;
   windowSize?: { width: number; height: number };
   windowPosition?: { x: number; y: number };
   tabs: FileTab[];
@@ -73,6 +74,7 @@ export const defaultSettings: AppSettings = {
   rightSidebarWidth: 40,
   terminalHeight: 300,
   editorWordWrap: false,
+  autoSaveOnEdit: false,
   tabs: [],
   activeTabId: null,
   rootPaths: [],
@@ -133,6 +135,9 @@ export async function loadSettings(): Promise<AppSettings> {
 
     const savedEditorWordWrap = get<boolean>('editorWordWrap');
     if (typeof savedEditorWordWrap === 'boolean') settings.editorWordWrap = savedEditorWordWrap;
+
+    const savedAutoSaveOnEdit = get<boolean>('autoSaveOnEdit');
+    if (typeof savedAutoSaveOnEdit === 'boolean') settings.autoSaveOnEdit = savedAutoSaveOnEdit;
 
     const savedWindowSize = get<{ width: number; height: number }>('windowSize');
     if (savedWindowSize !== null) settings.windowSize = savedWindowSize;

@@ -12,6 +12,8 @@ export default function SettingsModal() {
     closeSettings,
     editorWordWrap,
     setEditorWordWrap,
+    autoSaveOnEdit,
+    setAutoSaveOnEdit,
     maxOpenTabs,
     setMaxOpenTabs,
   } = useEditorStore();
@@ -84,6 +86,33 @@ export default function SettingsModal() {
                 <span
                   className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
                     editorWordWrap ? "translate-x-5" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-primary/40 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-text">自动保存</div>
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  开启后，编辑文件 1 秒无操作会自动保存到磁盘，无需手动 Ctrl+S。
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoSaveOnEdit}
+                onClick={() => setAutoSaveOnEdit(!autoSaveOnEdit)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  autoSaveOnEdit ? "bg-accent" : "bg-surface"
+                }`}
+                title={autoSaveOnEdit ? "关闭自动保存" : "开启自动保存"}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    autoSaveOnEdit ? "translate-x-5" : "translate-x-1"
                   }`}
                 />
               </button>

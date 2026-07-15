@@ -17,8 +17,25 @@ import {
   persistTabsState,
 } from "../utils/workspaceSession";
 import { base64ToHexView, parseHexView } from "../utils/hexView";
+import { clearScrollMemory } from "../utils/scrollMemory";
+import { saveTab } from "../services/editorSave";
 import { appDataDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
+
+const AUTO_SAVE_DELAY = 1000;
+const autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearAutoSaveTimer(tabId: string) {
+  const timer = autoSaveTimers.get(tabId);
+  if (timer) {
+    clearTimeout(timer);
+    autoSaveTimers.delete(tabId);
+  }
+}
+
+function clearAutoSaveTimers(tabIds: string[]) {
+  tabIds.forEach(clearAutoSaveTimer);
+}
 
 const normalizePath = (path: string) => {
   if (!path) return "";
@@ -108,6 +125,8 @@ export interface MarkdownOutlineTarget {
   line: number;
 }
 
+export type EditorPane = "primary" | "secondary";
+
 const normalizePinnedFiles = (files: PinnedFile[]) => {
   const seen = new Set<string>();
   const normalizedFiles: PinnedFile[] = [];
@@ -142,6 +161,7 @@ interface EditorState {
   rightSidebarWidth: number;
   terminalHeight: number;
   editorWordWrap: boolean;
+  autoSaveOnEdit: boolean;
   maxOpenTabs: number;
   isSettingsOpen: boolean;
   terminals: TerminalInstance[];
@@ -162,6 +182,11 @@ interface EditorState {
   sidebarSortField: 'name' | 'modified';
   sidebarSortOrder: 'asc' | 'desc';
   rootPathOrder: string[];
+  isSplit: boolean;
+  secondaryTabs: FileTab[];
+  secondaryActiveTabId: string | null;
+  focusedPane: EditorPane;
+  splitRatio: number;
 
   init: () => Promise<void>;
   setHoveredPath: (path: string | null) => void;
@@ -197,6 +222,7 @@ interface EditorState {
   setRightSidebarWidth: (width: number) => void;
   setTerminalHeight: (height: number) => void;
   setEditorWordWrap: (enabled: boolean) => void;
+  setAutoSaveOnEdit: (enabled: boolean) => void;
   setMaxOpenTabs: (value: number) => void;
   openSettings: () => void;
   closeSettings: () => void;
@@ -222,6 +248,14 @@ interface EditorState {
   setSidebarSortField: (field: 'name' | 'modified') => void;
   setSidebarSortOrder: (order: 'asc' | 'desc') => void;
   setRootPathOrder: (order: string[]) => void;
+  toggleSplit: () => void;
+  setSplit: (enabled: boolean) => void;
+  setFocusedPane: (pane: EditorPane) => void;
+  setSplitRatio: (ratio: number) => void;
+  openTabInPane: (tab: FileTab, pane: EditorPane) => void;
+  closeTabInPane: (id: string, pane: EditorPane) => void;
+  closeTabsInPane: (ids: string[], pane: EditorPane) => void;
+  setActiveTabInPane: (id: string, pane: EditorPane) => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -238,6 +272,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   rightSidebarWidth: 40,
   terminalHeight: 300,
   editorWordWrap: false,
+  autoSaveOnEdit: false,
   maxOpenTabs: DEFAULT_MAX_OPEN_TABS,
   isSettingsOpen: false,
   terminals: [],
@@ -252,6 +287,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   sidebarSortField: 'modified',
   sidebarSortOrder: 'desc',
   rootPathOrder: [],
+  isSplit: false,
+  secondaryTabs: [],
+  secondaryActiveTabId: null,
+  focusedPane: 'primary',
+  splitRatio: 0.5,
 
   init: async () => {
     const settings = await loadSettings();
@@ -313,6 +353,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       rightSidebarWidth: settings.rightSidebarWidth,
       terminalHeight: settings.terminalHeight || 300,
       editorWordWrap: settings.editorWordWrap,
+      autoSaveOnEdit: settings.autoSaveOnEdit,
       maxOpenTabs: settings.maxOpenTabs,
       defaultFolders,
       pinnedFiles: normalizePinnedFiles(settings.pinnedFiles || []),
@@ -342,7 +383,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setHoveredPath: (path: string | null) => set({ hoveredPath: path }),
 
-  openTab: (tab: FileTab) =>
+  openTab: (tab: FileTab) => {
+    // 分屏且焦点在副窗口时，新标签开到副窗口
+    const state = get();
+    if (state.isSplit && state.focusedPane === 'secondary') {
+      get().openTabInPane(tab, 'secondary');
+      return;
+    }
     set((state) => {
       const existing = state.tabs.find((t) => t.id === tab.id);
       if (existing) {
@@ -365,7 +412,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         activeTabId: limitedTabsState.activeTabId,
         openFiles: limitedTabsState.openFiles,
       };
-    }),
+    });
+  },
 
   closeTab: (id: string) =>
     set((state) => {
@@ -376,6 +424,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const idx = state.tabs.findIndex((t) => t.id === id);
         activeTabId = tabs[idx]?.id ?? tabs[idx - 1]?.id ?? null;
       }
+      clearScrollMemory(id);
+      clearAutoSaveTimer(id);
       persistTabsState(tabs, activeTabId);
       return { tabs, openFiles, activeTabId };
     }),
@@ -388,6 +438,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (activeTabId && ids.includes(activeTabId)) {
         activeTabId = tabs[tabs.length - 1]?.id ?? null;
       }
+      ids.forEach((id) => clearScrollMemory(id));
+      clearAutoSaveTimers(ids);
       persistTabsState(tabs, activeTabId);
       return { tabs, openFiles, activeTabId };
     }),
@@ -421,31 +473,72 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     void persistActiveTabId(id);
   },
 
-  updateContent: (id: string, content: string) =>
+  updateContent: (id: string, content: string) => {
     set((state) => {
       const newTabs = state.tabs.map((t) =>
         t.id === id ? { ...t, content, isDirty: true } : t
       );
+      // 分屏时同步更新副窗口中同一标签，保证两侧内容实时一致
+      const newSecondaryTabs = state.isSplit
+        ? state.secondaryTabs.map((t) =>
+            t.id === id ? { ...t, content, isDirty: true } : t
+          )
+        : state.secondaryTabs;
       const updatedTab = newTabs.find((tab) => tab.id === id);
       const tabIndex = newTabs.findIndex((tab) => tab.id === id);
       if (updatedTab && tabIndex !== -1) {
         void persistSingleTabState(updatedTab, tabIndex);
       }
-      return { tabs: newTabs };
-    }),
+      return { tabs: newTabs, secondaryTabs: newSecondaryTabs };
+    });
 
-  markClean: (id: string) =>
+    const state = get();
+    if (!state.autoSaveOnEdit) return;
+    const tab = state.tabs.find((t) => t.id === id);
+    if (!tab || !tab.path || tab.isReadOnly) return;
+    // 预览/只读类语言不支持回写
+    if (tab.isPreviewMode) return;
+
+    clearAutoSaveTimer(id);
+    autoSaveTimers.set(
+      id,
+      setTimeout(() => {
+        autoSaveTimers.delete(id);
+        const latest = get().tabs.find((t) => t.id === id);
+        if (!latest || !latest.isDirty) return;
+        void saveTab(latest)
+          .then(() => {
+            get().markClean(id);
+            window.dispatchEvent(
+              new CustomEvent("file-refresh", { detail: { path: latest.path } }),
+            );
+          })
+          .catch((err) => {
+            console.error(`自动保存失败 ${latest.name}:`, err);
+          });
+      }, AUTO_SAVE_DELAY),
+    );
+  },
+
+  markClean: (id: string) => {
+    clearAutoSaveTimer(id);
     set((state) => {
       const newTabs = state.tabs.map((t) =>
         t.id === id ? { ...t, isDirty: false } : t
       );
+      const newSecondaryTabs = state.isSplit
+        ? state.secondaryTabs.map((t) =>
+            t.id === id ? { ...t, isDirty: false } : t
+          )
+        : state.secondaryTabs;
       const updatedTab = newTabs.find((tab) => tab.id === id);
       const tabIndex = newTabs.findIndex((tab) => tab.id === id);
       if (updatedTab && tabIndex !== -1) {
         void persistSingleTabState(updatedTab, tabIndex);
       }
-      return { tabs: newTabs };
-    }),
+      return { tabs: newTabs, secondaryTabs: newSecondaryTabs };
+    });
+  },
 
   replaceTabFileLocation: (id: string, nextPath: string, nextName?: string) =>
     set((state) => {
@@ -479,6 +572,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const nextActiveTabId = state.activeTabId === id ? nextPath : state.activeTabId;
       const nextOpenFiles = nextTabs.map((tab) => tab.path);
 
+      clearScrollMemory(id);
       persistTabsState(nextTabs, nextActiveTabId);
       persistPinnedFilesState(nextPinnedFiles);
 
@@ -690,6 +784,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ editorWordWrap: enabled });
     saveSetting('editorWordWrap', enabled);
   },
+  setAutoSaveOnEdit: (enabled: boolean) => {
+    set({ autoSaveOnEdit: enabled });
+    saveSetting('autoSaveOnEdit', enabled);
+    if (!enabled) {
+      clearAutoSaveTimers([...autoSaveTimers.keys()]);
+    }
+  },
   setMaxOpenTabs: (value: number) => {
     const nextMaxOpenTabs = sanitizeMaxOpenTabs(value);
     const limitedTabsState = enforceTabLimit(
@@ -861,6 +962,91 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setRootPathOrder: (order: string[]) => {
     set({ rootPathOrder: order });
     void saveSetting('rootPathOrder', order);
+  },
+  toggleSplit: () => {
+    const { isSplit } = get();
+    get().setSplit(!isSplit);
+  },
+  setSplit: (enabled) => {
+    if (enabled) {
+      // 开启分屏：副窗口默认显示主窗口当前活动标签（复用同一 FileTab 引用以便内容同步）
+      const { tabs, activeTabId } = get();
+      const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+      set({
+        isSplit: true,
+        secondaryTabs: activeTab ? [activeTab] : [],
+        secondaryActiveTabId: activeTab?.id ?? null,
+        focusedPane: 'primary',
+      });
+    } else {
+      // 关闭分屏：副窗口标签独立于主窗口，直接丢弃
+      set({
+        isSplit: false,
+        secondaryTabs: [],
+        secondaryActiveTabId: null,
+        focusedPane: 'primary',
+      });
+    }
+  },
+  setFocusedPane: (pane) => set({ focusedPane: pane }),
+  setSplitRatio: (ratio) => set({ splitRatio: Math.max(0.15, Math.min(0.85, ratio)) }),
+  openTabInPane: (tab, pane) => {
+    if (pane === 'primary') {
+      get().openTab(tab);
+      get().setFocusedPane('primary');
+      return;
+    }
+    // 副窗口标签独立于主窗口：只加入 secondaryTabs，不影响全局 tabs
+    set((s) => {
+      if (s.secondaryTabs.some((t) => t.id === tab.id)) {
+        return { secondaryActiveTabId: tab.id, focusedPane: 'secondary' };
+      }
+      return {
+        secondaryTabs: [...s.secondaryTabs, tab],
+        secondaryActiveTabId: tab.id,
+        focusedPane: 'secondary',
+      };
+    });
+  },
+  closeTabInPane: (id, pane) => {
+    if (pane === 'primary') {
+      get().closeTab(id);
+      return;
+    }
+    // 副窗口关闭只移除副窗口标签列表，不影响全局 tabs（主窗口）
+    set((state) => {
+      const tabs = state.secondaryTabs.filter((t) => t.id !== id);
+      let secondaryActiveTabId = state.secondaryActiveTabId;
+      if (secondaryActiveTabId === id) {
+        const idx = state.secondaryTabs.findIndex((t) => t.id === id);
+        secondaryActiveTabId = tabs[idx]?.id ?? tabs[idx - 1]?.id ?? null;
+      }
+      clearScrollMemory(id);
+      return { secondaryTabs: tabs, secondaryActiveTabId };
+    });
+  },
+  closeTabsInPane: (ids, pane) => {
+    if (pane === 'primary') {
+      get().closeTabs(ids);
+      return;
+    }
+    set((state) => {
+      const tabs = state.secondaryTabs.filter((t) => !ids.includes(t.id));
+      let secondaryActiveTabId = state.secondaryActiveTabId;
+      if (secondaryActiveTabId && ids.includes(secondaryActiveTabId)) {
+        secondaryActiveTabId = tabs[tabs.length - 1]?.id ?? null;
+      }
+      ids.forEach((id) => clearScrollMemory(id));
+      return { secondaryTabs: tabs, secondaryActiveTabId };
+    });
+  },
+  setActiveTabInPane: (id, pane) => {
+    if (pane === 'primary') {
+      get().setActiveTab(id);
+      get().setFocusedPane('primary');
+      return;
+    }
+    set({ secondaryActiveTabId: id, focusedPane: 'secondary' });
   },
   toggleFolderExpanded: (path: string) => {
     const { expandedFolders } = get();
