@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readFile } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
 import { renderAsync } from "docx-preview";
 
 interface WordPreviewProps {
@@ -39,9 +40,62 @@ export default function WordPreview({
     setError(null);
 
     if (extension === "doc") {
-      setIsLoading(false);
-      setError("暂不支持预览 .doc 旧版 Word 文档，请先转换为 .docx 后再打开。");
-      return;
+      let isCancelled = false;
+      setIsLoading(true);
+      setError(null);
+
+      const loadConverted = async () => {
+        try {
+          const docxPath = await invoke<string>("convert_doc_to_docx", { path });
+          if (isCancelled || !bodyContainer || !styleContainer) {
+            return;
+          }
+
+          const fileBytes = await readFile(docxPath);
+          if (isCancelled) {
+            return;
+          }
+
+          bodyContainer.innerHTML = "";
+          styleContainer.innerHTML = "";
+
+          await renderAsync(fileBytes, bodyContainer, styleContainer, {
+            className: "word-document",
+            inWrapper: true,
+            useBase64URL: true,
+            renderHeaders: true,
+            renderFooters: true,
+            renderFootnotes: true,
+            renderEndnotes: true,
+          });
+
+          if (isCancelled) {
+            return;
+          }
+
+          setIsLoading(false);
+        } catch (err) {
+          if (isCancelled) {
+            return;
+          }
+
+          const detail = err instanceof Error ? err.message : String(err);
+          const message = detail || "当前 .doc 文件无法预览，请确认已安装 Microsoft Word。";
+          bodyContainer.innerHTML = "";
+          styleContainer.innerHTML = "";
+          setIsLoading(false);
+          setError(message);
+          showNotification(`Word 加载失败: ${message}`, "error");
+        }
+      };
+
+      void loadConverted();
+
+      return () => {
+        isCancelled = true;
+        bodyContainer.innerHTML = "";
+        styleContainer.innerHTML = "";
+      };
     }
 
     if (!OPEN_XML_WORD_EXTENSIONS.has(extension)) {

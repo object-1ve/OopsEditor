@@ -30,6 +30,9 @@ use db::{
 mod sqlite;
 use sqlite::{get_sqlite_table_data, get_sqlite_tables};
 
+mod docconv;
+use docconv::convert_doc_to_docx;
+
 // ── 原有命令 ──
 
 #[tauri::command]
@@ -452,6 +455,8 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         // SQLite 查看器命令
         get_sqlite_tables,
         get_sqlite_table_data,
+        // .doc -> .docx 转换命令
+        convert_doc_to_docx,
         // Git 命令
         git_check_repo,
         git_resolve_repo_root,
