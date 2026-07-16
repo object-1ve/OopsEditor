@@ -764,6 +764,12 @@ export default function Sidebar() {
           await navigator.clipboard.writeText(path);
           showNotification("路径已复制到剪贴板", "success");
           break;
+        case "copy-cd-path": {
+          const dirPath = is_dir ? path : path.substring(0, Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+          await navigator.clipboard.writeText(`cd ${dirPath}`);
+          showNotification("cd 路径已复制到剪贴板", "success");
+          break;
+        }
         case "terminal":
           // If it's a file, open terminal in parent dir
           const lastIdx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
@@ -933,6 +939,7 @@ export default function Sidebar() {
         ? [{ label: "以 Base64 打开", icon: <Copy size={14} />, onClick: () => handleAction("open-base64") }]
         : []),
       { label: "复制完整路径", icon: <Copy size={14} />, onClick: () => handleAction("copy-path") },
+      { label: "复制 cd 路径", icon: <TerminalIcon size={14} />, onClick: () => handleAction("copy-cd-path") },
       { separator: true, label: "", onClick: () => {} },
       ...(contextMenu.entry.is_dir
         ? [{ label: isPinned ? "取消置顶" : "置顶", icon: <Pin size={14} />, onClick: () => handleAction(isPinned ? "unpin" : "pin") }]

@@ -186,7 +186,21 @@ pub fn init_project_database(app: AppHandle) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS expanded_folders (
             id   INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT NOT NULL UNIQUE
-        );",
+        );
+
+        CREATE TABLE IF NOT EXISTS upgrade_items (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            title       TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            status      TEXT NOT NULL DEFAULT 'pending',
+            priority    INTEGER NOT NULL DEFAULT 0,
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_upgrade_items_status ON upgrade_items(status);
+        CREATE INDEX IF NOT EXISTS idx_upgrade_items_sort ON upgrade_items(sort_order);",
     )
     .map_err(|e| format!("创建表失败: {}", e))?;
 
@@ -1484,4 +1498,165 @@ pub fn clear_expanded_folders() -> Result<(), String> {
         conn.execute("DELETE FROM expanded_folders", [])?;
         Ok(())
     })
+}
+
+// ── Upgrade Items CRUD ────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpgradeItem {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub priority: i64,
+    pub sort_order: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NewUpgradeItem {
+    pub title: String,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub priority: Option<i64>,
+}
+
+#[tauri::command]
+pub fn get_all_upgrade_items() -> Result<Vec<UpgradeItem>, String> {
+    with_db(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, title, description, status, priority, sort_order, created_at, updated_at
+             FROM upgrade_items
+             ORDER BY sort_order ASC, created_at DESC",
+        )?;
+
+        let items = stmt
+            .query_map([], |row| {
+                Ok(UpgradeItem {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    description: row.get(2)?,
+                    status: row.get(3)?,
+                    priority: row.get(4)?,
+                    sort_order: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })?
+            .collect::<SqlResult<Vec<_>>>()?;
+
+        Ok(items)
+    })
+}
+
+#[tauri::command]
+pub fn add_upgrade_item(item: NewUpgradeItem) -> Result<UpgradeItem, String> {
+    let now = Local::now().to_rfc3339();
+    let status = item.status.unwrap_or_else(|| "pending".into());
+
+    with_db(|conn| {
+        conn.execute(
+            "INSERT INTO upgrade_items (title, description, status, priority, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)",
+            params![
+                item.title,
+                item.description.unwrap_or_default(),
+                status,
+                item.priority.unwrap_or(0),
+                now,
+            ],
+        )?;
+
+        let id = conn.last_insert_rowid();
+
+        let mut stmt = conn.prepare(
+            "SELECT id, title, description, status, priority, sort_order, created_at, updated_at
+             FROM upgrade_items WHERE id = ?1",
+        )?;
+
+        stmt.query_row(params![id], |row| {
+            Ok(UpgradeItem {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                status: row.get(3)?,
+                priority: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })
+    })
+}
+
+#[tauri::command]
+pub fn update_upgrade_item(
+    id: i64,
+    title: Option<String>,
+    description: Option<String>,
+    status: Option<String>,
+    priority: Option<i64>,
+) -> Result<(), String> {
+    let now = Local::now().to_rfc3339();
+    with_db(|conn| {
+        if let Some(title) = title {
+            conn.execute(
+                "UPDATE upgrade_items SET title = ?1, updated_at = ?2 WHERE id = ?3",
+                params![title, now, id],
+            )?;
+        }
+        if let Some(description) = description {
+            conn.execute(
+                "UPDATE upgrade_items SET description = ?1, updated_at = ?2 WHERE id = ?3",
+                params![description, now, id],
+            )?;
+        }
+        if let Some(status) = status {
+            conn.execute(
+                "UPDATE upgrade_items SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                params![status, now, id],
+            )?;
+        }
+        if let Some(priority) = priority {
+            conn.execute(
+                "UPDATE upgrade_items SET priority = ?1, updated_at = ?2 WHERE id = ?3",
+                params![priority, now, id],
+            )?;
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn delete_upgrade_item(id: i64) -> Result<(), String> {
+    with_db(|conn| {
+        conn.execute("DELETE FROM upgrade_items WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn export_upgrade_items_json() -> Result<String, String> {
+    let items = get_all_upgrade_items()?;
+    serde_json::to_string_pretty(&items).map_err(|e| format!("JSON 序列化失败: {}", e))
+}
+
+#[tauri::command]
+pub fn import_upgrade_items_json(json_content: String) -> Result<usize, String> {
+    let items: Vec<UpgradeItem> =
+        serde_json::from_str(&json_content).map_err(|e| format!("JSON 解析失败: {}", e))?;
+
+    let mut imported = 0usize;
+    for item in items {
+        let new_item = NewUpgradeItem {
+            title: item.title,
+            description: Some(item.description),
+            status: Some(item.status),
+            priority: Some(item.priority),
+        };
+        add_upgrade_item(new_item)?;
+        imported += 1;
+    }
+    Ok(imported)
 }

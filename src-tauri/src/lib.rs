@@ -16,15 +16,17 @@ use git::{
 
 mod db;
 use db::{
-    add_expanded_folder, add_pinned_file, add_pinned_folder, add_project, clear_all_tabs,
-    clear_expanded_folders, delete_project, delete_setting, delete_tab, get_all_projects,
-    get_all_settings, get_all_tabs, get_expanded_folders, get_pinned_files, get_pinned_folders,
-    get_project_by_path, get_project_count, get_recent_projects, get_setting, get_tab_by_file_id,
-    get_tab_count, init_project_database, migrate_from_settings_json, record_project_opened,
-    remove_expanded_folder, remove_pinned_file, remove_pinned_folder, search_projects, set_setting,
-    sync_default_projects, sync_expanded_folders, sync_pinned_files, sync_pinned_folders,
-    sync_root_projects, toggle_pin_project, update_project, update_tab_content, update_tab_order,
-    upsert_tab,
+    add_expanded_folder, add_pinned_file, add_pinned_folder, add_project, add_upgrade_item,
+    clear_all_tabs, clear_expanded_folders, delete_project, delete_setting, delete_tab,
+    delete_upgrade_item, export_upgrade_items_json, get_all_projects, get_all_settings,
+    get_all_tabs, get_all_upgrade_items, get_expanded_folders, get_pinned_files,
+    get_pinned_folders, get_project_by_path, get_project_count, get_recent_projects,
+    get_setting, get_tab_by_file_id, get_tab_count, import_upgrade_items_json,
+    init_project_database, migrate_from_settings_json, record_project_opened,
+    remove_expanded_folder, remove_pinned_file, remove_pinned_folder, search_projects,
+    set_setting, sync_default_projects, sync_expanded_folders, sync_pinned_files,
+    sync_pinned_folders, sync_root_projects, toggle_pin_project, update_project,
+    update_tab_content, update_tab_order, update_upgrade_item, upsert_tab,
 };
 
 mod sqlite;
@@ -452,6 +454,13 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         remove_expanded_folder,
         sync_expanded_folders,
         clear_expanded_folders,
+        // 升级日志
+        get_all_upgrade_items,
+        add_upgrade_item,
+        update_upgrade_item,
+        delete_upgrade_item,
+        export_upgrade_items_json,
+    import_upgrade_items_json,
         // SQLite 查看器命令
         get_sqlite_tables,
         get_sqlite_table_data,

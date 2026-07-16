@@ -101,7 +101,7 @@ function applyTerracottaTheme(monaco: Parameters<OnMount>[1]) {
   monaco.editor.setTheme("terracotta-dark");
 }
 
-export default function Editor({ tabId }: { tabId?: string | null } = {}) {
+export default function Editor({ tabId, pane = "primary" }: { tabId?: string | null; pane?: "primary" | "secondary" } = {}) {
   const {
     tabs,
     secondaryTabs,
@@ -532,6 +532,21 @@ export default function Editor({ tabId }: { tabId?: string | null } = {}) {
   const mode = activeTab ? resolveEditorMode(activeTab) : null;
 
   if (!activeTab || !mode) {
+    // 分屏副窗口无标签时显示简洁提示
+    if (pane === "secondary") {
+      return (
+        <div className="flex items-center justify-center h-full select-none">
+          <div className="text-center space-y-3 relative">
+            <div className="w-12 h-12 mx-auto rounded-xl bg-surface border border-border flex items-center justify-center text-text-muted">
+              <Columns2 size={20} />
+            </div>
+            <p className="text-sm text-text-muted">在此面板打开文件</p>
+            <p className="text-xs text-text-muted/50">从左侧文件树打开，或拖拽文件到此区域</p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex items-center justify-center h-full select-none">
         <div className="text-center space-y-6 relative">

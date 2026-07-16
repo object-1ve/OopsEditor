@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
-import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link } from "lucide-react";
+import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link, ListChecks } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import Sidebar from "./components/Sidebar";
 import RightSidebar from "./components/RightSidebar";
@@ -11,6 +11,7 @@ import Toast from "./components/Toast";
 import ConfirmModal from "./components/ConfirmModal";
 import SettingsModal from "./components/SettingsModal";
 import ContextMenu from "./components/ContextMenu";
+import UpgradePanel from "./components/UpgradePanel";
 import { useEditorStore } from "./store/editor";
 import { detectLanguage, isPreviewOnlyLanguage } from "./types";
 import { saveSetting, loadSettings } from "./utils/settings";
@@ -77,6 +78,7 @@ function App() {
   const [isAppReady, setIsAppReady] = useState(false);
   const [isTerminalExpanded, setIsTerminalExpanded] = useState(false);
   const [terminalContextMenu, setTerminalContextMenu] = useState<{ x: number; y: number; terminalId: string } | null>(null);
+  const [showUpgradePanel, setShowUpgradePanel] = useState(false);
   const isResizingTerminal = useRef(false);
   const editorWorkspaceRef = useRef<HTMLDivElement>(null);
   const terminalDropZoneRef = useRef<HTMLDivElement>(null);
@@ -567,7 +569,7 @@ function App() {
                 <div className="flex flex-col overflow-hidden min-w-0 flex-1" onMouseDown={() => setFocusedPane('secondary')}>
                   <Toolbar pane="secondary" />
                   <div className="flex-1 overflow-hidden">
-                    <Editor tabId={secondaryActiveTabId} />
+                    <Editor tabId={secondaryActiveTabId} pane="secondary" />
                   </div>
                 </div>
               </div>
@@ -701,6 +703,13 @@ function App() {
             >
               <Terminal size={14} />
             </button>
+            <button
+              onClick={() => setShowUpgradePanel(true)}
+              className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
+              title="升级日志"
+            >
+              <ListChecks size={14} />
+            </button>
             
             <span className="text-border mx-1">|</span>
 
@@ -789,6 +798,7 @@ function App() {
 
       <ConfirmModal />
       <SettingsModal />
+      {showUpgradePanel && <UpgradePanel onClose={() => setShowUpgradePanel(false)} />}
       <Toast />
     </div>
   );

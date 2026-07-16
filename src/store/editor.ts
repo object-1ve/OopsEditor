@@ -969,13 +969,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   setSplit: (enabled) => {
     if (enabled) {
-      // 开启分屏：副窗口默认显示主窗口当前活动标签（复用同一 FileTab 引用以便内容同步）
-      const { tabs, activeTabId } = get();
-      const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+      // 开启分屏：副窗口默认为空，由用户自行在副窗口中打开文件
       set({
         isSplit: true,
-        secondaryTabs: activeTab ? [activeTab] : [],
-        secondaryActiveTabId: activeTab?.id ?? null,
+        secondaryTabs: [],
+        secondaryActiveTabId: null,
         focusedPane: 'primary',
       });
     } else {
