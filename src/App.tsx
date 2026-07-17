@@ -69,7 +69,11 @@ function App() {
     splitRatio,
     setSplitRatio,
     setFocusedPane,
-    secondaryActiveTabId
+    focusedPane,
+    secondaryActiveTabId,
+    tabs,
+    activeTabId,
+    secondaryTabs,
   } = useEditorStore();
 
   const [isDragging, setIsDragging] = useState(false);
@@ -710,7 +714,7 @@ function App() {
             >
               <ListChecks size={14} />
             </button>
-            
+
             <span className="text-border mx-1">|</span>
 
             <div className="flex items-center gap-1.5">
@@ -720,11 +724,30 @@ function App() {
             <span className="text-border">|</span>
             <span>Oops Editor</span>
             <div className="flex-1 flex items-center px-4 overflow-hidden">
-              {hoveredPath && (
-                <span className="text-accent/70 truncate animate-in fade-in slide-in-from-left-2 duration-200 font-mono text-[10px]">
-                  {hoveredPath}
-                </span>
-              )}
+              {(() => {
+                // Show hovered path first (from tab hover or sidebar hover)
+                // Otherwise show active tab path based on focused pane
+                let displayPath = hoveredPath ?? null;
+
+                if (!displayPath) {
+                  let activeTab = null;
+                  if (isSplit && focusedPane === 'secondary') {
+                    activeTab = secondaryTabs.find(t => t.id === secondaryActiveTabId);
+                  } else {
+                    activeTab = tabs.find(t => t.id === activeTabId);
+                  }
+                  displayPath = activeTab?.path ?? null;
+                }
+
+                if (displayPath) {
+                  return (
+                    <span className="text-accent/70 truncate animate-in fade-in slide-in-from-left-2 duration-200 font-mono text-[10px]">
+                      {displayPath}
+                    </span>
+                  );
+                }
+                return null;
+              })()}
             </div>
             <span className="hidden sm:inline text-text-muted/60">拖拽文件到窗口打开</span>
           </div>

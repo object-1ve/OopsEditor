@@ -1,4 +1,4 @@
-import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, SplitSquareHorizontal } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, SplitSquareHorizontal, ArrowRight } from "lucide-react";
 import { useEditorStore, type EditorPane } from "../store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
@@ -49,6 +49,7 @@ export default function Toolbar({ pane = "primary" }: ToolbarProps) {
     unpinFile,
     replaceTabFileLocation,
     showModal,
+    setHoveredPath,
   } = store;
 
   const isSecondary = pane === "secondary";
@@ -150,6 +151,23 @@ export default function Toolbar({ pane = "primary" }: ToolbarProps) {
     }
     setContextMenu(null);
   }, [contextMenu, paneTabs, closeTabsInPane, showModal, pane]);
+
+  const handleTransferToOtherPane = useCallback(() => {
+    if (!contextMenu || !isSplit) return;
+    const tab = paneTabs.find(t => t.id === contextMenu.tabId);
+    if (!tab) return;
+
+    const targetPane = isSecondary ? "primary" : "secondary";
+
+    // Close from current pane
+    closeTabInPane(tab.id, pane);
+
+    // Open in target pane
+    openTabInPane(tab, targetPane);
+
+    showNotification(`已将 "${tab.name}" 转移到${isSecondary ? "左" : "右"}分区`, "success");
+    setContextMenu(null);
+  }, [contextMenu, isSplit, isSecondary, paneTabs, closeTabInPane, openTabInPane, pane, showNotification]);
 
   const handleSaveToDefaultFolder = useCallback(async (defaultFolderPath: string, defaultFolderName: string) => {
     if (!contextMenu) return;
@@ -253,6 +271,14 @@ export default function Toolbar({ pane = "primary" }: ToolbarProps) {
           showNotification(`已固定到左侧边栏: ${tab.name}`, "success");
         },
       },
+      ...(isSplit ? [
+        { separator: true, label: "", onClick: () => {} },
+        {
+          label: isSecondary ? "转移到左分区" : "转移到右分区",
+          icon: <ArrowRight size={14} />,
+          onClick: handleTransferToOtherPane,
+        },
+      ] : []),
       { separator: true, label: "", onClick: () => {} },
       {
         label: "关闭标签页",
@@ -276,7 +302,7 @@ export default function Toolbar({ pane = "primary" }: ToolbarProps) {
         onClick: handleCloseRight
       },
     ];
-  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, pinFile, showNotification, unpinFile]);
+  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, showNotification, unpinFile, isSplit, isSecondary]);
 
   const handleDoubleClick = useCallback(async (e: React.MouseEvent) => {
     if (e.target !== e.currentTarget) return;
@@ -339,6 +365,8 @@ export default function Toolbar({ pane = "primary" }: ToolbarProps) {
               onClick={() => setActive(tab.id)}
               onDoubleClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
+              onMouseEnter={() => setHoveredPath(tab.path)}
+              onMouseLeave={() => setHoveredPath(null)}
             >
               {tab.id === paneActiveTabId && (
                 <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-accent to-accent-bright rounded-full" />
