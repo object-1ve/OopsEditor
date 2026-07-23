@@ -108,7 +108,7 @@ jobs:
       - name: Install native Rollup
         shell: bash
         run: |
-          ROLLUP_VERSION=$(node -p "require('./node_modules/rollup/package.json').version")
+          ROLLUP_VERSION=$(node -p "require('rollup/package.json').version")
           ARCH=$(node -p "process.arch === 'arm64' ? 'arm64' : 'x64'")
           npm install --no-save "@rollup/rollup-darwin-${ARCH}@${ROLLUP_VERSION}"
 
