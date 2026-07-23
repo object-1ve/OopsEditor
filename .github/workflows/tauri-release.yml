@@ -105,18 +105,7 @@ jobs:
       - name: Sync version to ${{ needs.version.outputs.version }}
         run: pnpm exec node scripts/sync-version.js "${{ needs.version.outputs.version }}"
 
-      - name: Install native Rollup
-        shell: bash
-        run: |
-          ROLLUP_VERSION=$(node -p "const pj=JSON.parse(require('fs').readFileSync('package-lock.json','utf8'));pj.packages['node_modules/rollup'].version")
-          ARCH=$(node -p "process.arch === 'arm64' ? 'arm64' : 'x64'")
-          npm install --no-save "@rollup/rollup-darwin-${ARCH}@${ROLLUP_VERSION}"
 
-      - name: Install Tauri CLI native binding
-        shell: bash
-        run: |
-          ARCH=$(node -p "process.arch === 'arm64' ? 'arm64' : 'x64'")
-          npm install --no-save "@tauri-apps/cli-darwin-${ARCH}@2.11.2"
 
       - name: Build Tauri macOS bundles
         shell: bash
@@ -171,8 +160,7 @@ jobs:
       - name: Sync version to ${{ needs.version.outputs.version }}
         run: pnpm exec node scripts/sync-version.js "${{ needs.version.outputs.version }}"
 
-      - name: Install Tauri CLI native binding
-        run: npm install --no-save @tauri-apps/cli-win32-x64-msvc@2.11.2
+
 
       - name: Build Tauri Windows bundles
         run: pnpm tbuild -- --bundles msi
