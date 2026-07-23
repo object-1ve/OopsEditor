@@ -19,30 +19,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── 构建 + 发布 ──────────────────────────────────────────
+  # ── Windows 构建 + 发布 ────────────────────────────────
   build-and-release:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact-name: linux-x86_64
-
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact-name: windows-x86_64
-
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact-name: macos-x86_64
-
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact-name: macos-aarch64
-
-    runs-on: ${{ matrix.os }}
-    # 将 release 创建提升为 job 级别的权限
+    runs-on: windows-latest
     permissions:
       contents: write
 
@@ -53,8 +32,6 @@ jobs:
       # ── Rust 工具链 ──────────────────────────────────────
       - name: ⚙️ Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
       # ── Node.js ──────────────────────────────────────────
       - name: ⚙️ Setup Node.js
@@ -66,48 +43,25 @@ jobs:
       - name: 📦 Install frontend dependencies
         run: npm ci
 
-      # ── Linux 附加依赖（Tauri 需要系统库） ──────────────
-      - name: 📦 Install Linux system dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libxdo-dev
-
       # ── 构建 Tauri 应用 ──────────────────────────────────
-      - name: 🔨 Build Tauri app (target: ${{ matrix.target }})
+      - name: 🔨 Build Tauri app
         run: npm run tauri build
-        env:
-          # 告诉 Cargo 使用哪个 target
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
 
       # ── 收集构建产物 ─────────────────────────────────────
       - name: 📁 Locate Tauri bundles
         id: bundles
         shell: bash
         run: |
-          # Tauri v2 打包产物位于 src-tauri/target/<target>/release/bundle/
-          BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
+          # Tauri v2 打包产物
+          BUNDLE_DIR="src-tauri/target/release/bundle"
           echo "Bundles root: $BUNDLE_DIR"
           ls -lhR "$BUNDLE_DIR" || echo "No bundle dir found"
 
-          # 收集所有包文件路径（多行），传给 release step
-          # Ubuntu → .deb / .AppImage
           # Windows → .msi / .exe (nsis)
-          # macOS   → .dmg / .app.tar.gz
           ASSETS=$(find "$BUNDLE_DIR" -type f \( \
-            -name "*.deb" -o \
-            -name "*.AppImage" -o \
             -name "*.msi" -o \
-            -name "*.exe" -o \
-            -name "*.dmg" -o \
-            -name "*.tar.gz" -o \
-            -name "*.rpm" \
-          \) | tr '\n' ' ')
+            -name "*.exe" \
+          \) | tr "\n" " ")
           echo "assets=$ASSETS" >> "$GITHUB_OUTPUT"
           echo "Found artifacts: $ASSETS"
 
@@ -115,13 +69,9 @@ jobs:
       - name: 🚀 Create Release
         uses: softprops/action-gh-release@v2
         with:
-          # 从 tag 名生成 release 标题（如 v0.1.27）
           name: ${{ github.ref_name }}
-          # 使用 GitHub 自动生成的 release notes
           generate_release_notes: true
-          # 是否为预发布（tag 含 beta/alpha/rc 等标记时设为 true）
           prerelease: ${{ contains(github.ref_name, '-') }}
-          # 附加构建产物
           files: ${{ steps.bundles.outputs.assets }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
