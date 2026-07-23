@@ -110,7 +110,14 @@ jobs:
       - name: Verify Tauri CLI
         run: npx tauri info
       - name: Build Tauri macOS bundles
-        run: npm run tbuild -- --bundles app,dmg
+        run: |
+          # 如果没有配置 Apple 证书签名
+          if [ -z "$APPLE_CERTIFICATE" ] && [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "No Apple signing cert configured, skipping codesign"
+            npm run tbuild -- --bundles dmg
+          else
+            npm run tbuild -- --bundles app,dmg
+          fi
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -119,8 +126,6 @@ jobs:
           retention-days: 90
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app.tar.gz
-            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
 
   build-windows:
     runs-on: windows-latest
