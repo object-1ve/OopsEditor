@@ -1,15 +1,25 @@
 name: Build and Release
 
 on:
+  # push 到 main → 自动构建各平台安装包（不创建 Release）
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+      - "idea/**"
+      - ".gitignore"
+      - ".github/dependabot.yml"
+  # 打 v* tag → 构建 + 统一 Release
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
         description: "版本号 (留空则自动递增 patch)"
         required: false
         type: string
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: write
@@ -58,9 +68,13 @@ jobs:
               node scripts/sync-version.js "$NEW"
               echo "version=$NEW" >> "$GITHUB_OUTPUT"
             fi
-          else
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
             TAG_VERSION="${GITHUB_REF_NAME#v}"
             echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            # push to main — 只需读取当前版本号，不做修改
+            CURRENT=$(node -p "require('./package.json').version")
+            echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Commit and tag version bump
