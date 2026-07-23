@@ -37,7 +37,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 21
 
       - name: Install pnpm
         run: npm install -g pnpm
@@ -88,7 +88,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 21
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -108,7 +108,7 @@ jobs:
       - name: Install native Rollup
         shell: bash
         run: |
-          ROLLUP_VERSION=$(node -p "require('rollup/package.json').version")
+          ROLLUP_VERSION=$(node -p "const pj=JSON.parse(require('fs').readFileSync('package-lock.json','utf8'));pj.packages['node_modules/rollup'].version")
           ARCH=$(node -p "process.arch === 'arm64' ? 'arm64' : 'x64'")
           npm install --no-save "@rollup/rollup-darwin-${ARCH}@${ROLLUP_VERSION}"
 
@@ -151,7 +151,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 21
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
