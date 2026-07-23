@@ -2,13 +2,6 @@ name: Build and Release
 
 on:
   push:
-    branches:
-      - main
-    paths-ignore:
-      - "**.md"
-      - "idea/**"
-      - ".gitignore"
-      - ".github/dependabot.yml"
     tags:
       - "v*"
   workflow_dispatch:
