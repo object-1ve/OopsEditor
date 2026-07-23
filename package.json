@@ -6,10 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
     "tdev": "tauri dev",
     "tbuild": "tauri build",
-    "preview": "vite preview",
-    "tauri": "tauri"
+    "tbundle": "tauri build --bundles msi",
+    "tbundle:mac": "tauri build --bundles dmg",
+    "v": "node scripts/sync-version.js",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:frontend": "tsc --noEmit"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

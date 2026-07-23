@@ -370,7 +370,7 @@ fn decode_text_bytes(bytes: &[u8]) -> Result<String, String> {
 }
 
 fn decode_utf16_bytes(bytes: &[u8], little_endian: bool) -> Result<String, String> {
-    if !bytes.len().is_multiple_of(&2) {
+    if !bytes.len().is_multiple_of(2) {
         return Err("UTF-16 字节长度无效".to_string());
     }
 

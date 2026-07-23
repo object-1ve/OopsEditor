@@ -7,58 +7,51 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Node
 node_modules
 dist
 dist-ssr
 *.local
-docs
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
+.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+.claude/
+.codegraph/
+.cursor/
+.dbg/
+CLAUDE.md
+AGENTS.md
 
-# OS files
-.DS_Store
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
+# Tauri build output
+src-tauri/target/
+src-tauri/gen/
+
+# Rust
+debug/
+target/
+**/*.rs.bk
+
+# Examples
+example/
+
+# Analysis
+stats.html
 
 # Environment files
 .env
 .env.*
 !.env.example
 
-# Rust / Tauri build output
-src-tauri/target/
-src-tauri/debug/
-src-tauri/release/
-sql/
-example/
-
-# Dependency directories
-pids
-*.pid
-*.seed
-lib-cov
-
-# Coverage
-coverage
-*.lcov
-
-# Build caches
-.eslintcache
-*.tsbuildinfo
-*.map
-
-# Yarn/Pnpm specific
-.yarn/*
-!.yarn/releases
-!.yarn/plugins
-!.yarn/patches
-.pnp.*
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
