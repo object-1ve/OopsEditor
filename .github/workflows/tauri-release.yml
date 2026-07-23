@@ -58,7 +58,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Sync version in files
-        run: pnpm exec node scripts/sync-version.js "${{ steps.v.outputs.version }}"
+        run: node scripts/sync-version.js "${{ steps.v.outputs.version }}"
 
       - name: Commit and push version bump
         run: |
