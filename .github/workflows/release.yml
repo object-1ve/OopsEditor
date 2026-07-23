@@ -1,0 +1,83 @@
+# ============================================================
+# Release workflow
+# 通过 push tag（如 v0.1.27）触发，构建并发布 GitHub Release
+# 仅构建 Windows 包（macOS 构建已禁用）
+# ============================================================
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+*"
+
+# ── 并发控制 ──────────────────────────────────────────────
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+jobs:
+  # ── Windows 构建 + 发布 ────────────────────────────────
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Rust 工具链 ──────────────────────────────────────
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      # ── Node.js ──────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      # ── 构建 Tauri 应用 ──────────────────────────────────
+      - name: Build Tauri app
+        run: pnpm tbuild
+
+      # ── 收集构建产物 ─────────────────────────────────────
+      - name: Locate Tauri bundles
+        id: bundles
+        shell: bash
+        run: |
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          echo "Bundles root: $BUNDLE_DIR"
+          ls -lhR "$BUNDLE_DIR" || echo "No bundle dir found"
+
+          # Windows → .msi / .exe (nsis)
+          ASSETS=$(find "$BUNDLE_DIR" -type f \( \
+            -name "*.msi" -o \
+            -name "*.exe" \
+          \) | tr "\n" " ")
+          echo "assets=$ASSETS" >> "$GITHUB_OUTPUT"
+          echo "Found artifacts: $ASSETS"
+
+      # ── 创建 GitHub Release ──────────────────────────────
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: ${{ steps.bundles.outputs.assets }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
