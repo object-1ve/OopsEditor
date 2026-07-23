@@ -17,8 +17,9 @@ on:
   push:
     tags:
       - '*'             # matches any tag, e.g. 0.1.27 — one run per tag.
+  workflow_dispatch:    # allow manual trigger from Actions tab
 
-# ── Permissions ──────────────────────────────────────────────────────────────
+# ── Permissions ──────────────
 permissions:
   contents: write       # required by softprops/action-gh-release to create the
                         # release and upload assets.
@@ -54,7 +55,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
 
       - name: Install frontend dependencies
         run: npm ci
@@ -66,7 +66,7 @@ jobs:
 
       # ── Build ───────────────────────────────────────────────────────────
       - name: Build Tauri application (MSI)
-        run: npm run tbuild -- --bundles msi
+        run: npm run tbuild --bundles msi
 
       # ── Upload build artifacts ──────────────────────────────────────────
       - name: Upload MSI installer
@@ -84,7 +84,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Rust toolchain ──────────────────────────────────────────────────
+      # ── Rust toolchain ──
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -100,7 +100,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
 
       - name: Install frontend dependencies
         run: npm ci
@@ -112,7 +111,7 @@ jobs:
 
       # ── Build ───────────────────────────────────────────────────────────
       - name: Build Tauri application (DMG)
-        run: npm run tbuild -- --bundles dmg
+        run: npm run tbuild --bundles dmg
 
       # ── Upload build artifacts ──────────────────────────────────────────
       - name: Upload DMG installer
