@@ -50,14 +50,19 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # ── Node.js ─────────────────────────────────────────────────────────
+      # ── Node.js + pnpm ──────────────────────────────────────────────────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
       - name: Install frontend dependencies
-        run: npm ci
+        run: pnpm install --no-frozen-lockfile
 
       # ── Tests ───────────────────────────────────────────────────────────
       - name: Run Rust unit tests
@@ -66,7 +71,7 @@ jobs:
 
       # ── Build ───────────────────────────────────────────────────────────
       - name: Build Tauri application (MSI)
-        run: npm run tbuild --bundles msi
+        run: pnpm tbuild --bundles msi
 
       # ── Upload build artifacts ──────────────────────────────────────────
       - name: Upload MSI installer
@@ -95,14 +100,19 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # ── Node.js ─────────────────────────────────────────────────────────
+      # ── Node.js + pnpm ──────────────────────────────────────────────────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
       - name: Install frontend dependencies
-        run: npm ci
+        run: pnpm install --no-frozen-lockfile
 
       # ── Tests ───────────────────────────────────────────────────────────
       - name: Run Rust unit tests
@@ -111,7 +121,7 @@ jobs:
 
       # ── Build ───────────────────────────────────────────────────────────
       - name: Build Tauri application (DMG)
-        run: npm run tbuild --bundles dmg
+        run: pnpm tbuild --bundles dmg
 
       # ── Upload build artifacts ──────────────────────────────────────────
       - name: Upload DMG installer

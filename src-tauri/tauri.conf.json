@@ -4,9 +4,9 @@
   "version": "0.1.27",
   "identifier": "com.object1ve.oops-editor",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "pnpm dev",
     "devUrl": "http://127.0.0.1:5173",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -25,7 +25,13 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**", "C:/**", "D:/**", "E:/**", "F:/**"]
+        "scope": [
+          "**",
+          "C:/**",
+          "D:/**",
+          "E:/**",
+          "F:/**"
+        ]
       }
     }
   },
@@ -45,7 +51,9 @@
         "silent": true
       },
       "wix": {
-        "language": ["zh-CN"]
+        "language": [
+          "zh-CN"
+        ]
       }
     },
     "macOS": {
