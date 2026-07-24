@@ -16,7 +16,7 @@ name: Build and Release
 on:
   push:
     tags:
-      - '*'             # matches any tag, e.g. 0.1.27 — one run per tag.
+      - 'v*'             # matches v-prefixed tags, e.g. v0.1.29 — one run per tag.
   workflow_dispatch:    # allow manual trigger from Actions tab
 
 # ── Permissions ──────────────
