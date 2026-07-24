@@ -46,15 +46,13 @@ interface FileInfo {
 }
 
 export default function RightSidebar() {
-  const {
-    tabs,
-    activeTabId,
-    rightSidebarWidth,
-    setRightSidebarWidth,
-    navigateToMarkdownHeading,
-    rightSidebarIconOrder,
-    setRightSidebarIconOrder,
-  } = useEditorStore();
+  const tabs = useEditorStore(s => s.tabs);
+  const activeTabId = useEditorStore(s => s.activeTabId);
+  const rightSidebarWidth = useEditorStore(s => s.rightSidebarWidth);
+  const setRightSidebarWidth = useEditorStore(s => s.setRightSidebarWidth);
+  const navigateToMarkdownHeading = useEditorStore(s => s.navigateToMarkdownHeading);
+  const rightSidebarIconOrder = useEditorStore(s => s.rightSidebarIconOrder);
+  const setRightSidebarIconOrder = useEditorStore(s => s.setRightSidebarIconOrder);
   const isResizing = useRef(false);
   const [activePanel, setActivePanel] = useState<"outline" | "info" | "git" | null>(null);
   const [draggedIcon, setDraggedIcon] = useState<string | null>(null);

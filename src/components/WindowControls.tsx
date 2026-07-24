@@ -4,11 +4,9 @@ import { useEditorStore } from "../store/editor";
 
 export default function WindowControls() {
   const [isMaximized, setIsMaximized] = useState(false);
-  const {
-    openSettings,
-    tabs,
-    showModal,
-  } = useEditorStore();
+  const openSettings = useEditorStore(s => s.openSettings);
+  const tabs = useEditorStore(s => s.tabs);
+  const showModal = useEditorStore(s => s.showModal);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;

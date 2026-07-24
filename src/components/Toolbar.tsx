@@ -27,30 +27,27 @@ interface ToolbarProps {
 }
 
 export default function Toolbar({ pane = "primary" }: ToolbarProps) {
-  const store = useEditorStore();
-  const {
-    tabs,
-    activeTabId,
-    secondaryTabs,
-    secondaryActiveTabId,
-    isSplit,
-    focusedPane,
-    toggleSplit,
-    setSplit,
-    setFocusedPane,
-    setActiveTabInPane,
-    closeTabInPane,
-    closeTabsInPane,
-    openTabInPane,
-    showNotification,
-    defaultFolders,
-    pinnedFiles,
-    pinFile,
-    unpinFile,
-    replaceTabFileLocation,
-    showModal,
-    setHoveredPath,
-  } = store;
+const tabs = useEditorStore(s => s.tabs);
+  const activeTabId = useEditorStore(s => s.activeTabId);
+  const secondaryTabs = useEditorStore(s => s.secondaryTabs);
+  const secondaryActiveTabId = useEditorStore(s => s.secondaryActiveTabId);
+  const isSplit = useEditorStore(s => s.isSplit);
+  const focusedPane = useEditorStore(s => s.focusedPane);
+  const toggleSplit = useEditorStore(s => s.toggleSplit);
+  const setSplit = useEditorStore(s => s.setSplit);
+  const setFocusedPane = useEditorStore(s => s.setFocusedPane);
+  const setActiveTabInPane = useEditorStore(s => s.setActiveTabInPane);
+  const closeTabInPane = useEditorStore(s => s.closeTabInPane);
+  const closeTabsInPane = useEditorStore(s => s.closeTabsInPane);
+  const openTabInPane = useEditorStore(s => s.openTabInPane);
+  const showNotification = useEditorStore(s => s.showNotification);
+  const defaultFolders = useEditorStore(s => s.defaultFolders);
+  const pinnedFiles = useEditorStore(s => s.pinnedFiles);
+  const pinFile = useEditorStore(s => s.pinFile);
+  const unpinFile = useEditorStore(s => s.unpinFile);
+  const replaceTabFileLocation = useEditorStore(s => s.replaceTabFileLocation);
+  const showModal = useEditorStore(s => s.showModal);
+  const setHoveredPath = useEditorStore(s => s.setHoveredPath);
 
   const isSecondary = pane === "secondary";
   // 副窗口持有独立的标签列表，与主窗口互不影响；同 id 标签共享内容（由 updateContent 同步）

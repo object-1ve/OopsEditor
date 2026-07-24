@@ -48,35 +48,33 @@ function isValidRestoredWindowPosition(
 }
 
 function App() {
-  const {
-    isLeftSidebarCollapsed,
-    isRightSidebarCollapsed,
-    isTerminalVisible,
-    terminalHeight,
-    toggleTerminal,
-    setTerminalHeight,
-    terminals,
-    activeTerminalId,
-    setActiveTerminal,
-    addTerminal,
-    removeTerminal,
-    closeOtherTerminals,
-    closeTerminalsToLeft,
-    closeTerminalsToRight,
-    toggleLeftSidebar,
-    toggleRightSidebar,
-    init,
-    hoveredPath,
-    isSplit,
-    splitRatio,
-    setSplitRatio,
-    setFocusedPane,
-    focusedPane,
-    secondaryActiveTabId,
-    tabs,
-    activeTabId,
-    secondaryTabs,
-  } = useEditorStore();
+  const isLeftSidebarCollapsed = useEditorStore(s => s.isLeftSidebarCollapsed);
+  const isRightSidebarCollapsed = useEditorStore(s => s.isRightSidebarCollapsed);
+  const isTerminalVisible = useEditorStore(s => s.isTerminalVisible);
+  const terminalHeight = useEditorStore(s => s.terminalHeight);
+  const toggleTerminal = useEditorStore(s => s.toggleTerminal);
+  const setTerminalHeight = useEditorStore(s => s.setTerminalHeight);
+  const terminals = useEditorStore(s => s.terminals);
+  const activeTerminalId = useEditorStore(s => s.activeTerminalId);
+  const setActiveTerminal = useEditorStore(s => s.setActiveTerminal);
+  const addTerminal = useEditorStore(s => s.addTerminal);
+  const removeTerminal = useEditorStore(s => s.removeTerminal);
+  const closeOtherTerminals = useEditorStore(s => s.closeOtherTerminals);
+  const closeTerminalsToLeft = useEditorStore(s => s.closeTerminalsToLeft);
+  const closeTerminalsToRight = useEditorStore(s => s.closeTerminalsToRight);
+  const toggleLeftSidebar = useEditorStore(s => s.toggleLeftSidebar);
+  const toggleRightSidebar = useEditorStore(s => s.toggleRightSidebar);
+  const init = useEditorStore(s => s.init);
+  const hoveredPath = useEditorStore(s => s.hoveredPath);
+  const isSplit = useEditorStore(s => s.isSplit);
+  const splitRatio = useEditorStore(s => s.splitRatio);
+  const setSplitRatio = useEditorStore(s => s.setSplitRatio);
+  const setFocusedPane = useEditorStore(s => s.setFocusedPane);
+  const focusedPane = useEditorStore(s => s.focusedPane);
+  const secondaryActiveTabId = useEditorStore(s => s.secondaryActiveTabId);
+  const tabs = useEditorStore(s => s.tabs);
+  const activeTabId = useEditorStore(s => s.activeTabId);
+  const secondaryTabs = useEditorStore(s => s.secondaryTabs);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isDraggingOverTerminal, setIsDraggingOverTerminal] = useState(false);

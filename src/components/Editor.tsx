@@ -102,18 +102,16 @@ function applyTerracottaTheme(monaco: Parameters<OnMount>[1]) {
 }
 
 export default function Editor({ tabId, pane = "primary" }: { tabId?: string | null; pane?: "primary" | "secondary" } = {}) {
-  const {
-    tabs,
-    secondaryTabs,
-    activeTabId,
-    updateContent,
-    togglePreviewMode,
-    toggleLivePreviewMode,
-    showNotification,
-    markdownOutlineTarget,
-    clearMarkdownOutlineTarget,
-    editorWordWrap,
-  } = useEditorStore();
+  const tabs = useEditorStore(s => s.tabs);
+  const secondaryTabs = useEditorStore(s => s.secondaryTabs);
+  const activeTabId = useEditorStore(s => s.activeTabId);
+  const updateContent = useEditorStore(s => s.updateContent);
+  const togglePreviewMode = useEditorStore(s => s.togglePreviewMode);
+  const toggleLivePreviewMode = useEditorStore(s => s.toggleLivePreviewMode);
+  const showNotification = useEditorStore(s => s.showNotification);
+  const markdownOutlineTarget = useEditorStore(s => s.markdownOutlineTarget);
+  const clearMarkdownOutlineTarget = useEditorStore(s => s.clearMarkdownOutlineTarget);
+  const editorWordWrap = useEditorStore(s => s.editorWordWrap);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const pasteCleanupRef = useRef<(() => void) | null>(null);
   // tabId 显式为 null 表示该窗口无标签（分屏副窗口）；undefined 时回退到全局活动标签

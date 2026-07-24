@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { 
   ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Search, X, Edit2, Trash2, 
   ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin, 
@@ -142,21 +142,21 @@ interface FileNodeProps extends DirEntry {
   onRefresh?: () => void;
 }
 
-function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu, onRefresh }: FileNodeProps) {
+const FileNode = memo(function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu, onRefresh }: FileNodeProps) {
   const {
     openTab,
-    activeTabId,
     showNotification,
-    expandedFolders,
-    pinnedFolders,
-    defaultFolders,
     rebasePinnedFilePath,
-    toggleFolderExpanded,
     rebasePinnedFolderPaths,
     setHoveredPath,
-    sidebarSortField,
-    sidebarSortOrder,
   } = useEditorStore();
+  const activeTabId = useEditorStore(s => s.activeTabId);
+  const expandedFolders = useEditorStore(s => s.expandedFolders);
+  const pinnedFolders = useEditorStore(s => s.pinnedFolders);
+  const defaultFolders = useEditorStore(s => s.defaultFolders);
+  const toggleFolderExpanded = useEditorStore(s => s.toggleFolderExpanded);
+  const sidebarSortField = useEditorStore(s => s.sidebarSortField);
+  const sidebarSortOrder = useEditorStore(s => s.sidebarSortOrder);
   const isOpen = expandedFolders.includes(path);
   const isDefault = is_dir && defaultFolders.some(f => normalizePath(f.path) === normalizePath(path));
   const isPinned = is_dir && (isDefault || pinnedFolders.includes(normalizePath(path)));
@@ -348,9 +348,9 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
       )}
     </div>
   );
-}
+});
 
-function RootFolder({ 
+const RootFolder = memo(function RootFolder({ 
   path, 
   onContextMenu,
   onDragStart,
@@ -367,10 +367,14 @@ function RootFolder({
   onDragEnd: (e: React.DragEvent) => void;
   isDragging: boolean;
 }) {
-  const { 
-    removeRootPath, expandedFolders, pinnedFolders, defaultFolders, 
-    toggleFolderExpanded, setHoveredPath, sidebarSortField, sidebarSortOrder 
-  } = useEditorStore();
+  const removeRootPath = useEditorStore(s => s.removeRootPath);
+  const expandedFolders = useEditorStore(s => s.expandedFolders);
+  const pinnedFolders = useEditorStore(s => s.pinnedFolders);
+  const defaultFolders = useEditorStore(s => s.defaultFolders);
+  const toggleFolderExpanded = useEditorStore(s => s.toggleFolderExpanded);
+  const setHoveredPath = useEditorStore(s => s.setHoveredPath);
+  const sidebarSortField = useEditorStore(s => s.sidebarSortField);
+  const sidebarSortOrder = useEditorStore(s => s.sidebarSortOrder);
   const isOpen = expandedFolders.includes(path);
   const isDefault = defaultFolders.some(f => normalizePath(f.path) === normalizePath(path));
   const isPinned = isDefault || pinnedFolders.includes(normalizePath(path));
@@ -482,19 +486,37 @@ function RootFolder({
       )}
     </div>
   );
-}
+});
 
 export default function Sidebar() {
-  const { 
-    rootPaths, addRootPath, leftSidebarWidth, setLeftSidebarWidth, 
-    showNotification, addTerminal, openTab,
-    defaultFolders, addDefaultFolder, removeDefaultFolder, updateDefaultFolder,
-    pinnedFiles, removePinnedFile,
-    pinnedFolders, pinFolder, unpinFolder, removePinnedFoldersUnder, collapseAllFolders, showModal,
-    setHoveredPath, hoveredPath, setFolderExpanded,
-    sidebarSortField, sidebarSortOrder, setSidebarSortField, setSidebarSortOrder,
-    rootPathOrder, setRootPathOrder
-  } = useEditorStore();
+  const rootPaths = useEditorStore(s => s.rootPaths);
+  const addRootPath = useEditorStore(s => s.addRootPath);
+  const leftSidebarWidth = useEditorStore(s => s.leftSidebarWidth);
+  const setLeftSidebarWidth = useEditorStore(s => s.setLeftSidebarWidth);
+  const showNotification = useEditorStore(s => s.showNotification);
+  const addTerminal = useEditorStore(s => s.addTerminal);
+  const openTab = useEditorStore(s => s.openTab);
+  const defaultFolders = useEditorStore(s => s.defaultFolders);
+  const addDefaultFolder = useEditorStore(s => s.addDefaultFolder);
+  const removeDefaultFolder = useEditorStore(s => s.removeDefaultFolder);
+  const updateDefaultFolder = useEditorStore(s => s.updateDefaultFolder);
+  const pinnedFiles = useEditorStore(s => s.pinnedFiles);
+  const removePinnedFile = useEditorStore(s => s.removePinnedFile);
+  const pinnedFolders = useEditorStore(s => s.pinnedFolders);
+  const pinFolder = useEditorStore(s => s.pinFolder);
+  const unpinFolder = useEditorStore(s => s.unpinFolder);
+  const removePinnedFoldersUnder = useEditorStore(s => s.removePinnedFoldersUnder);
+  const collapseAllFolders = useEditorStore(s => s.collapseAllFolders);
+  const showModal = useEditorStore(s => s.showModal);
+  const setHoveredPath = useEditorStore(s => s.setHoveredPath);
+  const hoveredPath = useEditorStore(s => s.hoveredPath);
+  const setFolderExpanded = useEditorStore(s => s.setFolderExpanded);
+  const sidebarSortField = useEditorStore(s => s.sidebarSortField);
+  const sidebarSortOrder = useEditorStore(s => s.sidebarSortOrder);
+  const setSidebarSortField = useEditorStore(s => s.setSidebarSortField);
+  const setSidebarSortOrder = useEditorStore(s => s.setSidebarSortOrder);
+  const rootPathOrder = useEditorStore(s => s.rootPathOrder);
+  const setRootPathOrder = useEditorStore(s => s.setRootPathOrder);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DirEntry } | null>(null);
   const [emptyAreaContextMenu, setEmptyAreaContextMenu] = useState<{ x: number; y: number } | null>(null);
