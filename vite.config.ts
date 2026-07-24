@@ -42,5 +42,9 @@ export default defineConfig(async () => ({
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     // Produce sourcemaps for debug builds
     sourcemap: !!process.env.TAURI_DEBUG,
+    rollupOptions: {
+      // Limit parallel file operations to reduce peak memory during build
+      maxParallelFileOps: 100,
+    },
   },
 }));
