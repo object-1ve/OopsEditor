@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
-import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link, ListChecks } from "lucide-react";
+import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link, ListChecks, PanelLeftClose, PanelLeftOpen, PanelRightOpen } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import Sidebar from "./components/Sidebar";
 import RightSidebar from "./components/RightSidebar";
@@ -63,6 +63,8 @@ function App() {
     closeOtherTerminals,
     closeTerminalsToLeft,
     closeTerminalsToRight,
+    toggleLeftSidebar,
+    toggleRightSidebar,
     init,
     hoveredPath,
     isSplit,
@@ -701,6 +703,13 @@ function App() {
           {/* Status bar */}
           <div className="h-6 bg-deepest border-t border-border flex items-center px-1 text-xs text-text-muted gap-2 relative z-10">
             <button
+              onClick={toggleLeftSidebar}
+              className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
+              title={isLeftSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            >
+              {isLeftSidebarCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+            </button>
+            <button
               onClick={handleOpenTerminal}
               className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
               title="在当前目录打开终端"
@@ -725,8 +734,6 @@ function App() {
             <span>Oops Editor</span>
             <div className="flex-1 flex items-center px-4 overflow-hidden">
               {(() => {
-                // Show hovered path first (from tab hover or sidebar hover)
-                // Otherwise show active tab path based on focused pane
                 let displayPath = hoveredPath ?? null;
 
                 if (!displayPath) {
@@ -750,6 +757,13 @@ function App() {
               })()}
             </div>
             <span className="hidden sm:inline text-text-muted/60">拖拽文件到窗口打开</span>
+            <button
+              onClick={toggleRightSidebar}
+              className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
+              title={isRightSidebarCollapsed ? "展开右边栏" : "收起右边栏"}
+            >
+              {isRightSidebarCollapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
+            </button>
           </div>
         </div>
 

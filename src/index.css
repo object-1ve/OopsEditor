@@ -381,47 +381,56 @@ body {
 /* Markdown Preview Styles */
 .markdown-preview {
   color: var(--text-primary);
-  line-height: 1.6;
+  line-height: 1.45;
+}
+/* Override prose default line-height to be tighter */
+.markdown-preview.prose {
+  line-height: 1.45;
+}
+.markdown-preview.prose p,
+.markdown-preview.prose li,
+.markdown-preview.prose blockquote {
+  line-height: 1.45;
 }
 .markdown-preview h1 {
-  font-size: 2.25rem;
+  font-size: 2rem;
   font-weight: 800;
-  margin-top: 2rem;
-  margin-bottom: 1.5rem;
+  margin-top: 1rem;
+  margin-bottom: 0.75rem;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--border);
   color: var(--accent);
 }
 .markdown-preview h2 {
-  font-size: 1.875rem;
+  font-size: 1.6rem;
   font-weight: 700;
-  margin-top: 1.75rem;
-  margin-bottom: 1rem;
+  margin-top: 0.9rem;
+  margin-bottom: 0.5rem;
   color: var(--text-primary);
 }
 .markdown-preview h3 {
-  font-size: 1.5rem;
+  font-size: 1.3rem;
   font-weight: 600;
-  margin-top: 1.5rem;
-  margin-bottom: 0.75rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.4rem;
 }
 .markdown-preview p {
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.5rem;
 }
 .markdown-preview ul,
 .markdown-preview ol {
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.5rem;
   padding-left: 1.5rem;
 }
 .markdown-preview li {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.15rem;
 }
 .markdown-preview blockquote {
   border-left: 4px solid var(--accent-rose);
   padding-left: 1rem;
   font-style: italic;
   color: var(--text-secondary);
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.6rem;
 }
 .markdown-preview code:not(pre code) {
   background: var(--bg-secondary);
@@ -433,31 +442,36 @@ body {
 }
 .markdown-preview pre {
   background: #f8f6f3;
-  padding: 1.25rem;
+  padding: 0.75rem;
   border-radius: 12px;
   overflow: auto;
-  margin-bottom: 1.5rem;
+  margin-bottom: 0.75rem;
   border: 1px solid var(--border);
 }
 .markdown-preview img {
   max-width: 100%;
   border-radius: 8px;
-  margin: 1.5rem 0;
+  margin: 0.75rem 0;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 .markdown-preview table {
   width: 100%;
   border-collapse: collapse;
-  margin-bottom: 1.5rem;
+  margin-bottom: 0.75rem;
 }
 .markdown-preview th,
 .markdown-preview td {
   border: 1px solid var(--border);
-  padding: 0.75rem;
+  padding: 0.5rem;
   text-align: left;
+  color: var(--text-primary);
 }
 .markdown-preview th {
   background: var(--bg-secondary);
+  font-weight: 600;
+}
+.markdown-preview tbody tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.02);
 }
 
 /* Word Preview Styles */

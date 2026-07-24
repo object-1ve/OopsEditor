@@ -1,14 +1,10 @@
 import { useEffect, useState } from "react";
-import { Minus, Square, Copy, X, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings } from "lucide-react";
+import { Minus, Square, Copy, X, Settings } from "lucide-react";
 import { useEditorStore } from "../store/editor";
 
 export default function WindowControls() {
   const [isMaximized, setIsMaximized] = useState(false);
-  const { 
-    isLeftSidebarCollapsed, 
-    isRightSidebarCollapsed, 
-    toggleLeftSidebar, 
-    toggleRightSidebar,
+  const {
     openSettings,
     tabs,
     showModal,
@@ -96,20 +92,6 @@ export default function WindowControls() {
           title="设置"
         >
           <Settings size={14} />
-        </button>
-        <button
-          onClick={toggleLeftSidebar}
-          className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
-          title={isLeftSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-        >
-          {isLeftSidebarCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
-        </button>
-        <button
-          onClick={toggleRightSidebar}
-          className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
-          title={isRightSidebarCollapsed ? "展开右边栏" : "收起右边栏"}
-        >
-          {isRightSidebarCollapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
         </button>
       </div>
 

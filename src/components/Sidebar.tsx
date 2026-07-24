@@ -263,10 +263,10 @@ function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu,
   return (
     <div>
       <div
-        className={`flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-surface/50 transition-colors select-none text-sm group ${
+        className={`flex items-center gap-1.5 py-1 cursor-pointer hover:bg-surface/50 transition-colors select-none text-sm group ${
           isActive ? "bg-surface text-accent font-medium" : "text-text-secondary"
         }`}
-        style={{ paddingLeft: `${level * 12 + 12}px` }}
+        style={{ paddingLeft: `${level * 12 + 12}px`, paddingRight: "12px" }}
         onClick={handleToggle}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}
@@ -416,7 +416,7 @@ function RootFolder({
       onDragEnd={onDragEnd}
     >
       <div 
-        className="pl-2 pr-3 py-1.5 flex items-center justify-between group/folder cursor-grab active:cursor-grabbing select-none hover:bg-surface/30 transition-colors"
+        className="px-3 py-1.5 flex items-center justify-between group/folder cursor-grab active:cursor-grabbing select-none hover:bg-surface/30 transition-colors"
         onClick={() => toggleFolderExpanded(path)}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}

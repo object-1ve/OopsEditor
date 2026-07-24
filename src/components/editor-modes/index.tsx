@@ -13,6 +13,8 @@ import {
 import MonacoEditor, { type EditorProps, type OnMount } from "@monaco-editor/react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+import rehypeRaw from "rehype-raw";
+import remarkGfm from "remark-gfm";
 import { Copy, FilePenLine, Database, Table, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
@@ -404,6 +406,7 @@ interface MarkdownPreviewPaneProps {
   containerRef?: RefObject<HTMLDivElement | null>;
   // 切换标签页后恢复预览上次的滚动位置；关闭仅在预览模式 / 实时模式间切换标签时启用。
   persistScroll?: boolean;
+  showLineNumbers?: boolean;
 }
 
 function MarkdownPreviewPane({
@@ -593,6 +596,7 @@ function MarkdownPreviewPane({
     return items;
   }, [contextMenuItems, handleCopyFromPreview, previewContextMenu?.hasSelection]);
 
+
   return (
     <div
       ref={markdownPreviewRef}
@@ -602,7 +606,8 @@ function MarkdownPreviewPane({
     >
       <div className={contentClassName}>
         <ReactMarkdown
-          rehypePlugins={[rehypeHighlight]}
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw, rehypeHighlight]}
           components={markdownComponents}
           urlTransform={(uri: string) => uri}
         >
@@ -1156,10 +1161,7 @@ function TextModeView({
         }
       }
     } finally {
-      // 延迟重置，防止快速滚动时的竞争
-      setTimeout(() => {
-        isSyncingRef.current = false;
-      }, 50);
+      isSyncingRef.current = false;
     }
   }, []);
 
@@ -1186,11 +1188,9 @@ function TextModeView({
         }
       }
 
-      editor.revealLine(topLine, 0); // 0 为 ScrollType.Smooth
+      editor.revealLine(topLine, 1); // 1 为 ScrollType.Immediate（同步触发，避免异步竞争导致二次回跳）
     } finally {
-      setTimeout(() => {
-        isSyncingRef.current = false;
-      }, 50);
+      isSyncingRef.current = false;
     }
   }, []);
 
@@ -1222,6 +1222,7 @@ function TextModeView({
         onEditorMount(editor, monaco);
         monacoMemoryCleanupRef.current?.();
         monacoMemoryCleanupRef.current = restoreMonacoScroll(editor);
+
       }}
       options={{
         fontSize: 14,

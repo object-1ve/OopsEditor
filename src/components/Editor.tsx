@@ -443,14 +443,14 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       ...(activeTab?.language === "markdown"
         ? [
             {
-              label: activeTab.isLivePreviewMode ? "关闭实时模式" : "开启实时模式",
-              icon: <Columns2 size={14} />,
-              onClick: () => currentTabId && toggleLivePreviewMode(currentTabId),
-            },
-            {
               label: activeTab.isPreviewMode ? "返回编辑模式" : "切换预览模式",
               icon: <FilePenLine size={14} />,
               onClick: () => currentTabId && togglePreviewMode(currentTabId),
+            },
+            {
+              label: activeTab.isLivePreviewMode ? "关闭实时模式" : "开启实时模式",
+              icon: <Columns2 size={14} />,
+              onClick: () => currentTabId && toggleLivePreviewMode(currentTabId),
             },
             { separator: true, label: "", onClick: () => {} },
           ]
