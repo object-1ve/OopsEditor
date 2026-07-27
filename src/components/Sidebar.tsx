@@ -138,11 +138,13 @@ const sortTreeEntries = (
 
 interface FileNodeProps extends DirEntry {
   level: number;
+  guideLevels: number[];
+  isLastSibling: boolean;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
   onRefresh?: () => void;
 }
 
-const FileNode = memo(function FileNode({ path, name, is_dir, size, modified_at, level, onContextMenu, onRefresh }: FileNodeProps) {
+const FileNode = memo(function FileNode({ path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, onContextMenu, onRefresh }: FileNodeProps) {
   const {
     openTab,
     showNotification,
@@ -265,13 +267,51 @@ const FileNode = memo(function FileNode({ path, name, is_dir, size, modified_at,
       <div
         className={`flex items-center gap-1.5 py-1 cursor-pointer hover:bg-surface/50 transition-colors select-none text-sm group ${
           isActive ? "bg-surface text-accent font-medium" : "text-text-secondary"
-        }`}
-        style={{ paddingLeft: `${level * 12 + 12}px`, paddingRight: "12px" }}
+        } ${!is_dir ? "draggable-file" : ""}`}
+        style={{ paddingLeft: `${level * 12 + 24}px`, paddingRight: "12px", position: "relative" }}
         onClick={handleToggle}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}
         onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size, modified_at })}
+        {...(!is_dir ? {
+          draggable: true,
+          onDragStart: (e: React.DragEvent) => {
+            e.dataTransfer.setData("application/x-sidebar-file", path);
+            e.dataTransfer.setData("text/plain", path);
+            e.dataTransfer.effectAllowed = "copy";
+          }
+        } : {})}
       >
+        {/* Vertical guide lines from ancestor levels */}
+        {guideLevels.map(depth => (
+          <div
+            key={depth}
+            className="absolute top-0 bottom-0 w-px bg-border/25 pointer-events-none"
+            style={{ left: `${depth * 12 + 24}px` }}
+          />
+        ))}
+        {/* Branch connector at this item's entry level */}
+        {level > 0 && (
+          <>
+            {/* Vertical continuation at parent level - extends below if more siblings */}
+            <div
+              className="absolute w-px bg-border/25 pointer-events-none"
+              style={{
+                left: `${(level - 1) * 12 + 24}px`,
+                top: 0,
+                bottom: isLastSibling ? '50%' : 0,
+              }}
+            />
+            {/* Horizontal branch line from guide to content */}
+            <div
+              className="absolute top-1/2 h-px bg-border/25 pointer-events-none"
+              style={{
+                left: `${(level - 1) * 12 + 24}px`,
+                width: '10px',
+              }}
+            />
+          </>
+        )}
         {is_dir ? (
           <>
             {isOpen ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
@@ -326,11 +366,13 @@ const FileNode = memo(function FileNode({ path, name, is_dir, size, modified_at,
       </div>
       {isOpen && sortedChildren.length > 0 && (
         <div onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size, modified_at })}>
-          {sortedChildren.map((child) => (
+          {sortedChildren.map((child, index) => (
             <FileNode 
               key={child.path} 
               {...child} 
               level={level + 1} 
+              guideLevels={[...guideLevels, level]}
+              isLastSibling={index === sortedChildren.length - 1}
               onContextMenu={onContextMenu}
               onRefresh={refreshChildren}
             />
@@ -465,11 +507,13 @@ const RootFolder = memo(function RootFolder({
           onContextMenu={(e) => onContextMenu(e, { path, name: path.split(/[/\\]/).pop() || path, is_dir: true, size: 0, modified_at: 0 })}
         >
           {sortedEntries.length > 0 ? (
-            sortedEntries.map((entry) => (
+            sortedEntries.map((entry, index) => (
               <FileNode 
                 key={entry.path} 
                 {...entry} 
                 level={0} 
+                guideLevels={[]}
+                isLastSibling={index === sortedEntries.length - 1}
                 onContextMenu={onContextMenu}
                 onRefresh={loadRoot}
               />
