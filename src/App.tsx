@@ -83,6 +83,7 @@ function App() {
   const [isTerminalExpanded, setIsTerminalExpanded] = useState(false);
   const [terminalContextMenu, setTerminalContextMenu] = useState<{ x: number; y: number; terminalId: string } | null>(null);
   const [showUpgradePanel, setShowUpgradePanel] = useState(false);
+  const [isSidebarFileDragging, setIsSidebarFileDragging] = useState(false);
   const isResizingTerminal = useRef(false);
   const editorWorkspaceRef = useRef<HTMLDivElement>(null);
   const terminalDropZoneRef = useRef<HTMLDivElement>(null);
@@ -107,6 +108,55 @@ function App() {
   const getMaxTerminalHeight = useCallback(() => {
     return editorWorkspaceRef.current?.getBoundingClientRect().height ?? terminalHeight;
   }, [terminalHeight]);
+
+  const handleSidebarFileDrop = useCallback(async (e: React.DragEvent, targetPane: 'primary' | 'secondary' = 'primary') => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsSidebarFileDragging(false);
+
+    const filePath = e.dataTransfer.getData('application/x-sidebar-file');
+    if (!filePath) return;
+
+    const name = filePath.split(/[/\\]/).pop() ?? filePath;
+    const { language, unsupportedReason } = detectLanguage(name);
+
+    if (language === 'unsupported') {
+      useEditorStore.getState().showNotification(
+        unsupportedReason || `\u4e0d\u652f\u6301\u6253\u5f00\u8be5\u7c7b\u578b\u7684\u6587\u4ef6: ${name}`,
+        'info'
+      );
+      return;
+    }
+
+    let content = '';
+    if (!isPreviewOnlyLanguage(language)) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        content = await invoke<string>('read_file', { path: filePath });
+      } catch (err) {
+        useEditorStore.getState().showNotification(
+          `\u65e0\u6cd5\u8bfb\u53d6\u6587\u4ef6: ${name}`,
+          'error'
+        );
+        return;
+      }
+    }
+
+    const tab = {
+      id: filePath,
+      name,
+      path: filePath,
+      language,
+      content,
+      isDirty: false,
+    };
+
+    if (targetPane === 'secondary') {
+      useEditorStore.getState().openTabInPane(tab, 'secondary');
+    } else {
+      useEditorStore.getState().openTab(tab);
+    }
+  }, []);
 
   const handleTerminalMouseMove = useCallback((e: MouseEvent) => {
     if (!isResizingTerminal.current) return;
@@ -541,7 +591,22 @@ function App() {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden relative border border-border rounded-lg shadow-2xl bg-deepest">
+    <div
+      className="h-screen w-screen flex flex-col overflow-hidden relative border border-border rounded-lg shadow-2xl bg-deepest"
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer.types.includes('application/x-sidebar-file')) {
+          e.dataTransfer.dropEffect = 'copy';
+          setIsSidebarFileDragging(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setIsSidebarFileDragging(false);
+      }}
+      onDrop={(e) => handleSidebarFileDrop(e, focusedPane)}
+    >
       {/* Top Title Bar */}
       <TitleBar />
 
@@ -556,7 +621,12 @@ function App() {
             {isSplit ? (
               <div ref={splitWorkspaceRef} className="flex-1 flex overflow-hidden">
                 {/* Primary Pane */}
-                <div className="flex flex-col overflow-hidden min-w-0" style={{ width: `${splitRatio * 100}%` }} onMouseDown={() => setFocusedPane('primary')}>
+                <div
+                    className="flex flex-col overflow-hidden min-w-0"
+                    style={{ width: `${splitRatio * 100}%` }}
+                    onMouseDown={() => setFocusedPane('primary')}
+
+                  >
                   <Toolbar pane="primary" />
                   <div className="flex-1 overflow-hidden">
                     <Editor />
@@ -570,7 +640,11 @@ function App() {
                   <div className="absolute inset-y-0 -left-1 -right-1" />
                 </div>
                 {/* Secondary Pane */}
-                <div className="flex flex-col overflow-hidden min-w-0 flex-1" onMouseDown={() => setFocusedPane('secondary')}>
+                <div
+                    className="flex flex-col overflow-hidden min-w-0 flex-1"
+                    onMouseDown={() => setFocusedPane('secondary')}
+
+                  >
                   <Toolbar pane="secondary" />
                   <div className="flex-1 overflow-hidden">
                     <Editor tabId={secondaryActiveTabId} pane="secondary" />
@@ -580,7 +654,11 @@ function App() {
             ) : (
               <div className="flex-1 overflow-hidden relative flex flex-col">
                 <Toolbar />
-                <div ref={editorRef} className="flex-1 overflow-hidden">
+                <div
+                  ref={editorRef}
+                  className="flex-1 overflow-hidden"
+
+                >
                   <Editor />
                 </div>
               </div>
@@ -768,6 +846,20 @@ function App() {
         {/* Right Sidebar */}
         {!isRightSidebarCollapsed && <RightSidebar />}
       </div>
+
+      {/* Sidebar file drag indicator */}
+      {isSidebarFileDragging && (
+        <div className="absolute inset-0 z-[90] pointer-events-none transition-all duration-200">
+          <div className="absolute inset-4 rounded-2xl border-2 border-dashed border-accent/40 bg-accent/[0.02] backdrop-blur-[1px]" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-3 px-4 py-2 rounded-lg bg-deepest/80 border border-accent/30 shadow-lg shadow-accent/10">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            <span className="text-xs text-text-secondary font-medium">释放以在此面板打开文件</span>
+          </div>
+        </div>
+      )}
 
       {/* Drag and Drop Overlay — different hints per drop zone */}
       {isDragging && !isDraggingOverTerminal && !isDraggingOverEditor && (
