@@ -703,7 +703,7 @@ pub fn sync_root_projects(paths: Vec<String>) -> Result<(), String> {
         let new_paths_set: std::collections::HashSet<String> =
             paths.iter().map(|p| p.replace('\\', "/")).collect();
 
-        // 2. 移除不再新列表中的 'root' 标签
+        // 2. 移除不再新列表中的 'root' 标签（保留项目本身，确保历史记录不丢失）
         for (id, path, tags) in root_projects {
             if !new_paths_set.contains(&path) {
                 let new_tags = tags
@@ -713,17 +713,13 @@ pub fn sync_root_projects(paths: Vec<String>) -> Result<(), String> {
                     .collect::<Vec<_>>()
                     .join(",");
 
-                if new_tags.is_empty() {
-                    conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
-                } else {
-                    conn.execute(
-                        "UPDATE projects SET tags = ?1 WHERE id = ?2",
-                        params![new_tags, id],
-                    )?;
-                }
+                // 即使标签为空也保留项目，不删除，确保历史记录不丢失
+                conn.execute(
+                    "UPDATE projects SET tags = ?1 WHERE id = ?2",
+                    params![if new_tags.is_empty() { None } else { Some(&new_tags) }, id],
+                )?;
             }
         }
-
         // 3. 添加新列表中的 'root' 标签
         for path in paths {
             let normalized = path.replace('\\', "/");
@@ -808,14 +804,11 @@ pub fn sync_default_projects(folders: Vec<DefaultFolderInput>) -> Result<(), Str
                     .collect::<Vec<_>>()
                     .join(",");
 
-                if new_tags.is_empty() {
-                    conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
-                } else {
-                    conn.execute(
-                        "UPDATE projects SET tags = ?1 WHERE id = ?2",
-                        params![new_tags, id],
-                    )?;
-                }
+                // 即使标签为空也保留项目，确保历史记录不丢失
+                conn.execute(
+                    "UPDATE projects SET tags = ?1 WHERE id = ?2",
+                    params![if new_tags.is_empty() { None } else { Some(&new_tags) }, id],
+                )?;
             }
         }
 

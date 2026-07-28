@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Minus, Square, Copy, X, Settings } from "lucide-react";
-import { useEditorStore } from "../store/editor";
+import { useEditorStore } from "@/store/editor";
 
 export default function WindowControls() {
   const [isMaximized, setIsMaximized] = useState(false);

@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
-import type { FileTab } from "../types";
-import type { DefaultFolder, PinnedFile } from "../store/editor";
+﻿import { invoke } from "@tauri-apps/api/core";
+import type { FileTab } from "@/types";
+import type { DefaultFolder, PinnedFile } from "@/store/types";
 
 interface DbTabRecord {
   id: number;

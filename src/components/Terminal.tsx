@@ -1,10 +1,10 @@
-import { useEffect, useRef } from "react";
+﻿import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { useEditorStore } from "../store/editor";
+import { useEditorStore } from "@/store/editor";
 
 interface TerminalProps {
   id: string;

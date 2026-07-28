@@ -1,5 +1,5 @@
-import { X, AlertTriangle, Info } from "lucide-react";
-import { useEditorStore } from "../store/editor";
+﻿import { X, AlertTriangle, Info } from "lucide-react";
+import { useEditorStore } from "@/store/editor";
 import { useEffect, useRef } from "react";
 
 export default function ConfirmModal() {

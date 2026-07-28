@@ -1,51 +1,25 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link, ListChecks, PanelLeftClose, PanelLeftOpen, PanelRightOpen } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import Sidebar from "./components/Sidebar";
-import RightSidebar from "./components/RightSidebar";
-import TitleBar from "./components/TitleBar";
-import Toolbar from "./components/Toolbar";
-import Editor from "./components/Editor";
-import TerminalView from "./components/Terminal";
-import Toast from "./components/Toast";
-import ConfirmModal from "./components/ConfirmModal";
-import SettingsModal from "./components/SettingsModal";
-import ContextMenu from "./components/ContextMenu";
-import UpgradePanel from "./components/UpgradePanel";
-import { useEditorStore } from "./store/editor";
-import { detectLanguage, isPreviewOnlyLanguage } from "./types";
-import { saveSetting, loadSettings } from "./utils/settings";
-import { monacoReady } from "./monaco";
-import { dispatchFileDrop, isMarkdownEditable } from "./utils/editorInsert";
-
-const DEFAULT_WINDOW_SIZE = { width: 1200, height: 800 };
-const DEFAULT_WINDOW_POSITION = { x: 100, y: 100 };
-const MIN_RESTORABLE_WINDOW_SIZE = { width: 800, height: 600 };
-const MAX_ABSOLUTE_WINDOW_POSITION = 10000;
-
-function isValidRestoredWindowSize(
-  size: { width: number; height: number } | undefined,
-): size is { width: number; height: number } {
-  return Boolean(
-    size &&
-      Number.isFinite(size.width) &&
-      Number.isFinite(size.height) &&
-      size.width >= MIN_RESTORABLE_WINDOW_SIZE.width &&
-      size.height >= MIN_RESTORABLE_WINDOW_SIZE.height,
-  );
-}
-
-function isValidRestoredWindowPosition(
-  position: { x: number; y: number } | undefined,
-): position is { x: number; y: number } {
-  return Boolean(
-    position &&
-      Number.isFinite(position.x) &&
-      Number.isFinite(position.y) &&
-      Math.abs(position.x) <= MAX_ABSOLUTE_WINDOW_POSITION &&
-      Math.abs(position.y) <= MAX_ABSOLUTE_WINDOW_POSITION,
-  );
-}
+import Sidebar from "@/components/Sidebar";
+import RightSidebar from "@/components/RightSidebar";
+import TitleBar from "@/components/TitleBar";
+import Toolbar from "@/components/Toolbar";
+import Editor from "@/components/Editor";
+import TerminalView from "@/components/Terminal";
+import Toast from "@/components/Toast";
+import ConfirmModal from "@/components/ConfirmModal";
+import SettingsModal from "@/components/SettingsModal";
+import ContextMenu from "@/components/ContextMenu";
+import UpgradePanel from "@/components/UpgradePanel";
+import { useEditorStore } from "@/store/editor";
+import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
+import { saveSetting, loadSettings } from "@/utils/settings";
+import { monacoReady } from "@/monaco";
+import { dispatchFileDrop, isMarkdownEditable } from "@/utils/editorInsert";
+import { version as APP_VERSION } from "../package.json";
+import { DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_POSITION, isValidRestoredWindowSize, isValidRestoredWindowPosition } from "@/hooks/useAppInit";
+import { handleDroppedPath } from "@/hooks/useDragDrop";
 
 function App() {
   const isLeftSidebarCollapsed = useEditorStore(s => s.isLeftSidebarCollapsed);
@@ -807,7 +781,7 @@ function App() {
               <span>就绪</span>
             </div>
             <span className="text-border">|</span>
-            <span>Oops Editor</span>
+            <span>Oops Editor <span className="text-text-muted/50 text-[10px]">v{APP_VERSION}</span></span>
             <div className="flex-1 flex items-center px-4 overflow-hidden">
               {(() => {
                 let displayPath = hoveredPath ?? null;
@@ -929,52 +903,6 @@ function App() {
       <Toast />
     </div>
   );
-}
-
-async function handleDroppedPath(path: string) {
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    const isDir = await invoke<boolean>("is_directory", { path });
-    
-    if (isDir) {
-      useEditorStore.getState().addRootPath(path);
-      useEditorStore.getState().showNotification(`已添加文件夹: ${path.split(/[/\\]/).pop()}`, "success");
-    } else {
-      await openDroppedFile(path);
-    }
-  } catch (err) {
-    console.error("Failed to handle dropped path:", err);
-  }
-}
-
-async function openDroppedFile(path: string) {
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    const name = path.split(/[/\\]/).pop() ?? path;
-    const { language, unsupportedReason } = detectLanguage(name);
-
-    if (language === "unsupported") {
-      useEditorStore.getState().showNotification(unsupportedReason || `不支持打开该类型的文件: ${name}`, "info");
-      return;
-    }
-
-    let content = "";
-
-    if (!isPreviewOnlyLanguage(language)) {
-      content = await invoke<string>("read_file", { path });
-    }
-
-    useEditorStore.getState().openTab({
-      id: path,
-      name,
-      path,
-      language,
-      content,
-      isDirty: false,
-    });
-  } catch (err) {
-    useEditorStore.getState().showNotification(`无法打开文件: ${path.split(/[/\\]/).pop()} (${String(err)})`, "error");
-  }
 }
 
 function quotePathForPowerShell(path: string) {

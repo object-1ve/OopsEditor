@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
-import type { FileTab } from "../types";
-import { hexViewToBase64 } from "../utils/hexView";
+﻿import { invoke } from "@tauri-apps/api/core";
+import type { FileTab } from "@/types";
+import { hexViewToBase64 } from "@/utils/hexView";
 
 type SaveTargetPath = string | undefined;
 

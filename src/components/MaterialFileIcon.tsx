@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { generateManifest } from "material-icon-theme";
-import { detectLanguage } from "../types";
+import { detectLanguage } from "@/types";
 
 const manifest = generateManifest({
   folders: { theme: "specific", associations: {} },

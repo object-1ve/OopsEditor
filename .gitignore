@@ -44,7 +44,7 @@ example/
 
 # Analysis
 stats.html
-
+idea/
 # Environment files
 .env
 .env.*
@@ -55,4 +55,4 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
-\"check-yaml.js\"  
+\"check-yaml.js\"

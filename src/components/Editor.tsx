@@ -1,4 +1,4 @@
-import {
+﻿import {
   useCallback,
   useEffect,
   useMemo,
@@ -17,7 +17,7 @@ import {
   Scissors,
   Undo2,
 } from "lucide-react";
-import { useEditorStore } from "../store/editor";
+import { useEditorStore } from "@/store/editor";
 import {
   registerEditorInsert,
   unregisterEditorInsert,
@@ -25,11 +25,11 @@ import {
   isImageFile,
   buildImageSyntax,
   buildLinkSyntax,
-} from "../utils/editorInsert";
+} from "@/utils/editorInsert";
 import ContextMenu from "./ContextMenu";
 import { resolveEditorMode } from "./editor-modes";
-import { saveTab } from "../services/editorSave";
-import { clipboardToMarkdownTable, tsvToMarkdownTable } from "../utils/clipboardTable";
+import { saveTab } from "@/services/editorSave";
+import { clipboardToMarkdownTable, tsvToMarkdownTable } from "@/utils/clipboardTable";
 
 /* Bright terracotta-themed Monaco editor */
 const TERRACOTTA_THEME = {

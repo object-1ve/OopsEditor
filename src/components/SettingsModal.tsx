@@ -1,10 +1,11 @@
 import { useEffect, useRef } from "react";
-import { Settings, X } from "lucide-react";
-import { useEditorStore } from "../store/editor";
+import { Settings, X, FolderOpen } from "lucide-react";
+import { useEditorStore } from "@/store/editor";
 import {
   MAX_OPEN_TABS_LIMIT,
   MIN_OPEN_TABS_LIMIT,
-} from "../utils/settings";
+} from "@/utils/settings";
+import { open } from "@tauri-apps/plugin-dialog";
 
 export default function SettingsModal() {
   const {
@@ -16,6 +17,10 @@ export default function SettingsModal() {
     setAutoSaveOnEdit,
     maxOpenTabs,
     setMaxOpenTabs,
+    defaultSavePath,
+    setDefaultSavePath,
+    maxRecentFolders,
+    setMaxRecentFolders,
   } = useEditorStore();
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -64,7 +69,7 @@ export default function SettingsModal() {
           </button>
         </div>
 
-        <div className="space-y-4 px-5 py-5">
+        <div className="space-y-4 px-5 py-5 max-h-[60vh] overflow-y-auto">
           <div className="rounded-xl border border-border bg-primary/40 p-4">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
@@ -141,6 +146,73 @@ export default function SettingsModal() {
                 }}
                 className="w-20 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text outline-none transition-colors focus:border-accent"
                 title={`设置最大标签页数量（${MIN_OPEN_TABS_LIMIT}-${MAX_OPEN_TABS_LIMIT}）`}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-primary/40 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1 flex-1 min-w-0">
+                <div className="text-sm font-medium text-text">默认文件保存路径</div>
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  双击标签栏空白区域创建新文件时的默认保存目录。
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const selected = await open({ directory: true, multiple: false });
+                      if (selected && typeof selected === "string") {
+                        setDefaultSavePath(selected);
+                      }
+                    } catch (err) {
+                      console.error("Failed to select default save path:", err);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface/80 hover:text-accent"
+                  title="选择文件夹"
+                >
+                  <FolderOpen size={14} />
+                  <span>浏览</span>
+                </button>
+              </div>
+            </div>
+            {defaultSavePath && (
+              <div className="mt-2 rounded-md bg-deepest/60 px-3 py-2 text-xs font-mono text-accent/70 truncate">
+                {defaultSavePath}
+              </div>
+            )}
+            {!defaultSavePath && (
+              <div className="mt-2 rounded-md bg-deepest/60 px-3 py-2 text-xs font-mono text-text-muted/50 italic">
+                未设置，将使用默认文件夹路径
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border bg-primary/40 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-text">最近文件夹保存条数</div>
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  记录最近打开的文件夹数量，超过上限后自动清理最旧的记录。
+                </p>
+              </div>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={maxRecentFolders}
+                onChange={(event) => {
+                  const nextValue = event.currentTarget.valueAsNumber;
+                  if (Number.isFinite(nextValue)) {
+                    setMaxRecentFolders(nextValue);
+                  }
+                }}
+                className="w-20 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text outline-none transition-colors focus:border-accent"
+                title="设置最近文件夹保存数量（1-100）"
               />
             </div>
           </div>

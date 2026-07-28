@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+﻿import { useState, useEffect, useCallback } from "react";
 import { 
     GitBranch, 
     Plus, 
@@ -10,7 +10,7 @@ import {
     User
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useEditorStore } from "../store/editor";
+import { useEditorStore } from "@/store/editor";
 
 interface GitStatus {
     branch: string;

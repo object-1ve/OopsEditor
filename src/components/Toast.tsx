@@ -1,5 +1,5 @@
-import { X, AlertCircle, CheckCircle, Info } from "lucide-react";
-import { useEditorStore } from "../store/editor";
+﻿import { X, AlertCircle, CheckCircle, Info } from "lucide-react";
+import { useEditorStore } from "@/store/editor";
 
 export default function Toast() {
   const { notification, clearNotification } = useEditorStore();

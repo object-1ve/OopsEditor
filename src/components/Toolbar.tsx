@@ -1,10 +1,10 @@
-import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, SplitSquareHorizontal, ArrowRight } from "lucide-react";
-import { useEditorStore, type EditorPane } from "../store/editor";
+﻿import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, SplitSquareHorizontal, ArrowRight } from "lucide-react";
+import { useEditorStore, type EditorPane } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
 import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
-import { saveTab } from "../services/editorSave";
+import { saveTab } from "@/services/editorSave";
 
 const buildChildPath = (basePath: string, fileName: string) => {
   if (/[\\/]$/.test(basePath)) {
@@ -54,6 +54,7 @@ const tabs = useEditorStore(s => s.tabs);
   const paneTabs = isSecondary ? secondaryTabs : tabs;
   const paneActiveTabId = isSecondary ? secondaryActiveTabId : activeTabId;
   const isFocused = isSplit && focusedPane === pane;
+  const defaultSavePath = useEditorStore(s => s.defaultSavePath);
 
   const setActive = useCallback((id: string) => {
     setActiveTabInPane(id, pane);
@@ -313,8 +314,12 @@ const tabs = useEditorStore(s => s.tabs);
     const seconds = String(now.getSeconds()).padStart(2, '0');
 
     const fileName = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}.txt`;
-    const defaultPath = defaultFolders[0]?.path || "d:/Desktop/oops_try/OopsEditor/src";
-    const filePath = `${defaultPath}/${fileName}`;
+    const savePath = defaultSavePath || defaultFolders[0]?.path || "";
+    if (!savePath) {
+      showNotification("请先在设置中配置默认文件保存路径", "error");
+      return;
+    }
+    const filePath = `${savePath}/${fileName}`;
 
     try {
       await invoke("save_file", { path: filePath, content: "" });
@@ -332,13 +337,13 @@ const tabs = useEditorStore(s => s.tabs);
       showNotification(`已创建并打开新文件: ${fileName}`, "success");
 
       setTimeout(() => {
-        window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: defaultPath } }));
+        window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: savePath } }));
       }, 200);
     } catch (err) {
       console.error("Failed to create file:", err);
       showNotification(`创建文件失败: ${err}`, "error");
     }
-  }, [defaultFolders, openTabInPane, pane, showNotification]);
+  }, [defaultFolders, defaultSavePath, openTabInPane, pane, showNotification]);
 
   return (
     <div

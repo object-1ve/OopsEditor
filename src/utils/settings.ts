@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { FileTab } from '../types';
-import type { DefaultFolder, PinnedFile } from '../store/editor';
+import type { DefaultFolder, PinnedFile } from '../store/types';
 import { loadWorkspaceSession } from './workspaceSession';
 
 export const DEFAULT_MAX_OPEN_TABS = 7;
@@ -41,6 +41,8 @@ export interface AppSettings {
   sidebarSortField: 'name' | 'modified';
   sidebarSortOrder: 'asc' | 'desc';
   rootPathOrder?: string[];
+  defaultSavePath: string;
+  maxRecentFolders: number;
 }
 
 const DEFAULT_RIGHT_SIDEBAR_ICON_ORDER = ["info", "git", "outline", "help"] as const;
@@ -86,6 +88,8 @@ export const defaultSettings: AppSettings = {
   maxOpenTabs: DEFAULT_MAX_OPEN_TABS,
   sidebarSortField: 'modified',
   sidebarSortOrder: 'desc',
+  defaultSavePath: '',
+  maxRecentFolders: 20,
 };
 
 // ── SQLite-backed save / load ─────────────────────────────────
@@ -159,6 +163,14 @@ export async function loadSettings(): Promise<AppSettings> {
     const savedSortOrder = get<'asc' | 'desc'>('sidebarSortOrder');
     if (savedSortOrder === 'asc' || savedSortOrder === 'desc') {
       settings.sidebarSortOrder = savedSortOrder;
+    }
+
+    const savedDefaultSavePath = get<string>('defaultSavePath');
+    if (typeof savedDefaultSavePath === 'string') settings.defaultSavePath = savedDefaultSavePath;
+
+    const savedMaxRecentFolders = get<number>('maxRecentFolders');
+    if (typeof savedMaxRecentFolders === 'number' && Number.isFinite(savedMaxRecentFolders)) {
+      settings.maxRecentFolders = Math.max(1, Math.min(100, Math.round(savedMaxRecentFolders)));
     }
 
     const workspaceSession = await loadWorkspaceSession(get);
