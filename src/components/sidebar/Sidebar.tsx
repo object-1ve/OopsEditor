@@ -215,7 +215,7 @@ export default function Sidebar() {
       }
       const separator = baseDir.includes("\\") ? "\\" : "/";
       const isFolder = type === "folder";
-      const defaultName = isFolder ? "新建文件夹" : "新建文件.txt";
+      const defaultName = isFolder ? "新建文件夹" : "新建文件.md";
       const newPath = `${baseDir}${separator}${defaultName}`;
       try {
         if (isFolder) {
@@ -331,7 +331,7 @@ export default function Sidebar() {
             const lastIdxNew = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
             const baseDir = is_dir ? path : path.substring(0, lastIdxNew);
             const separator = path.includes("\\") ? "\\" : "/";
-            const defaultName = isFolder ? "新建文件夹" : "新建文件.txt";
+            const defaultName = isFolder ? "新建文件夹" : "新建文件.md";
             const newPath = `${baseDir}${separator}${defaultName}`;
             if (isFolder) {
               await invoke("create_dir", { path: newPath });

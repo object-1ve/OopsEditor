@@ -313,7 +313,7 @@ const tabs = useEditorStore(s => s.tabs);
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
 
-    const fileName = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}.txt`;
+    const fileName = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}.md`;
     const savePath = defaultSavePath || defaultFolders[0]?.path || "";
     if (!savePath) {
       showNotification("请先在设置中配置默认文件保存路径", "error");
