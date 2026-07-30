@@ -63,6 +63,8 @@ fn save_file_from_base64(path: String, content: String) -> Result<(), String> {
     fs::write(&path, bytes).map_err(|e| format!("保存文件失败: {}", e))
 }
 
+
+
 #[tauri::command]
 fn copy_file(source_path: String, target_path: String) -> Result<(), String> {
     fs::copy(&source_path, &target_path).map_err(|e| format!("复制文件失败: {}", e))?;
@@ -394,6 +396,7 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         read_file_as_base64,
         save_file,
         save_file_from_base64,
+
         copy_file,
         list_dir,
         get_file_info,

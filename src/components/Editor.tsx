@@ -1,4 +1,4 @@
-﻿import {
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -30,6 +30,8 @@ import ContextMenu from "./ContextMenu";
 import { resolveEditorMode } from "./editor-modes";
 import { saveTab } from "@/services/editorSave";
 import { clipboardToMarkdownTable, tsvToMarkdownTable } from "@/utils/clipboardTable";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 
 /* Bright terracotta-themed Monaco editor */
 const TERRACOTTA_THEME = {
@@ -101,6 +103,83 @@ function applyTerracottaTheme(monaco: Parameters<OnMount>[1]) {
   monaco.editor.setTheme("terracotta-dark");
 }
 
+function FloatingImagePreview({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef({ dragging: false, startX: 0, startY: 0, baseX: 0, baseY: 0 });
+
+  // Reset on new image
+  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, [src]);
+
+  // Escape to close
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    setZoom(z => clamp(z + (e.deltaY < 0 ? 0.15 : -0.15), 0.2, 5));
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = { dragging: true, startX: e.clientX, startY: e.clientY, baseX: pan.x, baseY: pan.y };
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!dragRef.current.dragging) return;
+    setPan({
+      x: dragRef.current.baseX + (e.clientX - dragRef.current.startX),
+      y: dragRef.current.baseY + (e.clientY - dragRef.current.startY),
+    });
+  };
+
+  const handlePointerUp = () => { dragRef.current.dragging = false; };
+
+  return (
+    <div
+      className="fixed inset-0 z-[300] flex items-center justify-center overflow-hidden"
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onWheel={handleWheel}
+    >
+      <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={onClose} />
+
+      <img
+        src={src}
+        alt={name}
+        className="relative select-none rounded-lg shadow-2xl"
+        style={{
+          transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+          maxWidth: "90vw",
+          maxHeight: "90vh",
+          objectFit: "contain",
+          cursor: dragRef.current.dragging ? "grabbing" : "grab",
+        }}
+        draggable={false}
+        onPointerDown={handlePointerDown}
+        onClick={(e) => e.stopPropagation()}
+      />
+
+      <button onClick={onClose} className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-xl leading-none transition-colors">×</button>
+
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-2 rounded-full bg-black/40 backdrop-blur-sm">
+        <button onClick={() => setZoom(z => clamp(z - 0.25, 0.2, 5))} className="w-6 h-6 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/25 text-white text-sm leading-none">−</button>
+        <span className="text-white/60 text-xs tabular-nums min-w-[3.5em] text-center">{Math.round(zoom * 100)}%</span>
+        <button onClick={() => setZoom(z => clamp(z + 0.25, 0.2, 5))} className="w-6 h-6 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/25 text-white text-sm leading-none">+</button>
+        <span className="w-px h-4 bg-white/15" />
+        <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="text-white/50 hover:text-white/80 text-xs transition-colors">重置</button>
+        <span className="text-white/30 text-xs ml-1">{name}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function Editor({ tabId, pane = "primary" }: { tabId?: string | null; pane?: "primary" | "secondary" } = {}) {
   const tabs = useEditorStore(s => s.tabs);
   const secondaryTabs = useEditorStore(s => s.secondaryTabs);
@@ -114,6 +193,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
   const editorWordWrap = useEditorStore(s => s.editorWordWrap);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const pasteCleanupRef = useRef<(() => void) | null>(null);
+  const ctrlClickCleanupRef = useRef<{ dispose(): void } | null>(null);
   // tabId 显式为 null 表示该窗口无标签（分屏副窗口）；undefined 时回退到全局活动标签
   const currentTabId = tabId !== undefined ? tabId : activeTabId;
   // 分屏副窗口的标签可能在 secondaryTabs 而非全局 tabs
@@ -128,6 +208,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     y: number;
     hasSelection: boolean;
   } | null>(null);
+  const [floatingImage, setFloatingImage] = useState<{ src: string; name: string } | null>(null);
   useEffect(() => {
     setEditorContextMenu(null);
   }, [activeTab?.id, activeTab?.isLivePreviewMode, activeTab?.isPreviewMode]);
@@ -258,9 +339,15 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     });
 
     // Markdown 编辑模式下，把粘贴的表格（HTML <table> 或 TSV）转为 GFM 表格语法
+    // 同时检测剪贴板中的图片，保存到 md 文件同级 Attachment 目录
     const domNode = editor.getDomNode();
+    console.log("[PasteImage] domNode:", domNode);
     if (domNode) {
-      const handlePaste = (e: ClipboardEvent) => {
+      const handlePaste = async (e: ClipboardEvent) => {
+        // 只处理发生在 Monaco 编辑器内的粘贴事件，不拦截其他输入框
+        if (domNode && !domNode.contains(e.target as Node)) {
+          return;
+        }
         const state = useEditorStore.getState();
         const id = currentTabIdRef.current;
         if (!id) return;
@@ -270,6 +357,116 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
           return;
         }
 
+        // 检测剪贴板中的图片文件（截图、复制图片等）
+        console.log("[PasteImage] paste event fired, clipboardData:", e.clipboardData);
+        const items = e.clipboardData?.items;
+        console.log("[PasteImage] items:", items, "length:", items?.length);
+        if (items) {
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            console.log(`[PasteImage] item[${i}] kind=${item.kind} type=${item.type}`);
+            if (item.kind === "file" && item.type.startsWith("image/")) {
+              console.log("[PasteImage] image file item detected!");
+              const file = item.getAsFile();
+              console.log("[PasteImage] getAsFile:", file, "name:", file?.name, "size:", file?.size);
+              if (file) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log("[PasteImage] reading file as data URL...");
+
+                // 读取图片为 base64
+                const reader = new FileReader();
+                reader.onload = async () => {
+                  try {
+                    console.log("[PasteImage] FileReader onload fired, result length:", (reader.result as string)?.length);
+                    const base64 = (reader.result as string).split(",")[1];
+                    console.log("[PasteImage] base64 length:", base64?.length);
+
+                    // 获取当前 md 文件所在目录
+                    const mdPath = (tab.path || "").replace(/\\/g, "/");
+                    const lastSlash = mdPath.lastIndexOf("/");
+                    console.log("[PasteImage] mdPath:", mdPath, "lastSlash:", lastSlash);
+                    if (lastSlash < 0) {
+                      console.log("[PasteImage] no parent dir — tab not saved yet");
+                      useEditorStore.getState().showNotification(
+                        "当前文件尚未保存到磁盘，请先保存文件",
+                        "error",
+                      );
+                      return;
+                    }
+                    const parentDir = mdPath.substring(0, lastSlash);
+                    const saveDir = parentDir + "/Attachment";
+                    console.log("[PasteImage] parentDir:", parentDir, "saveDir:", saveDir);
+
+                    // 生成文件名：image_YYYYMMDD_HHMMSS.ext
+                    const ext = (file.name || "image.png").split(".").pop() || "png";
+                    const now = new Date();
+                    const pad = (n: number) => String(n).padStart(2, "0");
+                    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+                    const filename = `image_${ts}.${ext}`;
+                    const savePath = saveDir + "/" + filename;
+                    console.log("[PasteImage] filename:", filename, "savePath:", savePath);
+
+                    console.log("[PasteImage] creating dir:", saveDir);
+                    try { await invoke("create_dir", { path: saveDir }); } catch (e) {
+                      const msg = String(e);
+                      if (!msg.includes("目录已存在") && !msg.includes("exists")) throw e;
+                      console.log("[PasteImage] dir already exists, continuing:", saveDir);
+                    }
+                    console.log("[PasteImage] invoking save_file_from_base64...");
+                    await invoke("save_file_from_base64", {
+                      path: savePath,
+                      content: base64,
+                    });
+                    console.log("[PasteImage] save_file_from_base64 succeeded");
+
+                    // 插入 markdown 图片语法
+                    const selection = editor.getSelection();
+                    const range = selection
+                      ? new monaco.Range(
+                          selection.startLineNumber,
+                          selection.startColumn,
+                          selection.endLineNumber,
+                          selection.endColumn,
+                        )
+                      : new monaco.Range(1, 1, 1, 1);
+                    editor.executeEdits("paste-image", [
+                      { range, text: `![](Attachment/${filename})\n`, forceMoveMarkers: true },
+                    ]);
+                    console.log("[PasteImage] inserted markdown image syntax");
+                    editor.focus();
+                    useEditorStore.getState().showNotification(
+                      `图片已保存到 ${filename}`,
+                      "success",
+                    );
+                  } catch (err) {
+                    console.error("[PasteImage] error:", err);
+                    useEditorStore.getState().showNotification(
+                      `保存剪贴板图片失败: ${String(err)}`,
+                      "error",
+                    );
+                  }
+                };
+                reader.onerror = (ev) => {
+                  console.error("[PasteImage] FileReader error:", ev);
+                  useEditorStore.getState().showNotification(
+                    "读取剪贴板图片失败",
+                    "error",
+                  );
+                };
+                reader.readAsDataURL(file);
+                return;
+              } else {
+                console.log("[PasteImage] getAsFile returned null/undefined");
+              }
+            }
+          }
+          console.log("[PasteImage] no image file found in items");
+        } else {
+          console.log("[PasteImage] clipboardData.items is null/undefined");
+        }
+
+        // 原有的表格粘贴处理
         const md = clipboardToMarkdownTable(e.clipboardData);
         if (!md) return;
 
@@ -287,9 +484,76 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
         editor.executeEdits("paste-table", [{ range, text: md, forceMoveMarkers: true }]);
         editor.focus();
       };
-      domNode.addEventListener("paste", handlePaste);
-      pasteCleanupRef.current = () => domNode.removeEventListener("paste", handlePaste);
+      console.log("[PasteImage] ✅ registering capture-phase paste listener on document");
+      document.addEventListener("paste", handlePaste, true);
+      pasteCleanupRef.current = () => document.removeEventListener("paste", handlePaste, true);
     }
+
+    // Ctrl+Click on ![](path) opens the image in a new tab
+    const ctrlClickDisposable = editor.onMouseDown((e) => {
+      if (!e.event.ctrlKey && !e.event.metaKey) return;
+      if (!e.target.position) return;
+
+      const model = editor.getModel();
+      if (!model) return;
+
+      const line = model.getLineContent(e.target.position.lineNumber);
+      const col = e.target.position.column - 1; // 0-indexed
+
+      // Find all ![](...) patterns and check if click lies within one
+      const pattern = /!\[([^\]]*)\]\(([^)]+)\)/g;
+      let match;
+      while ((match = pattern.exec(line)) !== null) {
+        const fullMatch = match[0];
+        const startIdx = match.index;
+        const endIdx = match.index + fullMatch.length;
+
+        if (col >= startIdx && col < endIdx) {
+          e.event.preventDefault();
+          e.event.stopPropagation();
+
+          const matchedPath = match[2];
+          const state = useEditorStore.getState();
+          const tabId = currentTabIdRef.current;
+          const currentTab = tabId
+            ? (state.tabs.find((t) => t.id === tabId) ?? state.secondaryTabs.find((t) => t.id === tabId))
+            : null;
+
+          // Resolve relative path against the current md file's directory
+          let resolvedPath = matchedPath;
+          if (currentTab?.path && !matchedPath.startsWith("/") && !matchedPath.includes(":")) {
+            const mdDir = currentTab.path.replace(/\\/g, "/").split("/").slice(0, -1).join("/");
+            resolvedPath = mdDir + "/" + matchedPath;
+          }
+
+          // Open the image in floating preview
+          (async () => {
+            try {
+              const exists = await invoke<boolean>("path_exists", { path: resolvedPath });
+              if (!exists) {
+                useEditorStore.getState().showNotification(
+                  `文件不存在: ${matchedPath}`,
+                  "error",
+                );
+                return;
+              }
+
+              const name = resolvedPath.split(/[/\\]/).pop() ?? resolvedPath;
+              const src = convertFileSrc(resolvedPath);
+              setFloatingImage({ src, name });
+              useEditorStore.getState().setFloatingImageOpen(true);
+            } catch (err) {
+              useEditorStore.getState().showNotification(
+                `无法打开文件: ${String(err)}`,
+                "error",
+              );
+            }
+          })();
+          break;
+        }
+      }
+    });
+    ctrlClickCleanupRef.current = ctrlClickDisposable;
 
     editor.addAction({
       id: "save-file",
@@ -332,6 +596,8 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       unregisterEditorInsert();
       pasteCleanupRef.current?.();
       pasteCleanupRef.current = null;
+      ctrlClickCleanupRef.current?.dispose();
+      ctrlClickCleanupRef.current = null;
     };
   }, []);
 
@@ -598,6 +864,13 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
           y={editorContextMenu.y}
           items={editorContextMenuItems}
           onClose={() => setEditorContextMenu(null)}
+        />
+      )}
+      {floatingImage && (
+        <FloatingImagePreview
+          src={floatingImage.src}
+          name={floatingImage.name}
+          onClose={() => { setFloatingImage(null); useEditorStore.getState().setFloatingImageOpen(false); }}
         />
       )}
     </>

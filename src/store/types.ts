@@ -70,6 +70,7 @@ export interface EditorState {
   secondaryActiveTabId: string | null;
   focusedPane: EditorPane;
   splitRatio: number;
+  isFloatingImageOpen: boolean;
 
   // Actions
   init: () => Promise<void>;
@@ -146,6 +147,7 @@ export interface EditorState {
   setSplit: (enabled: boolean) => void;
   setFocusedPane: (pane: EditorPane) => void;
   setSplitRatio: (ratio: number) => void;
+  setFloatingImageOpen: (open: boolean) => void;
   openTabInPane: (tab: FileTab, pane: EditorPane) => void;
   closeTabInPane: (id: string, pane: EditorPane) => void;
   closeTabsInPane: (ids: string[], pane: EditorPane) => void;

@@ -524,7 +524,7 @@ export default function Sidebar() {
       {/* Right resize handle - provides the border + hit area */}
       <div onMouseDown={startResizing} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize z-50 group/resize">
         {/* Visible border line */}
-        <div className="absolute left-0 inset-y-0 w-px bg-border group-hover/resize:bg-accent/50 group-active/resize:bg-accent transition-colors" />
+        <div className="absolute left-0 inset-y-0 w-px bg-transparent group-hover/resize:bg-accent/50 group-active/resize:bg-accent transition-colors" />
         {/* Invisible wider hit area */}
         <div className="absolute -left-1 -right-1 inset-y-0 hover:bg-accent/10 active:bg-accent/20 transition-colors rounded-sm" />
       </div>

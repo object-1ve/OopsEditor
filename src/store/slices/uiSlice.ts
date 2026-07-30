@@ -1,4 +1,4 @@
-﻿/**
+/**
  * UI slice - sidebar collapse/width, settings, modals, notifications
  */
 import type { StateCreator } from "zustand";
@@ -38,6 +38,8 @@ export const createUiSlice: StateCreator<
     | "setMaxOpenTabs"
     | "setDefaultSavePath"
     | "setMaxRecentFolders"
+    | "isFloatingImageOpen"
+    | "setFloatingImageOpen"
     | "openSettings"
     | "closeSettings"
     | "showModal"
@@ -59,6 +61,7 @@ export const createUiSlice: StateCreator<
   modal: null,
   notification: null,
   markdownOutlineTarget: null,
+  isFloatingImageOpen: false,
 
   toggleLeftSidebar: () => {
     const newValue = !get().isLeftSidebarCollapsed;
@@ -150,4 +153,6 @@ export const createUiSlice: StateCreator<
     set({ markdownOutlineTarget: target }),
 
   clearMarkdownOutlineTarget: () => set({ markdownOutlineTarget: null }),
+
+  setFloatingImageOpen: (open: boolean) => set({ isFloatingImageOpen: open }),
 });

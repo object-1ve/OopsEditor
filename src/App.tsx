@@ -49,6 +49,7 @@ function App() {
   const tabs = useEditorStore(s => s.tabs);
   const activeTabId = useEditorStore(s => s.activeTabId);
   const secondaryTabs = useEditorStore(s => s.secondaryTabs);
+  const isFloatingImageOpen = useEditorStore(s => s.isFloatingImageOpen);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isDraggingOverTerminal, setIsDraggingOverTerminal] = useState(false);
@@ -750,7 +751,7 @@ function App() {
             )}
           </div>
 
-          {/* Status bar */}
+          {!isFloatingImageOpen && (
           <div className="h-6 bg-deepest border-t border-border flex items-center px-1 text-xs text-text-muted gap-2 relative z-10">
             <button
               onClick={toggleLeftSidebar}
@@ -815,6 +816,7 @@ function App() {
               {isRightSidebarCollapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
             </button>
           </div>
+          )}
         </div>
 
         {/* Right Sidebar */}
