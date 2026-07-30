@@ -1,4 +1,4 @@
-﻿/**
+/**
  * FileNode - Recursive file/directory entry in the sidebar
  */
 import { useState, useEffect, useCallback, useMemo, memo, useRef } from "react";
@@ -26,6 +26,7 @@ const FileNode = memo(function FileNode({
     rebasePinnedFilePath,
     rebasePinnedFolderPaths,
     setHoveredPath,
+    replaceTabFileLocation,
   } = useEditorStore();
   const activeTabId = useEditorStore((s) => s.activeTabId);
   const expandedFolders = useEditorStore((s) => s.expandedFolders);
@@ -34,6 +35,8 @@ const FileNode = memo(function FileNode({
   const toggleFolderExpanded = useEditorStore((s) => s.toggleFolderExpanded);
   const sidebarSortField = useEditorStore((s) => s.sidebarSortField);
   const sidebarSortOrder = useEditorStore((s) => s.sidebarSortOrder);
+  const tabs = useEditorStore((s) => s.tabs);
+  const secondaryTabs = useEditorStore((s) => s.secondaryTabs);
   const isOpen = expandedFolders.includes(path);
   const isDefault = is_dir && defaultFolders.some((f) => normalizePath(f.path) === normalizePath(path));
   const isPinned = is_dir && (isDefault || pinnedFolders.includes(normalizePath(path)));
@@ -91,13 +94,20 @@ const FileNode = memo(function FileNode({
         rebasePinnedFolderPaths(path, newPath);
       } else {
         rebasePinnedFilePath(path, newPath, newName);
+        // Sync any open editor tabs that point to the old path
+        const matchedTabs = [...tabs, ...secondaryTabs].filter(
+          (tab) => normalizePath(tab.path) === normalizePath(path),
+        );
+        matchedTabs.forEach((tab) =>
+          replaceTabFileLocation(tab.id, newPath, newName),
+        );
       }
       setIsRenaming(false);
       if (onRefresh) onRefresh();
     } catch (err) {
       showNotification(`重命名失败: ${err}`, "error");
     }
-  }, [newName, name, path, is_dir, onRefresh, rebasePinnedFilePath, rebasePinnedFolderPaths, showNotification]);
+  }, [newName, name, path, is_dir, onRefresh, rebasePinnedFilePath, rebasePinnedFolderPaths, replaceTabFileLocation, showNotification, tabs, secondaryTabs]);
 
   const openFile = async (filePath: string, fileSize?: number) => {
     await openFileTab(filePath, openTab, showNotification, fileSize);

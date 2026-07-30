@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Sidebar utility functions
  */
 import { invoke } from "@tauri-apps/api/core";
@@ -60,6 +60,30 @@ export const sortTreeEntries = (
     return sortOrder === "asc" ? result : -result;
   });
 };
+
+/**
+ * Given a desired path, if the file already exists, appends a timestamp suffix
+ * in the format `{name}-{YYYY}-{MM}-{DD}_{HH}-{MM}-{SS}.{ext}` to avoid collision.
+ */
+export async function resolveUniquePath(basePath: string): Promise<string> {
+  const lastDot = basePath.lastIndexOf(".");
+  const hasExt = lastDot > basePath.lastIndexOf("/") && lastDot > basePath.lastIndexOf("\\");
+  const prefix = hasExt ? basePath.slice(0, lastDot) : basePath;
+  const ext = hasExt ? basePath.slice(lastDot) : "";
+
+  try {
+    if (await invoke<boolean>("path_exists", { path: basePath })) {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+      return `${prefix}-${ts}${ext}`;
+    }
+  } catch {
+    // On error, fall back to the original path
+    return basePath;
+  }
+  return basePath;
+}
 
 export async function openFileTab(
   filePath: string,

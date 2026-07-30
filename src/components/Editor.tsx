@@ -419,6 +419,9 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
                       content: base64,
                     });
                     console.log("[PasteImage] save_file_from_base64 succeeded");
+                    window.dispatchEvent(
+                      new CustomEvent("file-refresh", { detail: { path: saveDir } }),
+                    );
 
                     // 插入 markdown 图片语法
                     const selection = editor.getSelection();

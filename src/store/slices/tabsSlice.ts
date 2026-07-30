@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Tabs slice - file tab management
  */
 import type { StateCreator } from "zustand";
@@ -190,8 +190,23 @@ export const createTabsSlice: StateCreator<
 
   replaceTabFileLocation: (id: string, nextPath: string, nextName?: string) =>
     set((state) => {
-      const targetTab = state.tabs.find((tab) => tab.id === id);
+      const isPrimary = state.tabs.some((tab) => tab.id === id);
+      const targetTab = isPrimary
+        ? state.tabs.find((tab) => tab.id === id)
+        : state.secondaryTabs.find((tab) => tab.id === id);
+
       const nextTabs = state.tabs.map((tab) => {
+        if (tab.id !== id) return tab;
+        return {
+          ...tab,
+          id: tab.viewMode === "base64" ? `${nextPath}#base64` : nextPath,
+          path: nextPath,
+          name: nextName ?? nextPath.split(/[/\\]/).pop() ?? tab.name,
+          isDirty: false,
+        };
+      });
+
+      const nextSecondaryTabs = state.secondaryTabs.map((tab) => {
         if (tab.id !== id) return tab;
         return {
           ...tab,
@@ -215,6 +230,8 @@ export const createTabsSlice: StateCreator<
           )
         : state.pinnedFiles;
       const nextActiveTabId = state.activeTabId === id ? nextPath : state.activeTabId;
+      const nextSecondaryActiveTabId =
+        state.secondaryActiveTabId === id ? nextPath : state.secondaryActiveTabId;
       const nextOpenFiles = nextTabs.map((tab) => tab.path);
 
       clearScrollMemory(id);
@@ -223,6 +240,8 @@ export const createTabsSlice: StateCreator<
 
       return {
         tabs: nextTabs,
+        secondaryTabs: nextSecondaryTabs,
+        secondaryActiveTabId: nextSecondaryActiveTabId,
         activeTabId: nextActiveTabId,
         openFiles: nextOpenFiles,
         pinnedFiles: nextPinnedFiles,

@@ -1,9 +1,10 @@
-﻿import { useEffect, useState } from "react";
-import { Minus, Square, Copy, X, Settings } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Pin, PinOff, Minus, Square, Copy, X, Settings } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 
 export default function WindowControls() {
   const [isMaximized, setIsMaximized] = useState(false);
+  const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const openSettings = useEditorStore(s => s.openSettings);
   const tabs = useEditorStore(s => s.tabs);
   const showModal = useEditorStore(s => s.showModal);
@@ -33,6 +34,18 @@ export default function WindowControls() {
       if (unlisten) unlisten();
     };
   }, []);
+
+  const handleToggleAlwaysOnTop = async () => {
+    try {
+      const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const appWindow = getCurrentWebviewWindow();
+      const next = !isAlwaysOnTop;
+      await appWindow.setAlwaysOnTop(next);
+      setIsAlwaysOnTop(next);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const handleMinimize = async () => {
     try {
@@ -92,6 +105,16 @@ export default function WindowControls() {
           <Settings size={14} />
         </button>
       </div>
+
+      <button
+        onClick={handleToggleAlwaysOnTop}
+        className={`p-1.5 rounded hover:bg-surface transition-colors cursor-pointer ${
+          isAlwaysOnTop ? "text-accent bg-surface" : "text-text-muted hover:text-accent"
+        }`}
+        title={isAlwaysOnTop ? "取消置顶" : "窗口置顶"}
+      >
+        {isAlwaysOnTop ? <Pin size={14} /> : <PinOff size={14} />}
+      </button>
 
       <button
         onClick={handleMinimize}

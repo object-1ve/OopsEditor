@@ -1,4 +1,4 @@
-﻿import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, SplitSquareHorizontal, ArrowRight } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, SplitSquareHorizontal, ArrowRight } from "lucide-react";
 import { useEditorStore, type EditorPane } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
@@ -143,6 +143,26 @@ const tabs = useEditorStore(s => s.tabs);
       showModal({
         title: "确认关闭右侧文件",
         message: `右侧有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
+        kind: "warning",
+        onConfirm: () => closeTabsInPane(dirtyTabs.map((tab) => tab.id), pane),
+      });
+    }
+    setContextMenu(null);
+  }, [contextMenu, paneTabs, closeTabsInPane, showModal, pane]);
+
+  const handleCloseAll = useCallback(() => {
+    if (!contextMenu) return;
+    const cleanTabs = paneTabs.filter(t => !t.isDirty);
+    const dirtyTabs = paneTabs.filter(t => t.isDirty);
+
+    if (cleanTabs.length > 0) {
+      closeTabsInPane(cleanTabs.map((tab) => tab.id), pane);
+    }
+
+    if (dirtyTabs.length > 0) {
+      showModal({
+        title: "确认关闭所有标签页",
+        message: `有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
         kind: "warning",
         onConfirm: () => closeTabsInPane(dirtyTabs.map((tab) => tab.id), pane),
       });
@@ -299,8 +319,14 @@ const tabs = useEditorStore(s => s.tabs);
         icon: <ChevronRight size={14} />,
         onClick: handleCloseRight
       },
+      { separator: true, label: "", onClick: () => {} },
+      {
+        label: "关闭所有标签页",
+        icon: <CopyX size={14} />,
+        onClick: handleCloseAll
+      },
     ];
-  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, showNotification, unpinFile, isSplit, isSecondary]);
+  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, showNotification, unpinFile, isSplit, isSecondary]);
 
   const handleDoubleClick = useCallback(async (e: React.MouseEvent) => {
     if (e.target !== e.currentTarget) return;

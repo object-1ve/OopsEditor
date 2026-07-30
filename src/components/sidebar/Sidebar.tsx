@@ -12,7 +12,7 @@ import { useEditorStore } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ContextMenu from "../ContextMenu";
-import { normalizePath, openFileTab } from "./sidebarUtils";
+import { normalizePath, openFileTab, resolveUniquePath } from "./sidebarUtils";
 import type { DirEntry } from "./sidebarUtils";
 import RootFolder from "./RootFolder";
 import RecentDropdown from "./sections/RecentDropdown";
@@ -218,16 +218,18 @@ export default function Sidebar() {
       const defaultName = isFolder ? "新建文件夹" : "新建文件.md";
       const newPath = `${baseDir}${separator}${defaultName}`;
       try {
+        const resolvedPath = await resolveUniquePath(newPath);
         if (isFolder) {
-          await invoke("create_dir", { path: newPath });
+          await invoke("create_dir", { path: resolvedPath });
         } else {
-          await invoke("create_file", { path: newPath });
-          await openFile(newPath);
+          await invoke("create_file", { path: resolvedPath });
+          await openFile(resolvedPath);
         }
         window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: baseDir } }));
         setFolderExpanded(baseDir, true);
+        const renameTarget = resolvedPath;
         setTimeout(() => {
-          window.dispatchEvent(new CustomEvent("file-rename", { detail: { path: newPath } }));
+          window.dispatchEvent(new CustomEvent("file-rename", { detail: { path: renameTarget } }));
         }, 100);
       } catch (err) {
         showNotification(`创建失败: ${err}`, "error");
@@ -333,16 +335,18 @@ export default function Sidebar() {
             const separator = path.includes("\\") ? "\\" : "/";
             const defaultName = isFolder ? "新建文件夹" : "新建文件.md";
             const newPath = `${baseDir}${separator}${defaultName}`;
+            const resolvedPath = await resolveUniquePath(newPath);
             if (isFolder) {
-              await invoke("create_dir", { path: newPath });
+              await invoke("create_dir", { path: resolvedPath });
             } else {
-              await invoke("create_file", { path: newPath });
-              await openFile(newPath);
+              await invoke("create_file", { path: resolvedPath });
+              await openFile(resolvedPath);
             }
             window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: baseDir } }));
             setFolderExpanded(baseDir, true);
+            const renameTarget = resolvedPath;
             setTimeout(() => {
-              window.dispatchEvent(new CustomEvent("file-rename", { detail: { path: newPath } }));
+              window.dispatchEvent(new CustomEvent("file-rename", { detail: { path: renameTarget } }));
             }, 100);
             break;
           }

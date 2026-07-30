@@ -146,6 +146,7 @@ function TextModeView({
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         lineNumbers: "on",
+        lineNumbersMinChars: 3,
         renderLineHighlight: "line",
         cursorBlinking: "smooth",
         cursorSmoothCaretAnimation: "on",
