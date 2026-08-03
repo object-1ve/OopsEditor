@@ -25,6 +25,7 @@ import {
   isImageFile,
   buildImageSyntax,
   buildLinkSyntax,
+  importImageIntoAttachment,
 } from "@/utils/editorInsert";
 import ContextMenu from "./ContextMenu";
 import { resolveEditorMode } from "./editor-modes";
@@ -237,7 +238,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
 
   // 监听 App 层发起的文件拖放事件（来自 Tauri onDragDropEvent）
   useEffect(() => {
-    const handleFileDrop = (e: Event) => {
+    const handleFileDrop = async (e: Event) => {
       const detail = (e as CustomEvent).detail as { paths: string[] } | undefined;
       if (!detail?.paths?.length) return;
 
@@ -261,10 +262,25 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
 
       let insertedCount = 0;
       for (const path of detail.paths) {
-        const text = isImageFile(path)
-          ? buildImageSyntax(path)
-          : buildLinkSyntax(path);
-        if (insertAtCursor(text)) insertedCount++;
+        if (isImageFile(path)) {
+          try {
+            // 转换路径：将图片复制到 md 文件同级的 Attachment 目录，插入相对路径
+            const { filename } = await importImageIntoAttachment(
+              tab.path || "",
+              { type: "file", path },
+            );
+            if (insertAtCursor(`![](Attachment/${filename})\n`)) insertedCount++;
+          } catch (err) {
+            // 文件未保存或复制失败时，回退为插入绝对路径
+            if (insertAtCursor(buildImageSyntax(path))) insertedCount++;
+            state.showNotification(
+              `图片导入失败，已插入绝对路径: ${String(err)}`,
+              "info",
+            );
+          }
+        } else if (insertAtCursor(buildLinkSyntax(path))) {
+          insertedCount++;
+        }
       }
 
       if (insertedCount > 0) {
@@ -382,46 +398,13 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
                     const base64 = (reader.result as string).split(",")[1];
                     console.log("[PasteImage] base64 length:", base64?.length);
 
-                    // 获取当前 md 文件所在目录
-                    const mdPath = (tab.path || "").replace(/\\/g, "/");
-                    const lastSlash = mdPath.lastIndexOf("/");
-                    console.log("[PasteImage] mdPath:", mdPath, "lastSlash:", lastSlash);
-                    if (lastSlash < 0) {
-                      console.log("[PasteImage] no parent dir — tab not saved yet");
-                      useEditorStore.getState().showNotification(
-                        "当前文件尚未保存到磁盘，请先保存文件",
-                        "error",
-                      );
-                      return;
-                    }
-                    const parentDir = mdPath.substring(0, lastSlash);
-                    const saveDir = parentDir + "/Attachment";
-                    console.log("[PasteImage] parentDir:", parentDir, "saveDir:", saveDir);
-
-                    // 生成文件名：image_YYYYMMDD_HHMMSS.ext
-                    const ext = (file.name || "image.png").split(".").pop() || "png";
-                    const now = new Date();
-                    const pad = (n: number) => String(n).padStart(2, "0");
-                    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-                    const filename = `image_${ts}.${ext}`;
-                    const savePath = saveDir + "/" + filename;
-                    console.log("[PasteImage] filename:", filename, "savePath:", savePath);
-
-                    console.log("[PasteImage] creating dir:", saveDir);
-                    try { await invoke("create_dir", { path: saveDir }); } catch (e) {
-                      const msg = String(e);
-                      if (!msg.includes("目录已存在") && !msg.includes("exists")) throw e;
-                      console.log("[PasteImage] dir already exists, continuing:", saveDir);
-                    }
-                    console.log("[PasteImage] invoking save_file_from_base64...");
-                    await invoke("save_file_from_base64", {
-                      path: savePath,
-                      content: base64,
-                    });
-                    console.log("[PasteImage] save_file_from_base64 succeeded");
-                    window.dispatchEvent(
-                      new CustomEvent("file-refresh", { detail: { path: saveDir } }),
+                    // 转换路径：保存到 md 文件同级 Attachment 目录，并刷新左侧文件树
+                    console.log("[PasteImage] importing into Attachment...");
+                    const { filename } = await importImageIntoAttachment(
+                      tab.path || "",
+                      { type: "base64", data: base64, name: file.name },
                     );
+                    console.log("[PasteImage] import succeeded:", filename);
 
                     // 插入 markdown 图片语法
                     const selection = editor.getSelection();
@@ -438,14 +421,11 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
                     ]);
                     console.log("[PasteImage] inserted markdown image syntax");
                     editor.focus();
-                    useEditorStore.getState().showNotification(
-                      `图片已保存到 ${filename}`,
-                      "success",
-                    );
                   } catch (err) {
                     console.error("[PasteImage] error:", err);
+                    const msg = String(err);
                     useEditorStore.getState().showNotification(
-                      `保存剪贴板图片失败: ${String(err)}`,
+                      msg.includes("尚未保存") ? msg : `保存剪贴板图片失败: ${msg}`,
                       "error",
                     );
                   }
