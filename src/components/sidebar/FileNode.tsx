@@ -9,9 +9,15 @@ import { normalizePath, sortTreeEntries, openFileTab, getRenameSelectionEnd } fr
 import type { DirEntry } from "./sidebarUtils";
 import MaterialFileIcon from "../MaterialFileIcon";
 
+/** 缩进引导线：depth 为祖先层级，hasMore 表示该层级是否还有后续兄弟 */
+interface GuideLevel {
+  depth: number;
+  hasMore: boolean;
+}
+
 interface FileNodeProps extends DirEntry {
   level: number;
-  guideLevels: number[];
+  guideLevels: GuideLevel[];
   isLastSibling: boolean;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
   onRefresh?: () => void;
@@ -44,6 +50,8 @@ const FileNode = memo(function FileNode({
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 当前行之后是否还有更多行（子树或后续兄弟），决定缩进引导线是否在此行结束
+  const noRowsAfter = isLastSibling && !(isOpen && children.length > 0);
 
   const sortedChildren = useMemo(
     () => sortTreeEntries(children, pinnedFolders, defaultFolders, sidebarSortField, sidebarSortOrder),
@@ -167,18 +175,22 @@ const FileNode = memo(function FileNode({
             }
           : {})}
       >
-        {guideLevels.map((depth) => (
+        {guideLevels.map((guide) => (
           <div
-            key={depth}
+            key={guide.depth}
             className="absolute top-0 bottom-0 w-px bg-border/25 pointer-events-none"
-            style={{ left: `${depth * 12 + 31}px` }}
+            style={{
+              left: `${guide.depth * 12 + 31}px`,
+              // 该祖先没有后续兄弟且当前行是其后代中的最后一行时，竖线到此行中间结束
+              ...(!guide.hasMore && noRowsAfter ? { bottom: "50%" } : {}),
+            }}
           />
         ))}
         {level > 0 && (
           <>
             <div
               className="absolute w-px bg-border/25 pointer-events-none"
-              style={{ left: `${(level - 1) * 12 + 31}px`, top: 0, bottom: isLastSibling ? "50%" : 0 }}
+              style={{ left: `${(level - 1) * 12 + 31}px`, top: 0, bottom: noRowsAfter ? "50%" : 0 }}
             />
             <div
               className="absolute top-1/2 h-px bg-border/25 pointer-events-none"
@@ -231,7 +243,7 @@ const FileNode = memo(function FileNode({
               key={child.path}
               {...child}
               level={level + 1}
-              guideLevels={[...guideLevels, level]}
+              guideLevels={[...guideLevels, { depth: level, hasMore: !isLastSibling }]}
               isLastSibling={index === sortedChildren.length - 1}
               onContextMenu={onContextMenu}
               onRefresh={refreshChildren}
