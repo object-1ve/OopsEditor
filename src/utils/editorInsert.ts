@@ -6,7 +6,6 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { useEditorStore } from "@/store/editor";
 
 type InsertCallback = (text: string) => void;
 
@@ -131,9 +130,6 @@ export async function importImageIntoAttachment(
   // 2. Attachment 目录 —— 显示刚保存的图片文件
   window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: parentDir } }));
   window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: saveDir } }));
-  // 自动展开 Attachment 目录，让新图片直接可见
-  useEditorStore.getState().setFolderExpanded(saveDir, true);
-
   return { filename, saveDir, savePath, parentDir };
 }
 

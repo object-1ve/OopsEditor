@@ -12,7 +12,7 @@ import { useEditorStore } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ContextMenu from "../ContextMenu";
-import { normalizePath, openFileTab, resolveUniquePath } from "./sidebarUtils";
+import { createTimestampFileName, normalizePath, openFileTab, resolveUniquePath } from "./sidebarUtils";
 import type { DirEntry } from "./sidebarUtils";
 import RootFolder from "./RootFolder";
 import RecentDropdown from "./sections/RecentDropdown";
@@ -215,7 +215,7 @@ export default function Sidebar() {
       }
       const separator = baseDir.includes("\\") ? "\\" : "/";
       const isFolder = type === "folder";
-      const defaultName = isFolder ? "新建文件夹" : "新建文件.md";
+      const defaultName = isFolder ? "新建文件夹" : createTimestampFileName();
       const newPath = `${baseDir}${separator}${defaultName}`;
       try {
         const resolvedPath = await resolveUniquePath(newPath);
@@ -333,7 +333,7 @@ export default function Sidebar() {
             const lastIdxNew = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
             const baseDir = is_dir ? path : path.substring(0, lastIdxNew);
             const separator = path.includes("\\") ? "\\" : "/";
-            const defaultName = isFolder ? "新建文件夹" : "新建文件.md";
+            const defaultName = isFolder ? "新建文件夹" : createTimestampFileName();
             const newPath = `${baseDir}${separator}${defaultName}`;
             const resolvedPath = await resolveUniquePath(newPath);
             if (isFolder) {

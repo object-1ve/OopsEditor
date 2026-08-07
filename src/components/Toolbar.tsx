@@ -5,6 +5,7 @@ import { useState, useCallback, useMemo } from "react";
 import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
 import { saveTab } from "@/services/editorSave";
+import { detectLanguage } from "@/types";
 
 const buildChildPath = (basePath: string, fileName: string) => {
   if (/[\\/]$/.test(basePath)) {
@@ -354,7 +355,7 @@ const tabs = useEditorStore(s => s.tabs);
         id: filePath,
         name: fileName,
         path: filePath,
-        language: "plaintext",
+        language: detectLanguage(fileName).language,
         content: "",
         isDirty: false,
       };
