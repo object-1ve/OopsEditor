@@ -153,12 +153,27 @@ jobs:
       - name: List release assets
         run: ls -lh
 
+      # Extract only the changelog section matching this tag (e.g. v0.1.41 ->
+      # "## [0.1.41]"). Pasting the whole CHANGELOG.md made every release show
+      # stale old entries; with generate_release_notes:true GitHub still appends
+      # the auto-generated "Full Changelog" comparison link at the bottom.
+      - name: Extract changelog section for this version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="[$VERSION]" '
+            /^## / { if (in_section) exit; if (index($0, ver) > 0) in_section = 1; next }
+            in_section { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          body_path: CHANGELOG.md
+          # Empty when no changelog section exists for this version, so GitHub
+          # falls back to its auto-generated release notes.
+          body_path: RELEASE_NOTES.md
           files: |
             *.msi
             *.dmg
