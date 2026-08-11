@@ -18,6 +18,8 @@
   --color-accent-warm: var(--accent-warm);
   --color-accent-sage: var(--accent-sage);
   --color-accent-rose: var(--accent-rose);
+  --color-error: var(--error);
+  --color-success: var(--success);
 
   --font-sans: "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif;
   --font-mono:
@@ -44,6 +46,8 @@
   --accent-warm: #c89a6a;
   --accent-sage: #6a9a82;
   --accent-rose: #b88a7a;
+  --error: #c0392b;
+  --success: #3f8f5f;
 
   --font-sans: "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif;
   --font-mono:
