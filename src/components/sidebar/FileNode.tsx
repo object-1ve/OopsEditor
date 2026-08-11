@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo, memo, useRef } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "@/store/editor";
-import { normalizePath, sortTreeEntries, openFileTab, getRenameSelectionEnd } from "./sidebarUtils";
+import { normalizePath, sortTreeEntries, getRenameSelectionEnd } from "./sidebarUtils";
 import type { DirEntry } from "./sidebarUtils";
 import MaterialFileIcon from "../MaterialFileIcon";
 
@@ -19,16 +19,18 @@ interface FileNodeProps extends DirEntry {
   level: number;
   guideLevels: GuideLevel[];
   isLastSibling: boolean;
-  cutSourcePath?: string | null;
+  selectedPaths: string[];
+  cutSourcePaths?: string[] | null;
+  onRowClick: (e: React.MouseEvent, entry: DirEntry) => void;
+  registerEntry: (entry: DirEntry) => void;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
   onRefresh?: () => void;
 }
 
 const FileNode = memo(function FileNode({
-  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, cutSourcePath, onContextMenu, onRefresh,
+  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, selectedPaths, cutSourcePaths, onRowClick, registerEntry, onContextMenu, onRefresh,
 }: FileNodeProps) {
   const {
-    openTab,
     showNotification,
     rebasePinnedFilePath,
     rebasePinnedFolderPaths,
@@ -39,13 +41,13 @@ const FileNode = memo(function FileNode({
   const expandedFolders = useEditorStore((s) => s.expandedFolders);
   const pinnedFolders = useEditorStore((s) => s.pinnedFolders);
   const defaultFolders = useEditorStore((s) => s.defaultFolders);
-  const toggleFolderExpanded = useEditorStore((s) => s.toggleFolderExpanded);
   const sidebarSortField = useEditorStore((s) => s.sidebarSortField);
   const sidebarSortOrder = useEditorStore((s) => s.sidebarSortOrder);
   const tabs = useEditorStore((s) => s.tabs);
   const secondaryTabs = useEditorStore((s) => s.secondaryTabs);
   const isOpen = expandedFolders.includes(path);
-  const isCutSource = !!cutSourcePath && cutSourcePath === path;
+  const isCutSource = !!cutSourcePaths?.includes(path);
+  const isSelected = selectedPaths.includes(path);
   const isDefault = is_dir && defaultFolders.some((f) => normalizePath(f.path) === normalizePath(path));
   const isPinned = is_dir && (isDefault || pinnedFolders.includes(normalizePath(path)));
   const [children, setChildren] = useState<DirEntry[]>([]);
@@ -82,15 +84,6 @@ const FileNode = memo(function FileNode({
     }
   }, [isRenaming, is_dir, name]);
 
-  const handleToggle = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (is_dir) {
-      toggleFolderExpanded(path);
-    } else {
-      openFile(path, size);
-    }
-  };
-
   const handleRename = useCallback(async () => {
     if (newName === name || !newName.trim()) {
       setIsRenaming(false);
@@ -119,10 +112,6 @@ const FileNode = memo(function FileNode({
     }
   }, [newName, name, path, is_dir, onRefresh, rebasePinnedFilePath, rebasePinnedFolderPaths, replaceTabFileLocation, showNotification, tabs, secondaryTabs]);
 
-  const openFile = async (filePath: string, fileSize?: number) => {
-    await openFileTab(filePath, openTab, showNotification, fileSize);
-  };
-
   const isActive = useMemo(() => {
     if (!activeTabId) return false;
     const activePath = activeTabId.endsWith("#base64")
@@ -130,6 +119,10 @@ const FileNode = memo(function FileNode({
       : activeTabId;
     return normalizePath(activePath) === normalizePath(path);
   }, [activeTabId, path]);
+
+  useEffect(() => {
+    registerEntry({ path, name, is_dir, size, modified_at });
+  }, [path, name, is_dir, size, modified_at, registerEntry]);
 
   // Listen for custom "rename" event
   useEffect(() => {
@@ -159,7 +152,7 @@ const FileNode = memo(function FileNode({
     <div>
       <div
         className={`flex items-center gap-1.5 py-1 cursor-pointer hover:bg-surface/50 transition-colors select-none text-sm group ${
-          isActive ? "bg-surface text-accent font-medium" : "text-text-secondary"
+          isActive ? "bg-surface text-accent font-medium" : isSelected ? "bg-surface/60 text-text" : "text-text-secondary"
         } ${!is_dir ? "draggable-file" : ""} ${isCutSource ? "opacity-40" : ""}`}
         style={{
           paddingLeft: `${level * 12 + 24}px`,
@@ -167,7 +160,8 @@ const FileNode = memo(function FileNode({
           position: "relative",
           ...(isCutSource ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : {}),
         }}
-        onClick={handleToggle}
+        data-sidebar-path={path}
+        onClick={(e) => onRowClick(e, { path, name, is_dir, size, modified_at })}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}
         onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size, modified_at })}
@@ -252,7 +246,10 @@ const FileNode = memo(function FileNode({
               level={level + 1}
               guideLevels={[...guideLevels, { depth: level, hasMore: !isLastSibling }]}
               isLastSibling={index === sortedChildren.length - 1}
-              cutSourcePath={cutSourcePath ?? null}
+              selectedPaths={selectedPaths}
+              cutSourcePaths={cutSourcePaths ?? null}
+              onRowClick={onRowClick}
+              registerEntry={registerEntry}
               onContextMenu={onContextMenu}
               onRefresh={refreshChildren}
             />

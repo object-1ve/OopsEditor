@@ -12,7 +12,10 @@ import MaterialFileIcon from "../MaterialFileIcon";
 
 const RootFolder = memo(function RootFolder({
   path,
-  cutSourcePath,
+  selectedPaths,
+  cutSourcePaths,
+  onRowClick,
+  registerEntry,
   onContextMenu,
   onDragStart,
   onDragEnter,
@@ -21,7 +24,10 @@ const RootFolder = memo(function RootFolder({
   isDragging,
 }: {
   path: string;
-  cutSourcePath?: string | null;
+  selectedPaths: string[];
+  cutSourcePaths?: string[] | null;
+  onRowClick: (e: React.MouseEvent, entry: DirEntry) => void;
+  registerEntry: (entry: DirEntry) => void;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnter: (e: React.DragEvent) => void;
@@ -33,12 +39,22 @@ const RootFolder = memo(function RootFolder({
   const expandedFolders = useEditorStore((s) => s.expandedFolders);
   const pinnedFolders = useEditorStore((s) => s.pinnedFolders);
   const defaultFolders = useEditorStore((s) => s.defaultFolders);
-  const toggleFolderExpanded = useEditorStore((s) => s.toggleFolderExpanded);
   const setHoveredPath = useEditorStore((s) => s.setHoveredPath);
   const sidebarSortField = useEditorStore((s) => s.sidebarSortField);
   const sidebarSortOrder = useEditorStore((s) => s.sidebarSortOrder);
   const isOpen = expandedFolders.includes(path);
-  const isCutSource = !!cutSourcePath && cutSourcePath === path;
+  const isCutSource = !!cutSourcePaths?.includes(path);
+  const isSelected = selectedPaths.includes(path);
+  const rootEntry = useMemo<DirEntry>(
+    () => ({
+      path,
+      name: path.split(/[/\\]/).pop() || path,
+      is_dir: true,
+      size: 0,
+      modified_at: 0,
+    }),
+    [path],
+  );
   const isDefault = defaultFolders.some((f) => normalizePath(f.path) === normalizePath(path));
   const isPinned = isDefault || pinnedFolders.includes(normalizePath(path));
   const [entries, setEntries] = useState<DirEntry[]>([]);
@@ -60,6 +76,10 @@ const RootFolder = memo(function RootFolder({
   useEffect(() => {
     loadRoot();
   }, [loadRoot]);
+
+  useEffect(() => {
+    registerEntry(rootEntry);
+  }, [rootEntry, registerEntry]);
 
   useEffect(() => {
     const handleRefreshEvent = (e: any) => {
@@ -88,20 +108,13 @@ const RootFolder = memo(function RootFolder({
       <div
         className={`px-3 py-1.5 flex items-center justify-between group/folder cursor-grab active:cursor-grabbing select-none hover:bg-surface/30 transition-colors ${
           isCutSource ? "opacity-40" : ""
-        }`}
+        } ${isSelected ? "bg-surface/60 text-text" : ""}`}
         style={isCutSource ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : undefined}
-        onClick={() => toggleFolderExpanded(path)}
+        data-sidebar-path={path}
+        onClick={(e) => onRowClick(e, rootEntry)}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}
-        onContextMenu={(e) =>
-          onContextMenu(e, {
-            path,
-            name: path.split(/[/\\]/).pop() || path,
-            is_dir: true,
-            size: 0,
-            modified_at: 0,
-          })
-        }
+        onContextMenu={(e) => onContextMenu(e, rootEntry)}
       >
         <div className="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
           {isOpen ? (
@@ -134,15 +147,7 @@ const RootFolder = memo(function RootFolder({
       {isOpen && (
         <div
           className="mt-0.5"
-          onContextMenu={(e) =>
-            onContextMenu(e, {
-              path,
-              name: path.split(/[/\\]/).pop() || path,
-              is_dir: true,
-              size: 0,
-              modified_at: 0,
-            })
-          }
+          onContextMenu={(e) => onContextMenu(e, rootEntry)}
         >
           {sortedEntries.length > 0 ? (
             sortedEntries.map((entry, index) => (
@@ -152,7 +157,10 @@ const RootFolder = memo(function RootFolder({
                 level={0}
                 guideLevels={[]}
                 isLastSibling={index === sortedEntries.length - 1}
-                cutSourcePath={cutSourcePath ?? null}
+                selectedPaths={selectedPaths}
+                cutSourcePaths={cutSourcePaths ?? null}
+                onRowClick={onRowClick}
+                registerEntry={registerEntry}
                 onContextMenu={onContextMenu}
                 onRefresh={loadRoot}
               />
@@ -160,15 +168,7 @@ const RootFolder = memo(function RootFolder({
           ) : (
             <div
               className="px-8 py-1 text-[10px] text-text-muted italic"
-              onContextMenu={(e) =>
-                onContextMenu(e, {
-                  path,
-                  name: path.split(/[/\\]/).pop() || path,
-                  is_dir: true,
-                  size: 0,
-                  modified_at: 0,
-                })
-              }
+              onContextMenu={(e) => onContextMenu(e, rootEntry)}
             >
               空目录
             </div>

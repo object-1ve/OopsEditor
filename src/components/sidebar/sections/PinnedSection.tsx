@@ -8,7 +8,7 @@ import type { PinnedFile } from "@/store/types";
 interface PinnedSectionProps {
   isExpanded: boolean;
   pinnedFiles: PinnedFile[];
-  cutSourcePath?: string | null;
+  cutSourcePaths?: string[] | null;
   onToggle: () => void;
   onOpenFile: (path: string) => void;
   onContextMenu: (e: React.MouseEvent, path: string) => void;
@@ -18,7 +18,7 @@ interface PinnedSectionProps {
 export default function PinnedSection({
   isExpanded,
   pinnedFiles,
-  cutSourcePath,
+  cutSourcePaths,
   onToggle,
   onOpenFile,
   onContextMenu,
@@ -52,9 +52,9 @@ export default function PinnedSection({
                 <button
                   key={file.path}
                   className={`flex w-full items-center gap-1.5 px-3 py-1 text-[12px] text-text-secondary transition-colors hover:bg-surface/30 hover:text-text ${
-                    cutSourcePath === file.path ? "opacity-40" : ""
+                    cutSourcePaths?.includes(file.path) ? "opacity-40" : ""
                   }`}
-                  style={cutSourcePath === file.path ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : undefined}
+                  style={cutSourcePaths?.includes(file.path) ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : undefined}
                   onClick={() => onOpenFile(file.path)}
                   onContextMenu={(e) => onContextMenu(e, file.path)}
                   onMouseEnter={() => onHover(file.path)}

@@ -49,6 +49,7 @@ export default function Sidebar() {
   const setHoveredPath = useEditorStore((s) => s.setHoveredPath);
   const hoveredPath = useEditorStore((s) => s.hoveredPath);
   const setFolderExpanded = useEditorStore((s) => s.setFolderExpanded);
+  const toggleFolderExpanded = useEditorStore((s) => s.toggleFolderExpanded);
   const sidebarSortField = useEditorStore((s) => s.sidebarSortField);
   const sidebarSortOrder = useEditorStore((s) => s.sidebarSortOrder);
   const setSidebarSortField = useEditorStore((s) => s.setSidebarSortField);
@@ -67,10 +68,12 @@ export default function Sidebar() {
   const [draggedRootPath, setDraggedRootPath] = useState<string | null>(null);
   const [clipboardItem, setClipboardItem] = useState<{
     operation: "copy" | "cut";
-    sourcePath: string;
-    isDir: boolean;
-    name: string;
+    items: { sourcePath: string; isDir: boolean; name: string }[];
   } | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
+  const entryRegistryRef = useRef<Map<string, DirEntry>>(new Map());
+  const treeContainerRef = useRef<HTMLDivElement>(null);
   const [isRecentOpen, setIsRecentOpen] = useState(false);
   const recentDropdownRef = useRef<HTMLDivElement>(null);
   const isResizing = useRef(false);
@@ -173,6 +176,11 @@ export default function Sidebar() {
   const handleContextMenu = (e: React.MouseEvent, entry: DirEntry) => {
     e.preventDefault();
     e.stopPropagation();
+    // 右键选中项时保留整个多选；右键未选中项时清空选择并只选中该项
+    if (!selectedPaths.includes(entry.path)) {
+      setSelectedPaths([entry.path]);
+      setSelectionAnchor(entry.path);
+    }
     setContextMenu({ x: e.clientX, y: e.clientY, entry });
     setEmptyAreaContextMenu(null);
     setDefaultFolderContextMenu(null);
@@ -210,10 +218,84 @@ export default function Sidebar() {
     return idx === -1 ? "" : p.substring(0, idx);
   }, []);
 
+  const registerEntry = useCallback((entry: DirEntry) => {
+    entryRegistryRef.current.set(entry.path, entry);
+  }, []);
+
+  const getVisibleRowPaths = useCallback((): string[] => {
+    if (!treeContainerRef.current) return [];
+    return Array.from(
+      treeContainerRef.current.querySelectorAll<HTMLElement>("[data-sidebar-path]"),
+    )
+      .map((el) => el.dataset.sidebarPath || "")
+      .filter(Boolean);
+  }, []);
+
+  const handleRowClick = useCallback(
+    (e: React.MouseEvent, entry: DirEntry) => {
+      e.stopPropagation();
+      const isMulti = e.ctrlKey || e.metaKey;
+      const isRange = e.shiftKey;
+      // Shift+点击：从锚点批量选中（保留已有选择）
+      if (isRange) {
+        e.preventDefault();
+        if (selectionAnchor && selectionAnchor !== entry.path) {
+          const rows = getVisibleRowPaths();
+          const anchorIdx = rows.indexOf(selectionAnchor);
+          const clickIdx = rows.indexOf(entry.path);
+          if (anchorIdx !== -1 && clickIdx !== -1) {
+            const [lo, hi] = anchorIdx < clickIdx ? [anchorIdx, clickIdx] : [clickIdx, anchorIdx];
+            const range = rows.slice(lo, hi + 1);
+            setSelectedPaths((prev) => {
+              const next = new Set(prev);
+              range.forEach((p) => next.add(p));
+              return Array.from(next);
+            });
+          }
+        } else {
+          // 无锚点时的 Shift+点击：等同于普通单选
+          setSelectedPaths([entry.path]);
+          setSelectionAnchor(entry.path);
+        }
+        return;
+      }
+      // Ctrl+点击：切换单个选中
+      if (isMulti) {
+        e.preventDefault();
+        setSelectedPaths((prev) => {
+          const next = new Set(prev);
+          if (next.has(entry.path)) next.delete(entry.path);
+          else next.add(entry.path);
+          return Array.from(next);
+        });
+        setSelectionAnchor(entry.path);
+        return;
+      }
+      // 普通点击：仅选中当前项，并保持原有打开/折叠行为
+      setSelectedPaths([entry.path]);
+      setSelectionAnchor(entry.path);
+      if (entry.is_dir) {
+        toggleFolderExpanded(entry.path);
+      } else {
+        void openFile(entry.path, entry.size);
+      }
+    },
+    [selectionAnchor, getVisibleRowPaths, toggleFolderExpanded, openFile],
+  );
+
   const setClipboard = useCallback(
-    (operation: "copy" | "cut", entry: DirEntry) => {
-      setClipboardItem({ operation, sourcePath: entry.path, isDir: entry.is_dir, name: entry.name });
-      showNotification(`${operation === "cut" ? "已剪切" : "已复制"} ${entry.name}`, "success");
+    (operation: "copy" | "cut", entries: DirEntry[]) => {
+      const items = entries.map((entry) => ({
+        sourcePath: entry.path,
+        isDir: entry.is_dir,
+        name: entry.name,
+      }));
+      setClipboardItem({ operation, items });
+      const message =
+        entries.length === 1
+          ? `${operation === "cut" ? "已剪切" : "已复制"} ${entries[0].name}`
+          : `${operation === "cut" ? "已剪切" : "已复制"} ${entries.length} 个项目`;
+      showNotification(message, "success");
     },
     [showNotification],
   );
@@ -223,7 +305,7 @@ export default function Sidebar() {
       try {
         const isDir = await invoke<boolean>("is_directory", { path });
         const name = path.split(/[/\\]/).pop() || path;
-        setClipboard(operation, { path, name, is_dir: isDir, size: 0, modified_at: 0 });
+        setClipboard(operation, [{ path, name, is_dir: isDir, size: 0, modified_at: 0 }]);
       } catch (err) {
         showNotification(`操作失败: ${err}`, "error");
       }
@@ -244,10 +326,59 @@ export default function Sidebar() {
     return undefined;
   }, [hoveredPath, sortedRootPaths, parentPathOf]);
 
+  const getTargetEntries = useCallback((): DirEntry[] => {
+    if (!contextMenu) return [];
+    if (selectedPaths.length > 1 && selectedPaths.includes(normalizePath(contextMenu.entry.path))) {
+      const entries: DirEntry[] = [];
+      selectedPaths.forEach((p) => {
+        const entry = entryRegistryRef.current.get(p);
+        if (entry) entries.push(entry);
+      });
+      if (entries.length > 0) return entries;
+    }
+    return [contextMenu.entry];
+  }, [contextMenu, selectedPaths]);
+
+  const handleClipboardSelection = useCallback(
+    (operation: "copy" | "cut") => {
+      setClipboard(operation, getTargetEntries());
+    },
+    [setClipboard, getTargetEntries],
+  );
+
+  const handleDeleteSelection = useCallback(() => {
+    if (!contextMenu) return;
+    const entries = getTargetEntries();
+    if (entries.length === 0) return;
+    showModal({
+      title: "删除确认",
+      message: `确定要永久删除选中的 ${entries.length} 个项目吗？此操作无法撤销。`,
+      kind: "danger",
+      onConfirm: async () => {
+        try {
+          for (const entry of entries) {
+            await invoke("delete_item", { path: entry.path });
+            if (entry.is_dir) removePinnedFoldersUnder(entry.path);
+            else removePinnedFile(entry.path);
+          }
+          const parents = new Set(entries.map((e) => normalizePath(parentPathOf(e.path))));
+          parents.forEach((p) =>
+            window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: p } })),
+          );
+          setSelectedPaths([]);
+          setSelectionAnchor(null);
+          showNotification(`已删除 ${entries.length} 个项目`, "success");
+        } catch (err) {
+          showNotification(`删除失败: ${err}`, "error");
+        }
+      },
+    });
+  }, [contextMenu, getTargetEntries, showModal, removePinnedFile, removePinnedFoldersUnder, showNotification, parentPathOf]);
+
   const handlePaste = useCallback(
     async (targetDir?: string) => {
       if (!clipboardItem) return;
-      const { operation, sourcePath, isDir, name } = clipboardItem;
+      const { operation, items } = clipboardItem;
       try {
         let destDir = targetDir;
         if (!destDir) destDir = await getPasteTargetDir();
@@ -255,45 +386,54 @@ export default function Sidebar() {
           showNotification("请先选择粘贴目标目录", "error");
           return;
         }
-        if (isDir) {
-          const srcNorm = normalizePath(sourcePath);
-          const destNorm = normalizePath(destDir);
-          if (destNorm === srcNorm || destNorm.startsWith(`${srcNorm}/`)) {
-            showNotification("不能将文件夹粘贴到其自身内部", "error");
-            return;
+        for (const item of items) {
+          if (item.isDir) {
+            const srcNorm = normalizePath(item.sourcePath);
+            const destNorm = normalizePath(destDir);
+            if (destNorm === srcNorm || destNorm.startsWith(`${srcNorm}/`)) {
+              showNotification(`不能将文件夹 ${item.name} 粘贴到其自身内部`, "error");
+              continue;
+            }
           }
-        }
-        const sep = sourcePath.includes("\\") ? "\\" : "/";
-        const destPath = `${destDir}${sep}${name}`;
-        const resolvedPath = await resolveUniquePath(destPath);
-        if (operation === "copy") {
-          await invoke("copy_item", { sourcePath, targetPath: resolvedPath });
-        } else {
-          await invoke("move_item", { sourcePath, targetPath: resolvedPath });
-          // 移动后同步固定项、打开的标签页与根路径
-          if (isDir) {
-            rebasePinnedFolderPaths(sourcePath, resolvedPath);
+          const sep = item.sourcePath.includes("\\") ? "\\" : "/";
+          const destPath = `${destDir}${sep}${item.name}`;
+          const resolvedPath = await resolveUniquePath(destPath);
+          if (operation === "copy") {
+            await invoke("copy_item", { sourcePath: item.sourcePath, targetPath: resolvedPath });
           } else {
-            rebasePinnedFilePath(sourcePath, resolvedPath);
-            const matchedTabs = [...tabs, ...secondaryTabs].filter(
-              (tab) => normalizePath(tab.path) === normalizePath(sourcePath),
-            );
-            const nextName = resolvedPath.split(/[/\\]/).pop() || name;
-            matchedTabs.forEach((tab) => replaceTabFileLocation(tab.id, resolvedPath, nextName));
+            await invoke("move_item", { sourcePath: item.sourcePath, targetPath: resolvedPath });
+            // 移动后同步固定项、打开的标签页与根路径
+            if (item.isDir) {
+              rebasePinnedFolderPaths(item.sourcePath, resolvedPath);
+            } else {
+              rebasePinnedFilePath(item.sourcePath, resolvedPath);
+              const matchedTabs = [...tabs, ...secondaryTabs].filter(
+                (tab) => normalizePath(tab.path) === normalizePath(item.sourcePath),
+              );
+              const nextName = resolvedPath.split(/[/\\]/).pop() || item.name;
+              matchedTabs.forEach((tab) => replaceTabFileLocation(tab.id, resolvedPath, nextName));
+            }
+            if (rootPaths.includes(normalizePath(item.sourcePath))) {
+              addRootPath(resolvedPath);
+              removeRootPath(item.sourcePath);
+            }
           }
-          if (rootPaths.includes(normalizePath(sourcePath))) {
-            addRootPath(resolvedPath);
-            removeRootPath(sourcePath);
+          window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: destDir } }));
+          const srcParent = parentPathOf(item.sourcePath);
+          if (operation === "cut" && normalizePath(srcParent) !== normalizePath(destDir)) {
+            window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: srcParent } }));
           }
-          setClipboardItem(null);
         }
-        window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: destDir } }));
-        const srcParent = parentPathOf(sourcePath);
-        if (operation === "cut" && normalizePath(srcParent) !== normalizePath(destDir)) {
-          window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: srcParent } }));
+        if (operation === "cut") {
+          setClipboardItem(null);
+          setSelectedPaths([]);
+          setSelectionAnchor(null);
         }
         setFolderExpanded(destDir, true);
-        showNotification(`${operation === "cut" ? "已移动" : "已粘贴"} ${name}`, "success");
+        showNotification(
+          `${operation === "cut" ? "已移动" : "已粘贴"} ${items.length} 个项目`,
+          "success",
+        );
       } catch (err) {
         showNotification(`${operation === "cut" ? "移动" : "粘贴"}失败: ${err}`, "error");
       }
@@ -564,19 +704,67 @@ export default function Sidebar() {
       if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") return;
       if (!hoveredPath) return;
       e.preventDefault();
-      if (key === "x") void handleClipboardFromPath("cut", hoveredPath);
-      else if (key === "c") void handleClipboardFromPath("copy", hoveredPath);
-      else void handlePaste();
+      const inSelection = selectedPaths.length > 1 && selectedPaths.includes(hoveredPath);
+      const selectionEntries = inSelection
+        ? selectedPaths
+            .map((p) => entryRegistryRef.current.get(p))
+            .filter((e): e is DirEntry => !!e)
+        : [];
+      if (key === "x") {
+        if (selectionEntries.length > 0) setClipboard("cut", selectionEntries);
+        else void handleClipboardFromPath("cut", hoveredPath);
+      } else if (key === "c") {
+        if (selectionEntries.length > 0) setClipboard("copy", selectionEntries);
+        else void handleClipboardFromPath("copy", hoveredPath);
+      } else {
+        void handlePaste();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hoveredPath, handleClipboardFromPath, handlePaste]);
+  }, [hoveredPath, selectedPaths, setClipboard, handleClipboardFromPath, handlePaste]);
+
+  // Esc 清空多选
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSelectedPaths([]);
+        setSelectionAnchor(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const contextMenuItems = useMemo(() => {
     if (!contextMenu) return [];
     const normalizedPath = normalizePath(contextMenu.entry.path);
     const isDefault = contextMenu.entry.is_dir && defaultFolders.some((f) => normalizePath(f.path) === normalizedPath);
     const isPinned = contextMenu.entry.is_dir && (isDefault || pinnedFolders.includes(normalizedPath));
+    const isMulti = selectedPaths.length > 1 && selectedPaths.includes(normalizedPath);
+    // 多选右键：仅提供批量操作
+    if (isMulti) {
+      return [
+        { label: "剪切", icon: <Scissors size={14} />, onClick: () => handleClipboardSelection("cut") },
+        { label: "复制", icon: <Copy size={14} />, onClick: () => handleClipboardSelection("copy") },
+        ...(clipboardItem
+          ? [
+              {
+                label: "粘贴",
+                icon: <ClipboardPaste size={14} />,
+                onClick: () =>
+                  void handlePaste(
+                    contextMenu.entry.is_dir
+                      ? contextMenu.entry.path
+                      : parentPathOf(contextMenu.entry.path),
+                  ),
+              },
+            ]
+          : []),
+        { separator: true, label: "", onClick: () => {} },
+        { label: "删除", icon: <Trash2 size={14} />, onClick: handleDeleteSelection, danger: true },
+      ];
+    }
     return [
       { label: "新建文件", icon: <FilePlus size={14} />, onClick: () => handleAction("new-file") },
       { label: "新建文件夹", icon: <FolderPlus size={14} />, onClick: () => handleAction("new-folder") },
@@ -588,8 +776,8 @@ export default function Sidebar() {
       { label: "在终端中打开", icon: <TerminalIcon size={14} />, onClick: () => handleAction("terminal") },
       ...(!contextMenu.entry.is_dir ? [{ label: "以 Base64 打开", icon: <Copy size={14} />, onClick: () => handleAction("open-base64") }] : []),
       { separator: true, label: "", onClick: () => {} },
-      { label: "剪切", icon: <Scissors size={14} />, onClick: () => setClipboard("cut", contextMenu.entry) },
-      { label: "复制", icon: <Copy size={14} />, onClick: () => setClipboard("copy", contextMenu.entry) },
+      { label: "剪切", icon: <Scissors size={14} />, onClick: () => setClipboard("cut", [contextMenu.entry]) },
+      { label: "复制", icon: <Copy size={14} />, onClick: () => setClipboard("copy", [contextMenu.entry]) },
       ...(clipboardItem
         ? [
             {
@@ -613,7 +801,7 @@ export default function Sidebar() {
       { label: "重命名", icon: <Edit2 size={14} />, onClick: () => handleAction("rename") },
       { label: "删除", icon: <Trash2 size={14} />, onClick: () => handleAction("delete"), danger: true },
     ];
-  }, [contextMenu, handleAction, pinnedFolders, rootPaths.length, handleCollapseAllFolders, clipboardItem, setClipboard, handlePaste, parentPathOf]);
+  }, [contextMenu, handleAction, pinnedFolders, rootPaths.length, handleCollapseAllFolders, clipboardItem, setClipboard, handlePaste, parentPathOf, selectedPaths, handleClipboardSelection, handleDeleteSelection]);
 
   const emptyAreaMenuItems = useMemo(
     () => [
@@ -673,13 +861,13 @@ export default function Sidebar() {
         label: "剪切",
         icon: <Scissors size={14} />,
         onClick: () =>
-          setClipboard("cut", { path: pinnedFile.path, name: pinnedFile.name, is_dir: false, size: 0, modified_at: 0 }),
+          setClipboard("cut", [{ path: pinnedFile.path, name: pinnedFile.name, is_dir: false, size: 0, modified_at: 0 }]),
       },
       {
         label: "复制",
         icon: <Copy size={14} />,
         onClick: () =>
-          setClipboard("copy", { path: pinnedFile.path, name: pinnedFile.name, is_dir: false, size: 0, modified_at: 0 }),
+          setClipboard("copy", [{ path: pinnedFile.path, name: pinnedFile.name, is_dir: false, size: 0, modified_at: 0 }]),
       },
       ...(clipboardItem
         ? [
@@ -705,6 +893,11 @@ export default function Sidebar() {
     ],
     [sidebarSortField, sidebarSortOrder, setSidebarSortField, setSidebarSortOrder],
   );
+
+  const cutSourcePaths = useMemo(() => {
+    if (clipboardItem?.operation !== "cut") return null;
+    return clipboardItem.items.map((item) => item.sourcePath);
+  }, [clipboardItem]);
 
   return (
     <div
@@ -799,11 +992,18 @@ export default function Sidebar() {
       {isSearchOpen && <SearchBar searchInputRef={searchInputRef} />}
 
       {/* ── Main content area ── */}
-      <div className="flex-1 overflow-auto" onContextMenu={handleEmptyAreaContextMenu}>
+      <div
+        className="flex-1 overflow-auto"
+        onContextMenu={handleEmptyAreaContextMenu}
+        onClick={() => {
+          setSelectedPaths([]);
+          setSelectionAnchor(null);
+        }}
+      >
         <PinnedSection
           isExpanded={isPinnedExpanded}
           pinnedFiles={pinnedFiles}
-          cutSourcePath={clipboardItem?.operation === "cut" ? clipboardItem.sourcePath : null}
+          cutSourcePaths={cutSourcePaths}
           onToggle={() => setIsPinnedExpanded(!isPinnedExpanded)}
           onOpenFile={(path) => void openFile(path)}
           onContextMenu={handlePinnedFileContextMenu}
@@ -812,12 +1012,15 @@ export default function Sidebar() {
 
         {/* ── Folder tree area ── */}
         {rootPaths.length > 0 ? (
-          <div className="py-0.5">
+          <div className="py-0.5" ref={treeContainerRef}>
             {sortedRootPaths.map((path) => (
               <RootFolder
                 key={path}
                 path={path}
-                cutSourcePath={clipboardItem?.operation === "cut" ? clipboardItem.sourcePath : null}
+                selectedPaths={selectedPaths}
+                cutSourcePaths={cutSourcePaths}
+                onRowClick={handleRowClick}
+                registerEntry={registerEntry}
                 onContextMenu={handleContextMenu}
                 onDragStart={(e) => handleDragStart(e, path)}
                 onDragEnter={(e) => handleDragEnter(e, path)}
