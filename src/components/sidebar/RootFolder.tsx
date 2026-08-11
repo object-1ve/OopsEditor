@@ -16,6 +16,13 @@ const RootFolder = memo(function RootFolder({
   cutSourcePaths,
   onRowClick,
   registerEntry,
+  onItemDragStart,
+  onItemDragEnd,
+  onFolderDragOver,
+  onFolderDragLeave,
+  onFolderDrop,
+  dropTargetPath,
+  dragMoveSourcePath,
   onContextMenu,
   onDragStart,
   onDragEnter,
@@ -28,6 +35,13 @@ const RootFolder = memo(function RootFolder({
   cutSourcePaths?: string[] | null;
   onRowClick: (e: React.MouseEvent, entry: DirEntry) => void;
   registerEntry: (entry: DirEntry) => void;
+  onItemDragStart: (e: React.DragEvent, entry: DirEntry) => void;
+  onItemDragEnd: () => void;
+  onFolderDragOver: (e: React.DragEvent, folderPath: string) => void;
+  onFolderDragLeave: () => void;
+  onFolderDrop: (e: React.DragEvent, folderPath: string) => void;
+  dropTargetPath: string | null;
+  dragMoveSourcePath: string | null;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnter: (e: React.DragEvent) => void;
@@ -45,6 +59,7 @@ const RootFolder = memo(function RootFolder({
   const isOpen = expandedFolders.includes(path);
   const isCutSource = !!cutSourcePaths?.includes(path);
   const isSelected = selectedPaths.includes(path);
+  const isDropTarget = dropTargetPath === path;
   const rootEntry = useMemo<DirEntry>(
     () => ({
       path,
@@ -108,10 +123,15 @@ const RootFolder = memo(function RootFolder({
       <div
         className={`px-3 py-1.5 flex items-center justify-between group/folder cursor-grab active:cursor-grabbing select-none hover:bg-surface/30 transition-colors ${
           isCutSource ? "opacity-40" : ""
-        } ${isSelected ? "bg-surface/60 text-text" : ""}`}
+        } ${isSelected ? "bg-surface/60 text-text" : ""} ${
+          isDropTarget ? "bg-accent/10 ring-1 ring-inset ring-accent/60" : ""
+        }`}
         style={isCutSource ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : undefined}
         data-sidebar-path={path}
         onClick={(e) => onRowClick(e, rootEntry)}
+        onDragOver={(e) => onFolderDragOver(e, path)}
+        onDragLeave={onFolderDragLeave}
+        onDrop={(e) => onFolderDrop(e, path)}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}
         onContextMenu={(e) => onContextMenu(e, rootEntry)}
@@ -161,6 +181,13 @@ const RootFolder = memo(function RootFolder({
                 cutSourcePaths={cutSourcePaths ?? null}
                 onRowClick={onRowClick}
                 registerEntry={registerEntry}
+                onItemDragStart={onItemDragStart}
+                onItemDragEnd={onItemDragEnd}
+                onFolderDragOver={onFolderDragOver}
+                onFolderDragLeave={onFolderDragLeave}
+                onFolderDrop={onFolderDrop}
+                dropTargetPath={dropTargetPath}
+                dragMoveSourcePath={dragMoveSourcePath}
                 onContextMenu={onContextMenu}
                 onRefresh={loadRoot}
               />

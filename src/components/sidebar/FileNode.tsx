@@ -23,12 +23,19 @@ interface FileNodeProps extends DirEntry {
   cutSourcePaths?: string[] | null;
   onRowClick: (e: React.MouseEvent, entry: DirEntry) => void;
   registerEntry: (entry: DirEntry) => void;
+  onItemDragStart: (e: React.DragEvent, entry: DirEntry) => void;
+  onItemDragEnd: () => void;
+  onFolderDragOver: (e: React.DragEvent, folderPath: string) => void;
+  onFolderDragLeave: () => void;
+  onFolderDrop: (e: React.DragEvent, folderPath: string) => void;
+  dropTargetPath: string | null;
+  dragMoveSourcePath: string | null;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
   onRefresh?: () => void;
 }
 
 const FileNode = memo(function FileNode({
-  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, selectedPaths, cutSourcePaths, onRowClick, registerEntry, onContextMenu, onRefresh,
+  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, selectedPaths, cutSourcePaths, onRowClick, registerEntry, onItemDragStart, onItemDragEnd, onFolderDragOver, onFolderDragLeave, onFolderDrop, dropTargetPath, dragMoveSourcePath, onContextMenu, onRefresh,
 }: FileNodeProps) {
   const {
     showNotification,
@@ -48,6 +55,8 @@ const FileNode = memo(function FileNode({
   const isOpen = expandedFolders.includes(path);
   const isCutSource = !!cutSourcePaths?.includes(path);
   const isSelected = selectedPaths.includes(path);
+  const isDropTarget = is_dir && dropTargetPath === path;
+  const isDragging = dragMoveSourcePath === path;
   const isDefault = is_dir && defaultFolders.some((f) => normalizePath(f.path) === normalizePath(path));
   const isPinned = is_dir && (isDefault || pinnedFolders.includes(normalizePath(path)));
   const [children, setChildren] = useState<DirEntry[]>([]);
@@ -153,7 +162,9 @@ const FileNode = memo(function FileNode({
       <div
         className={`flex items-center gap-1.5 py-1 cursor-pointer hover:bg-surface/50 transition-colors select-none text-sm group ${
           isActive ? "bg-surface text-accent font-medium" : isSelected ? "bg-surface/60 text-text" : "text-text-secondary"
-        } ${!is_dir ? "draggable-file" : ""} ${isCutSource ? "opacity-40" : ""}`}
+        } ${!is_dir ? "draggable-file" : ""} ${isCutSource || isDragging ? "opacity-40" : ""} ${
+          isDropTarget ? "bg-accent/10 ring-1 ring-inset ring-accent/60" : ""
+        }`}
         style={{
           paddingLeft: `${level * 12 + 24}px`,
           paddingRight: "12px",
@@ -161,18 +172,18 @@ const FileNode = memo(function FileNode({
           ...(isCutSource ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : {}),
         }}
         data-sidebar-path={path}
+        draggable
         onClick={(e) => onRowClick(e, { path, name, is_dir, size, modified_at })}
+        onDragStart={(e) => onItemDragStart(e, { path, name, is_dir, size, modified_at })}
+        onDragEnd={onItemDragEnd}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}
         onContextMenu={(e) => onContextMenu(e, { path, name, is_dir, size, modified_at })}
-        {...(!is_dir
+        {...(is_dir
           ? {
-              draggable: true,
-              onDragStart: (e: React.DragEvent) => {
-                e.dataTransfer.setData("application/x-sidebar-file", path);
-                e.dataTransfer.setData("text/plain", path);
-                e.dataTransfer.effectAllowed = "copy";
-              },
+              onDragOver: (e: React.DragEvent) => onFolderDragOver(e, path),
+              onDragLeave: onFolderDragLeave,
+              onDrop: (e: React.DragEvent) => onFolderDrop(e, path),
             }
           : {})}
       >
@@ -250,6 +261,13 @@ const FileNode = memo(function FileNode({
               cutSourcePaths={cutSourcePaths ?? null}
               onRowClick={onRowClick}
               registerEntry={registerEntry}
+              onItemDragStart={onItemDragStart}
+              onItemDragEnd={onItemDragEnd}
+              onFolderDragOver={onFolderDragOver}
+              onFolderDragLeave={onFolderDragLeave}
+              onFolderDrop={onFolderDrop}
+              dropTargetPath={dropTargetPath}
+              dragMoveSourcePath={dragMoveSourcePath}
               onContextMenu={onContextMenu}
               onRefresh={refreshChildren}
             />

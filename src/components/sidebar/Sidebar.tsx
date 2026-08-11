@@ -72,6 +72,8 @@ export default function Sidebar() {
   } | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
+  const [dragMoveSource, setDragMoveSource] = useState<{ path: string; name: string; isDir: boolean } | null>(null);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const entryRegistryRef = useRef<Map<string, DirEntry>>(new Map());
   const treeContainerRef = useRef<HTMLDivElement>(null);
   const [isRecentOpen, setIsRecentOpen] = useState(false);
@@ -375,72 +377,47 @@ export default function Sidebar() {
     });
   }, [contextMenu, getTargetEntries, showModal, removePinnedFile, removePinnedFoldersUnder, showNotification, parentPathOf]);
 
-  const handlePaste = useCallback(
-    async (targetDir?: string) => {
-      if (!clipboardItem) return;
-      const { operation, items } = clipboardItem;
-      try {
-        let destDir = targetDir;
-        if (!destDir) destDir = await getPasteTargetDir();
-        if (!destDir) {
-          showNotification("请先选择粘贴目标目录", "error");
-          return;
+  const moveSingleItem = useCallback(
+    async (
+      item: { sourcePath: string; isDir: boolean; name: string },
+      destDir: string,
+    ): Promise<boolean> => {
+      if (item.isDir) {
+        const srcNorm = normalizePath(item.sourcePath);
+        const destNorm = normalizePath(destDir);
+        if (destNorm === srcNorm || destNorm.startsWith(`${srcNorm}/`)) {
+          showNotification(`不能将文件夹 ${item.name} 移动到其自身内部`, "error");
+          return false;
         }
-        for (const item of items) {
-          if (item.isDir) {
-            const srcNorm = normalizePath(item.sourcePath);
-            const destNorm = normalizePath(destDir);
-            if (destNorm === srcNorm || destNorm.startsWith(`${srcNorm}/`)) {
-              showNotification(`不能将文件夹 ${item.name} 粘贴到其自身内部`, "error");
-              continue;
-            }
-          }
-          const sep = item.sourcePath.includes("\\") ? "\\" : "/";
-          const destPath = `${destDir}${sep}${item.name}`;
-          const resolvedPath = await resolveUniquePath(destPath);
-          if (operation === "copy") {
-            await invoke("copy_item", { sourcePath: item.sourcePath, targetPath: resolvedPath });
-          } else {
-            await invoke("move_item", { sourcePath: item.sourcePath, targetPath: resolvedPath });
-            // 移动后同步固定项、打开的标签页与根路径
-            if (item.isDir) {
-              rebasePinnedFolderPaths(item.sourcePath, resolvedPath);
-            } else {
-              rebasePinnedFilePath(item.sourcePath, resolvedPath);
-              const matchedTabs = [...tabs, ...secondaryTabs].filter(
-                (tab) => normalizePath(tab.path) === normalizePath(item.sourcePath),
-              );
-              const nextName = resolvedPath.split(/[/\\]/).pop() || item.name;
-              matchedTabs.forEach((tab) => replaceTabFileLocation(tab.id, resolvedPath, nextName));
-            }
-            if (rootPaths.includes(normalizePath(item.sourcePath))) {
-              addRootPath(resolvedPath);
-              removeRootPath(item.sourcePath);
-            }
-          }
-          window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: destDir } }));
-          const srcParent = parentPathOf(item.sourcePath);
-          if (operation === "cut" && normalizePath(srcParent) !== normalizePath(destDir)) {
-            window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: srcParent } }));
-          }
-        }
-        if (operation === "cut") {
-          setClipboardItem(null);
-          setSelectedPaths([]);
-          setSelectionAnchor(null);
-        }
-        setFolderExpanded(destDir, true);
-        showNotification(
-          `${operation === "cut" ? "已移动" : "已粘贴"} ${items.length} 个项目`,
-          "success",
-        );
-      } catch (err) {
-        showNotification(`${operation === "cut" ? "移动" : "粘贴"}失败: ${err}`, "error");
       }
+      const sep = item.sourcePath.includes("\\") ? "\\" : "/";
+      const destPath = `${destDir}${sep}${item.name}`;
+      const resolvedPath = await resolveUniquePath(destPath);
+      await invoke("move_item", { sourcePath: item.sourcePath, targetPath: resolvedPath });
+      // 移动后同步固定项、打开的标签页与根路径
+      if (item.isDir) {
+        rebasePinnedFolderPaths(item.sourcePath, resolvedPath);
+      } else {
+        rebasePinnedFilePath(item.sourcePath, resolvedPath);
+        const matchedTabs = [...tabs, ...secondaryTabs].filter(
+          (tab) => normalizePath(tab.path) === normalizePath(item.sourcePath),
+        );
+        const nextName = resolvedPath.split(/[/\\]/).pop() || item.name;
+        matchedTabs.forEach((tab) => replaceTabFileLocation(tab.id, resolvedPath, nextName));
+      }
+      if (rootPaths.includes(normalizePath(item.sourcePath))) {
+        addRootPath(resolvedPath);
+        removeRootPath(item.sourcePath);
+      }
+      window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: destDir } }));
+      const srcParent = parentPathOf(item.sourcePath);
+      if (normalizePath(srcParent) !== normalizePath(destDir)) {
+        window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: srcParent } }));
+      }
+      setFolderExpanded(destDir, true);
+      return true;
     },
     [
-      clipboardItem,
-      getPasteTargetDir,
       showNotification,
       rebasePinnedFolderPaths,
       rebasePinnedFilePath,
@@ -453,6 +430,216 @@ export default function Sidebar() {
       setFolderExpanded,
       parentPathOf,
     ],
+  );
+
+  const handlePaste = useCallback(
+    async (targetDir?: string) => {
+      if (!clipboardItem) return;
+      const { operation, items } = clipboardItem;
+      try {
+        let destDir = targetDir;
+        if (!destDir) destDir = await getPasteTargetDir();
+        if (!destDir) {
+          showNotification("请先选择粘贴目标目录", "error");
+          return;
+        }
+        let moved = 0;
+        let copied = 0;
+        for (const item of items) {
+          if (operation === "copy") {
+            if (item.isDir) {
+              const srcNorm = normalizePath(item.sourcePath);
+              const destNorm = normalizePath(destDir);
+              if (destNorm === srcNorm || destNorm.startsWith(`${srcNorm}/`)) {
+                showNotification(`不能将文件夹 ${item.name} 复制到其自身内部`, "error");
+                continue;
+              }
+            }
+            const sep = item.sourcePath.includes("\\") ? "\\" : "/";
+            const destPath = `${destDir}${sep}${item.name}`;
+            const resolvedPath = await resolveUniquePath(destPath);
+            await invoke("copy_item", { sourcePath: item.sourcePath, targetPath: resolvedPath });
+            window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: destDir } }));
+            copied++;
+          } else if (await moveSingleItem(item, destDir)) {
+            moved++;
+          }
+        }
+        if (operation === "cut") {
+          setClipboardItem(null);
+          setSelectedPaths([]);
+          setSelectionAnchor(null);
+        }
+        showNotification(
+          `${operation === "cut" ? "已移动" : "已粘贴"} ${operation === "cut" ? moved : copied} 个项目`,
+          "success",
+        );
+      } catch (err) {
+        showNotification(`${operation === "cut" ? "移动" : "粘贴"}失败: ${err}`, "error");
+      }
+    },
+    [clipboardItem, getPasteTargetDir, showNotification, moveSingleItem],
+  );
+
+  const handleItemDragStart = useCallback((e: React.DragEvent, entry: DirEntry) => {
+    e.dataTransfer.setData(
+      "application/x-sidebar-move",
+      JSON.stringify({ path: entry.path, name: entry.name, isDir: entry.is_dir }),
+    );
+    e.dataTransfer.setData("text/plain", entry.path);
+    if (!entry.is_dir) e.dataTransfer.setData("application/x-sidebar-file", entry.path);
+    e.dataTransfer.effectAllowed = "copyMove";
+    setDragMoveSource({ path: entry.path, name: entry.name, isDir: entry.is_dir });
+  }, []);
+
+  const handleItemDragEnd = useCallback(() => {
+    setDragMoveSource(null);
+    setDropTargetPath(null);
+  }, []);
+
+  const canDropOnFolder = useCallback(
+    (source: { path: string; name: string; isDir: boolean } | null, folderPath: string): boolean => {
+      if (!source) return false;
+      const destNorm = normalizePath(folderPath);
+      const srcNorm = normalizePath(source.path);
+      if (source.isDir && (destNorm === srcNorm || destNorm.startsWith(`${srcNorm}/`))) {
+        return false;
+      }
+      // 放到自身父目录没有意义
+      if (destNorm === normalizePath(parentPathOf(source.path))) return false;
+      return true;
+    },
+    [parentPathOf],
+  );
+
+  const handleFolderDragOver = useCallback(
+    (e: React.DragEvent, folderPath: string) => {
+      if (!canDropOnFolder(dragMoveSource, folderPath)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDropTargetPath((prev) => (prev === folderPath ? prev : folderPath));
+    },
+    [dragMoveSource, canDropOnFolder],
+  );
+
+  const handleFolderDragLeave = useCallback(() => {
+    setDropTargetPath(null);
+  }, []);
+
+  const getDropMoveEntries = useCallback(
+    (source: { path: string; name: string; isDir: boolean }): DirEntry[] => {
+      // 拖拽的是多选中的一项时，移动整个去重后的选择
+      if (selectedPaths.length > 1 && selectedPaths.includes(normalizePath(source.path))) {
+        const entries = selectedPaths
+          .map((p) => entryRegistryRef.current.get(p))
+          .filter((e): e is DirEntry => !!e);
+        const normalized = entries.map((e) => ({ e, p: normalizePath(e.path) }));
+        const deduped = normalized
+          .filter(
+            ({ e, p }) =>
+              !normalized.some(({ e: o, p: op }) => o !== e && op !== p && p.startsWith(`${op}/`)),
+          )
+          .map(({ e }) => e);
+        if (deduped.length > 0) return deduped;
+      }
+      return [{ path: source.path, name: source.name, is_dir: source.isDir, size: 0, modified_at: 0 }];
+    },
+    [selectedPaths],
+  );
+
+  const moveEntriesToDir = useCallback(
+    async (entries: DirEntry[], destDir: string) => {
+      let moved = 0;
+      let blocked = 0;
+      for (const entry of entries) {
+        if (!canDropOnFolder({ path: entry.path, name: entry.name, isDir: entry.is_dir }, destDir)) {
+          blocked++;
+          continue;
+        }
+        if (
+          await moveSingleItem(
+            { sourcePath: entry.path, isDir: entry.is_dir, name: entry.name },
+            destDir,
+          )
+        ) {
+          moved++;
+        } else {
+          blocked++;
+        }
+      }
+      return { moved, blocked };
+    },
+    [canDropOnFolder, moveSingleItem],
+  );
+
+  const handleFolderDrop = useCallback(
+    async (e: React.DragEvent, folderPath: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const source = dragMoveSource;
+      setDropTargetPath(null);
+      if (!source) return;
+      setDragMoveSource(null);
+      try {
+        const entries = getDropMoveEntries(source);
+        const { moved, blocked } = await moveEntriesToDir(entries, folderPath);
+        if (moved > 0) {
+          setSelectedPaths([]);
+          setSelectionAnchor(null);
+          showNotification(
+            moved === 1 ? `已移动 ${entries[0]?.name ?? source.name}` : `已移动 ${moved} 个项目`,
+            "success",
+          );
+        } else if (blocked > 0) {
+          showNotification("目标位置无效，未移动", "info");
+        }
+      } catch (err) {
+        showNotification(`移动失败: ${err}`, "error");
+      }
+    },
+    [dragMoveSource, getDropMoveEntries, moveEntriesToDir, showNotification],
+  );
+
+  const handleEmptyDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!dragMoveSource) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    },
+    [dragMoveSource],
+  );
+
+  const handleEmptyDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const source = dragMoveSource;
+      setDropTargetPath(null);
+      if (!source) return;
+      setDragMoveSource(null);
+      try {
+        const destDir = await getPasteTargetDir();
+        if (!destDir) {
+          showNotification("请先选择粘贴目标目录", "error");
+          return;
+        }
+        const entries = getDropMoveEntries(source);
+        const { moved, blocked } = await moveEntriesToDir(entries, destDir);
+        if (moved > 0) {
+          setSelectedPaths([]);
+          setSelectionAnchor(null);
+          showNotification(
+            moved === 1 ? `已移动 ${entries[0]?.name ?? source.name}` : `已移动 ${moved} 个项目`,
+            "success",
+          );
+        } else if (blocked > 0) {
+          showNotification("目标位置无效，未移动", "info");
+        }
+      } catch (err) {
+        showNotification(`移动失败: ${err}`, "error");
+      }
+    },
+    [dragMoveSource, getPasteTargetDir, getDropMoveEntries, moveEntriesToDir, showNotification],
   );
 
   const handleToolbarCreate = useCallback(
@@ -995,6 +1182,8 @@ export default function Sidebar() {
       <div
         className="flex-1 overflow-auto"
         onContextMenu={handleEmptyAreaContextMenu}
+        onDragOver={handleEmptyDragOver}
+        onDrop={handleEmptyDrop}
         onClick={() => {
           setSelectedPaths([]);
           setSelectionAnchor(null);
@@ -1021,6 +1210,13 @@ export default function Sidebar() {
                 cutSourcePaths={cutSourcePaths}
                 onRowClick={handleRowClick}
                 registerEntry={registerEntry}
+                onItemDragStart={handleItemDragStart}
+                onItemDragEnd={handleItemDragEnd}
+                onFolderDragOver={handleFolderDragOver}
+                onFolderDragLeave={handleFolderDragLeave}
+                onFolderDrop={handleFolderDrop}
+                dropTargetPath={dropTargetPath}
+                dragMoveSourcePath={dragMoveSource?.path ?? null}
                 onContextMenu={handleContextMenu}
                 onDragStart={(e) => handleDragStart(e, path)}
                 onDragEnter={(e) => handleDragEnter(e, path)}
