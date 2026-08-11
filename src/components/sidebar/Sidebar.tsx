@@ -76,6 +76,7 @@ export default function Sidebar() {
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const entryRegistryRef = useRef<Map<string, DirEntry>>(new Map());
   const treeContainerRef = useRef<HTMLDivElement>(null);
+  const dragMoveSourceRef = useRef<{ path: string; name: string; isDir: boolean } | null>(null);
   const [isRecentOpen, setIsRecentOpen] = useState(false);
   const recentDropdownRef = useRef<HTMLDivElement>(null);
   const isResizing = useRef(false);
@@ -488,11 +489,14 @@ export default function Sidebar() {
     );
     e.dataTransfer.setData("text/plain", entry.path);
     if (!entry.is_dir) e.dataTransfer.setData("application/x-sidebar-file", entry.path);
-    e.dataTransfer.effectAllowed = "copyMove";
-    setDragMoveSource({ path: entry.path, name: entry.name, isDir: entry.is_dir });
+    e.dataTransfer.effectAllowed = "all";
+    const source = { path: entry.path, name: entry.name, isDir: entry.is_dir };
+    dragMoveSourceRef.current = source;
+    setDragMoveSource(source);
   }, []);
 
   const handleItemDragEnd = useCallback(() => {
+    dragMoveSourceRef.current = null;
     setDragMoveSource(null);
     setDropTargetPath(null);
   }, []);
@@ -514,12 +518,15 @@ export default function Sidebar() {
 
   const handleFolderDragOver = useCallback(
     (e: React.DragEvent, folderPath: string) => {
-      if (!canDropOnFolder(dragMoveSource, folderPath)) return;
+      const source = dragMoveSourceRef.current;
+      if (!source) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      setDropTargetPath((prev) => (prev === folderPath ? prev : folderPath));
+      if (canDropOnFolder(source, folderPath)) {
+        setDropTargetPath((prev) => (prev === folderPath ? prev : folderPath));
+      }
     },
-    [dragMoveSource, canDropOnFolder],
+    [canDropOnFolder],
   );
 
   const handleFolderDragLeave = useCallback(() => {
@@ -576,9 +583,10 @@ export default function Sidebar() {
     async (e: React.DragEvent, folderPath: string) => {
       e.preventDefault();
       e.stopPropagation();
-      const source = dragMoveSource;
+      const source = dragMoveSourceRef.current;
       setDropTargetPath(null);
       if (!source) return;
+      dragMoveSourceRef.current = null;
       setDragMoveSource(null);
       try {
         const entries = getDropMoveEntries(source);
@@ -597,25 +605,26 @@ export default function Sidebar() {
         showNotification(`移动失败: ${err}`, "error");
       }
     },
-    [dragMoveSource, getDropMoveEntries, moveEntriesToDir, showNotification],
+    [getDropMoveEntries, moveEntriesToDir, showNotification],
   );
 
   const handleEmptyDragOver = useCallback(
     (e: React.DragEvent) => {
-      if (!dragMoveSource) return;
+      if (!dragMoveSourceRef.current) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
     },
-    [dragMoveSource],
+    [],
   );
 
   const handleEmptyDrop = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      const source = dragMoveSource;
+      const source = dragMoveSourceRef.current;
       setDropTargetPath(null);
       if (!source) return;
+      dragMoveSourceRef.current = null;
       setDragMoveSource(null);
       try {
         const destDir = await getPasteTargetDir();
@@ -639,7 +648,7 @@ export default function Sidebar() {
         showNotification(`移动失败: ${err}`, "error");
       }
     },
-    [dragMoveSource, getPasteTargetDir, getDropMoveEntries, moveEntriesToDir, showNotification],
+    [getPasteTargetDir, getDropMoveEntries, moveEntriesToDir, showNotification],
   );
 
   const handleToolbarCreate = useCallback(
