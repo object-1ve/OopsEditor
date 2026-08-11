@@ -71,6 +71,63 @@ fn copy_file(source_path: String, target_path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 递归复制文件或目录（用于“复制/粘贴”文件或文件夹）
+fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if src.is_dir() {
+        fs::create_dir_all(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            copy_recursive(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+    } else {
+        fs::copy(src, dst)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn copy_item(source_path: String, target_path: String) -> Result<(), String> {
+    let src = std::path::Path::new(&source_path);
+    let dst = std::path::Path::new(&target_path);
+    if !src.exists() {
+        return Err(format!("源路径不存在: {}", source_path));
+    }
+    if dst.exists() {
+        return Err(format!("目标路径已存在: {}", target_path));
+    }
+    copy_recursive(src, dst).map_err(|e| format!("复制失败: {}", e))
+}
+
+#[tauri::command]
+fn move_item(source_path: String, target_path: String) -> Result<(), String> {
+    let src = std::path::Path::new(&source_path);
+    let dst = std::path::Path::new(&target_path);
+    if !src.exists() {
+        return Err(format!("源路径不存在: {}", source_path));
+    }
+    if dst.exists() {
+        return Err(format!("目标路径已存在: {}", target_path));
+    }
+    if fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    // rename 失败（如跨磁盘移动）时回退为“复制 + 删除源”
+    if let Err(copy_err) = copy_recursive(src, dst) {
+        let _ = if dst.is_dir() {
+            fs::remove_dir_all(dst)
+        } else {
+            fs::remove_file(dst)
+        };
+        return Err(format!("移动失败: {}", copy_err));
+    }
+    let remove_result = if src.is_dir() {
+        fs::remove_dir_all(src)
+    } else {
+        fs::remove_file(src)
+    };
+    remove_result.map_err(|e| format!("移动失败: {}", e))
+}
+
 #[tauri::command]
 fn is_directory(path: String) -> bool {
     fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
@@ -398,6 +455,8 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         save_file_from_base64,
 
         copy_file,
+        copy_item,
+        move_item,
         list_dir,
         get_file_info,
         is_directory,

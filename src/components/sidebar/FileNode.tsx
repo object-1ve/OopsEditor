@@ -19,12 +19,13 @@ interface FileNodeProps extends DirEntry {
   level: number;
   guideLevels: GuideLevel[];
   isLastSibling: boolean;
+  cutSourcePath?: string | null;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
   onRefresh?: () => void;
 }
 
 const FileNode = memo(function FileNode({
-  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, onContextMenu, onRefresh,
+  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, cutSourcePath, onContextMenu, onRefresh,
 }: FileNodeProps) {
   const {
     openTab,
@@ -44,6 +45,7 @@ const FileNode = memo(function FileNode({
   const tabs = useEditorStore((s) => s.tabs);
   const secondaryTabs = useEditorStore((s) => s.secondaryTabs);
   const isOpen = expandedFolders.includes(path);
+  const isCutSource = !!cutSourcePath && cutSourcePath === path;
   const isDefault = is_dir && defaultFolders.some((f) => normalizePath(f.path) === normalizePath(path));
   const isPinned = is_dir && (isDefault || pinnedFolders.includes(normalizePath(path)));
   const [children, setChildren] = useState<DirEntry[]>([]);
@@ -158,8 +160,13 @@ const FileNode = memo(function FileNode({
       <div
         className={`flex items-center gap-1.5 py-1 cursor-pointer hover:bg-surface/50 transition-colors select-none text-sm group ${
           isActive ? "bg-surface text-accent font-medium" : "text-text-secondary"
-        } ${!is_dir ? "draggable-file" : ""}`}
-        style={{ paddingLeft: `${level * 12 + 24}px`, paddingRight: "12px", position: "relative" }}
+        } ${!is_dir ? "draggable-file" : ""} ${isCutSource ? "opacity-40" : ""}`}
+        style={{
+          paddingLeft: `${level * 12 + 24}px`,
+          paddingRight: "12px",
+          position: "relative",
+          ...(isCutSource ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : {}),
+        }}
         onClick={handleToggle}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}
@@ -245,6 +252,7 @@ const FileNode = memo(function FileNode({
               level={level + 1}
               guideLevels={[...guideLevels, { depth: level, hasMore: !isLastSibling }]}
               isLastSibling={index === sortedChildren.length - 1}
+              cutSourcePath={cutSourcePath ?? null}
               onContextMenu={onContextMenu}
               onRefresh={refreshChildren}
             />

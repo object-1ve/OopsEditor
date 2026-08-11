@@ -12,6 +12,7 @@ import MaterialFileIcon from "../MaterialFileIcon";
 
 const RootFolder = memo(function RootFolder({
   path,
+  cutSourcePath,
   onContextMenu,
   onDragStart,
   onDragEnter,
@@ -20,6 +21,7 @@ const RootFolder = memo(function RootFolder({
   isDragging,
 }: {
   path: string;
+  cutSourcePath?: string | null;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnter: (e: React.DragEvent) => void;
@@ -36,6 +38,7 @@ const RootFolder = memo(function RootFolder({
   const sidebarSortField = useEditorStore((s) => s.sidebarSortField);
   const sidebarSortOrder = useEditorStore((s) => s.sidebarSortOrder);
   const isOpen = expandedFolders.includes(path);
+  const isCutSource = !!cutSourcePath && cutSourcePath === path;
   const isDefault = defaultFolders.some((f) => normalizePath(f.path) === normalizePath(path));
   const isPinned = isDefault || pinnedFolders.includes(normalizePath(path));
   const [entries, setEntries] = useState<DirEntry[]>([]);
@@ -83,7 +86,10 @@ const RootFolder = memo(function RootFolder({
       onDragEnd={onDragEnd}
     >
       <div
-        className="px-3 py-1.5 flex items-center justify-between group/folder cursor-grab active:cursor-grabbing select-none hover:bg-surface/30 transition-colors"
+        className={`px-3 py-1.5 flex items-center justify-between group/folder cursor-grab active:cursor-grabbing select-none hover:bg-surface/30 transition-colors ${
+          isCutSource ? "opacity-40" : ""
+        }`}
+        style={isCutSource ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : undefined}
         onClick={() => toggleFolderExpanded(path)}
         onMouseEnter={() => setHoveredPath(path)}
         onMouseLeave={() => setHoveredPath(null)}
@@ -146,6 +152,7 @@ const RootFolder = memo(function RootFolder({
                 level={0}
                 guideLevels={[]}
                 isLastSibling={index === sortedEntries.length - 1}
+                cutSourcePath={cutSourcePath ?? null}
                 onContextMenu={onContextMenu}
                 onRefresh={loadRoot}
               />
