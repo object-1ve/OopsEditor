@@ -7,6 +7,8 @@ commands.allow = [
   "save_file",
   "save_file_from_base64",
   "copy_file",
+  "copy_item",
+  "move_item",
   "list_dir",
   "get_file_info",
   "is_directory",
