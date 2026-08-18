@@ -890,6 +890,24 @@ export default function Sidebar() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [hoveredPath]);
 
+  // 侧边栏内拖拽时，在窗口层阻止浏览器默认的 no-drop 光标
+  useEffect(() => {
+    const handleWindowDragOver = (e: DragEvent) => {
+      if (!dragMoveSourceRef.current) return;
+      e.preventDefault();
+    };
+    const handleWindowDrop = (e: DragEvent) => {
+      if (!dragMoveSourceRef.current) return;
+      e.preventDefault();
+    };
+    window.addEventListener("dragover", handleWindowDragOver);
+    window.addEventListener("drop", handleWindowDrop);
+    return () => {
+      window.removeEventListener("dragover", handleWindowDragOver);
+      window.removeEventListener("drop", handleWindowDrop);
+    };
+  }, []);
+
   // Ctrl+X / Ctrl+C / Ctrl+V 文件与文件夹剪切/复制/粘贴快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

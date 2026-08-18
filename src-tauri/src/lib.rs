@@ -5,6 +5,18 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
+fn is_capture_protection_enabled() -> bool {
+    let config: serde_json::Value = match serde_json::from_str(include_str!("../runtime-config.json")) {
+        Ok(v) => v,
+        Err(_) => return true,
+    };
+
+    config
+        .get("captureProtection")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
 mod terminal;
 use terminal::{close_terminal, create_terminal, resize_terminal, write_to_terminal};
 
@@ -355,6 +367,33 @@ pub fn run() {
         .setup(|app| {
             // 初始化项目管理数据库
             let _ = db::init_project_database(app.handle().clone());
+
+            // 防截屏/防录屏: 通过 runtime-config.json 的 captureProtection 开关控制
+            #[cfg(target_os = "windows")]
+            {
+                use tauri::Manager;
+                use raw_window_handle::HasWindowHandle;
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+                };
+
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(handle) = window.window_handle() {
+                        if let raw_window_handle::RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                            let hwnd = HWND(win_handle.hwnd.get() as _);
+                            unsafe {
+                                let affinity = if is_capture_protection_enabled() {
+                                    WDA_EXCLUDEFROMCAPTURE
+                                } else {
+                                    WDA_NONE
+                                };
+                                let _ = SetWindowDisplayAffinity(hwnd, affinity);
+                            }
+                        }
+                    }
+                }
+            }
 
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let show_i = MenuItem::with_id(app, "show", "显示", true, None::<&str>)?;
