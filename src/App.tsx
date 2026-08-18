@@ -602,7 +602,6 @@ function App() {
                     onMouseDown={() => setFocusedPane('primary')}
 
                   >
-                  <Toolbar pane="primary" />
                   <div className="flex-1 overflow-hidden">
                     <Editor />
                   </div>
@@ -628,7 +627,6 @@ function App() {
               </div>
             ) : (
               <div className="flex-1 overflow-hidden relative flex flex-col">
-                <Toolbar />
                 <div
                   ref={editorRef}
                   className="flex-1 overflow-hidden"

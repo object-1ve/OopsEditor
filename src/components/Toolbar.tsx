@@ -346,7 +346,7 @@ const tabs = useEditorStore(s => s.tabs);
       showNotification("请先在设置中配置默认文件保存路径", "error");
       return;
     }
-    const filePath = `${savePath}/${fileName}`;
+    const filePath = buildChildPath(savePath, fileName);
 
     try {
       await invoke("save_file", { path: filePath, content: "" });

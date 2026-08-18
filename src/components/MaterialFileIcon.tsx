@@ -8,11 +8,9 @@ const manifest = generateManifest({
   languages: { associations: {} },
 });
 
-// Lazy glob — 不再一次性加载 1,245 个 SVG，构建时内存大幅降低
-const iconLoaders = import.meta.glob(
-  "../../node_modules/material-icon-theme/icons/*.svg",
-  { import: "default" },
-) as Record<string, () => Promise<string>>;
+// Icons are emitted by the Vite plugin and loaded as images on demand.
+// Avoid dynamic SVG module imports: Tauri's webview rejects pnpm symlink URLs.
+const iconBaseUrl = `${import.meta.env.BASE_URL}material-icon-theme-icons/`;
 
 const resolvedCache = new Map<string, string | undefined>();
 
@@ -26,11 +24,7 @@ async function resolveIconUrl(iconName: string): Promise<string | undefined> {
   const fileName = iconDef.iconPath.split("/").pop();
   if (!fileName) { resolvedCache.set(iconName, undefined); return undefined; }
 
-  const globKey = `../../node_modules/material-icon-theme/icons/${fileName}`;
-  const loader = iconLoaders[globKey];
-  if (!loader) { resolvedCache.set(iconName, undefined); return undefined; }
-
-  const url = (await loader()) as string;
+  const url = `${iconBaseUrl}${encodeURIComponent(fileName)}`;
   resolvedCache.set(iconName, url);
   return url;
 }
