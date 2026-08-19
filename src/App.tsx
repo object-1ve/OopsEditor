@@ -12,6 +12,7 @@ import ConfirmModal from "@/components/ConfirmModal";
 import SettingsModal from "@/components/SettingsModal";
 import ContextMenu from "@/components/ContextMenu";
 import UpgradePanel from "@/components/UpgradePanel";
+import FrontEllipsisText from "@/components/FrontEllipsisText";
 import { useEditorStore } from "@/store/editor";
 import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 import { saveSetting, loadSettings } from "@/utils/settings";
@@ -797,9 +798,10 @@ function App() {
 
                 if (displayPath) {
                   return (
-                    <span className="text-accent/70 truncate animate-in fade-in slide-in-from-left-2 duration-200 font-mono text-[10px]">
-                      {displayPath}
-                    </span>
+                    <FrontEllipsisText
+                      text={displayPath}
+                      className="text-accent/70 animate-in fade-in slide-in-from-left-2 duration-200 font-mono text-[10px]"
+                    />
                   );
                 }
                 return null;
