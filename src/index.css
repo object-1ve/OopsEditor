@@ -161,6 +161,16 @@ body {
   scrollbar-width: none;
 }
 
+/* Tab strip: tabs compress toward a 40px icon-only floor before scrolling */
+.tab-no-close .tab-close {
+  display: none;
+}
+
+.tab-icon-only .tab-name,
+.tab-icon-only .tab-dirty {
+  display: none;
+}
+
 .terminal-shell {
   background: #0f1117;
   box-sizing: border-box;
