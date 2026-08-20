@@ -366,21 +366,8 @@ export default function TitleBar() {
         isSplit ? (isFocused ? "border-b-2 border-b-accent" : "opacity-80") : ""
       }`}
     >
-      {/* Logo */}
-      <div className="flex items-center gap-2 px-3 shrink-0 pointer-events-none">
-        <div className="w-4 h-4 rounded bg-gradient-to-br from-accent to-accent-bright flex items-center justify-center shadow-sm">
-          <svg width="10" height="10" viewBox="0 0 32 32" fill="none">
-            <rect x="6" y="7" width="20" height="18" rx="3" stroke="white" strokeWidth="2.5" fill="none" />
-            <path d="M10 13h12M10 17h8M10 21h6" stroke="white" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-        </div>
-        <span className="text-[11px] font-medium text-text-muted tracking-tight">
-          Oops Editor
-        </span>
-      </div>
-
       {/* Tabs */}
-      <div className="flex items-center flex-1 overflow-x-auto h-full relative" onDoubleClick={handleTabDoubleClick}>
+      <div className="flex items-center flex-initial min-w-0 overflow-x-auto h-full relative" onDoubleClick={handleTabDoubleClick}>
         <div className="flex items-center h-full" onDoubleClick={handleTabDoubleClick}>
           {tabs.map((tab) => (
             <div
@@ -418,6 +405,13 @@ export default function TitleBar() {
           ))}
         </div>
       </div>
+
+      {/* Native title-bar drag region: press & drag to move the window, double-click to toggle maximize/restore */}
+      <div
+        data-tauri-drag-region
+        onMouseDown={() => isSplit && setFocusedPane(pane)}
+        className="flex-1 min-w-20 h-full"
+      />
 
       {/* Split controls */}
       <div className="flex items-center gap-1 px-1 shrink-0">
