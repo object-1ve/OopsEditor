@@ -374,13 +374,14 @@ const tabs = useEditorStore(s => s.tabs);
 
   return (
     <div
+      ref={tabStripRef}
       className={`flex items-center h-10 bg-secondary border-b border-border select-none relative z-10 cursor-default transition-colors ${
         isSplit ? (isFocused ? "border-b-2 border-b-accent" : "opacity-80") : ""
       }`}
       onMouseDown={() => isSplit && setFocusedPane(pane)}
     >
       {/* Tabs */}
-      <div ref={tabStripRef} className="flex items-center flex-1 overflow-x-auto h-full relative">
+      <div className="flex items-center flex-1 overflow-x-auto h-full relative">
         <div className="flex items-center h-full" onDoubleClick={handleDoubleClick}>
           {paneTabs.map((tab) => (
             <div

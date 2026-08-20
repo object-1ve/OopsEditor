@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * Tracks how wide each tab is on average inside a horizontally scrollable
- * tab strip, so tabs can progressively shed chrome (close button, filename)
- * as they compress toward the 40px icon-only floor before the strip scrolls.
+ * Tracks how much width each tab has on average, so tabs can progressively
+ * shed chrome (close button, filename) as they compress toward the 40px
+ * icon-only floor before the strip scrolls.
  *
- * `ref` must be attached to the scrollable strip container; `tabCount` is the
- * number of tabs currently rendered inside it.
+ * `ref` must be attached to the full-width bar that CONTAINS the tab strip
+ * (not the strip itself). Measuring the bar width keeps the metric free of
+ * feedback: hiding the close button/filename must not permanently shrink the
+ * measured width, or tabs would never restore after the window is enlarged.
+ * `tabCount` is the number of tabs currently rendered.
  */
 export function useTabStripDensity(
   tabCount: number,
@@ -14,7 +17,7 @@ export function useTabStripDensity(
   hideNameUnder = 48
 ) {
   const ref = useRef<HTMLDivElement>(null);
-  const [avgWidth, setAvgWidth] = useState(Number.POSITIVE_INFINITY);
+  const [widthPerTab, setWidthPerTab] = useState(Number.POSITIVE_INFINITY);
 
   useEffect(() => {
     const el = ref.current;
@@ -22,7 +25,7 @@ export function useTabStripDensity(
 
     const update = () => {
       const n = tabCount;
-      setAvgWidth(n > 0 ? el.clientWidth / n : Number.POSITIVE_INFINITY);
+      setWidthPerTab(n > 0 ? el.clientWidth / n : Number.POSITIVE_INFINITY);
     };
 
     update();
@@ -33,7 +36,7 @@ export function useTabStripDensity(
 
   return {
     ref,
-    hideClose: avgWidth < hideCloseUnder,
-    hideName: avgWidth < hideNameUnder,
+    hideClose: widthPerTab < hideCloseUnder,
+    hideName: widthPerTab < hideNameUnder,
   };
 }

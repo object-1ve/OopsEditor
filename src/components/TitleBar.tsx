@@ -358,6 +358,7 @@ export default function TitleBar() {
 
   return (
     <div
+      ref={tabStripRef}
       data-tauri-drag-region
       onMouseDown={() => isSplit && setFocusedPane(pane)}
       className={`h-8 bg-deepest border-b border-border flex items-center select-none relative z-[100] cursor-default transition-colors ${
@@ -365,7 +366,7 @@ export default function TitleBar() {
       }`}
     >
       {/* Tabs */}
-      <div ref={tabStripRef} className="flex items-center flex-initial min-w-0 overflow-x-auto h-full relative">
+      <div className="flex items-center flex-initial min-w-0 overflow-x-auto h-full relative">
         <div className="flex items-center h-full" onDoubleClick={handleTabDoubleClick}>
           {tabs.map((tab) => (
             <div
