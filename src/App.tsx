@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
-import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link, ListChecks, PanelLeftClose, PanelLeftOpen, PanelRightOpen } from "lucide-react";
+import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link, ListChecks, PanelLeftClose, PanelLeftOpen, PanelRightOpen, SplitSquareHorizontal, Settings } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import Sidebar from "@/components/Sidebar";
 import RightSidebar from "@/components/RightSidebar";
@@ -39,6 +39,8 @@ function App() {
   const closeTerminalsToRight = useEditorStore(s => s.closeTerminalsToRight);
   const toggleLeftSidebar = useEditorStore(s => s.toggleLeftSidebar);
   const toggleRightSidebar = useEditorStore(s => s.toggleRightSidebar);
+  const toggleSplit = useEditorStore(s => s.toggleSplit);
+  const openSettings = useEditorStore(s => s.openSettings);
   const init = useEditorStore(s => s.init);
   const hoveredPath = useEditorStore(s => s.hoveredPath);
   const isSplit = useEditorStore(s => s.isSplit);
@@ -772,6 +774,20 @@ function App() {
               title="升级日志"
             >
               <ListChecks size={14} />
+            </button>
+            <button
+              onClick={toggleSplit}
+              className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
+              title={isSplit ? "关闭分屏" : "分屏显示"}
+            >
+              <SplitSquareHorizontal size={14} />
+            </button>
+            <button
+              onClick={openSettings}
+              className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
+              title="设置"
+            >
+              <Settings size={14} />
             </button>
 
             <span className="text-border mx-1">|</span>

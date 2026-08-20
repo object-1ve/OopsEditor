@@ -1,4 +1,4 @@
-import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, SplitSquareHorizontal, ArrowRight } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, ArrowRight } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
@@ -29,8 +29,6 @@ export default function TitleBar() {
   const activeTabId = useEditorStore(s => s.activeTabId);
   const isSplit = useEditorStore(s => s.isSplit);
   const focusedPane = useEditorStore(s => s.focusedPane);
-  const toggleSplit = useEditorStore(s => s.toggleSplit);
-  const setSplit = useEditorStore(s => s.setSplit);
   const setFocusedPane = useEditorStore(s => s.setFocusedPane);
   const setActiveTabInPane = useEditorStore(s => s.setActiveTabInPane);
   const closeTabInPane = useEditorStore(s => s.closeTabInPane);
@@ -412,19 +410,6 @@ export default function TitleBar() {
         onMouseDown={() => isSplit && setFocusedPane(pane)}
         className="flex-1 min-w-20 h-full"
       />
-
-      {/* Split controls */}
-      <div className="flex items-center gap-1 px-1 shrink-0">
-        {!isSplit && (
-          <button
-            className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
-            onClick={() => toggleSplit()}
-            title="分屏显示"
-          >
-            <SplitSquareHorizontal size={14} />
-          </button>
-        )}
-      </div>
 
       <WindowControls />
 

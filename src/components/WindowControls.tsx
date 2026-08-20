@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { Pin, PinOff, Minus, Square, Copy, X, Settings } from "lucide-react";
+import { Pin, PinOff, Minus, Square, Copy, X } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 
 export default function WindowControls() {
   const [isMaximized, setIsMaximized] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
-  const openSettings = useEditorStore(s => s.openSettings);
   const tabs = useEditorStore(s => s.tabs);
   const showModal = useEditorStore(s => s.showModal);
 
@@ -96,16 +95,6 @@ export default function WindowControls() {
 
   return (
     <div className="flex items-center h-full no-drag" onDoubleClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center mr-2 border-r border-border pr-2 gap-1">
-        <button
-          onClick={openSettings}
-          className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
-          title="设置"
-        >
-          <Settings size={14} />
-        </button>
-      </div>
-
       <button
         onClick={handleToggleAlwaysOnTop}
         className={`p-1.5 rounded hover:bg-surface transition-colors cursor-pointer ${
