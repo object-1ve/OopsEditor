@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link, ListChecks, PanelLeftClose, PanelLeftOpen, PanelRightOpen, SplitSquareHorizontal, Settings } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Sidebar from "@/components/Sidebar";
 import RightSidebar from "@/components/RightSidebar";
 import TitleBar from "@/components/TitleBar";
@@ -540,6 +541,34 @@ function App() {
       if (unlistenMoved) unlistenMoved();
       if (unlistenDrop) unlistenDrop();
       if (unlistenClose) unlistenClose();
+    };
+  }, []);
+
+  // 文件关联 / 命令行启动：接收 Rust 端收集的文件路径并打开
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    async function setupOpenFiles() {
+      try {
+        const appWindow = getCurrentWebviewWindow();
+
+        // 应用已运行时的文件关联打开（single-instance 转发）
+        unlisten = await appWindow.listen<string[]>("open-files", (event) => {
+          const paths = event.payload ?? [];
+          for (const p of paths) void handleDroppedPath(p);
+        });
+
+        // 首次启动时 Rust 收集的待打开文件（含监听注册前的遗漏路径，openTab 按 path 去重）
+        const pending = await invoke<string[]>("take_pending_files");
+        for (const p of pending) void handleDroppedPath(p);
+      } catch (e) {
+        console.error("Failed to setup open-files handling:", e);
+      }
+    }
+
+    void setupOpenFiles();
+    return () => {
+      if (unlisten) unlisten();
     };
   }, []);
 

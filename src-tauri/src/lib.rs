@@ -5,6 +5,25 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
+use std::path::Path;
+use tauri::Emitter;
+
+/// 待打开文件队列：Windows 文件关联启动时传入的文件路径。
+struct PendingFiles(parking_lot::Mutex<Vec<String>>);
+
+/// 从命令行参数中筛选出文件路径（跳过 args[0]=可执行文件路径）。
+fn collect_file_paths<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
+    args.into_iter()
+        .skip(1)
+        .filter(|arg| Path::new(arg).is_file())
+        .collect()
+}
+
+#[tauri::command]
+fn take_pending_files(state: tauri::State<PendingFiles>) -> Vec<String> {
+    std::mem::take(&mut *state.0.lock())
+}
+
 fn is_capture_protection_enabled() -> bool {
     let config: serde_json::Value = match serde_json::from_str(include_str!("../runtime-config.json")) {
         Ok(v) => v,
@@ -354,7 +373,14 @@ pub fn run() {
     }
 
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .manage(PendingFiles(parking_lot::Mutex::new(Vec::new())))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let paths = collect_file_paths(args);
+            if !paths.is_empty() {
+                let state = app.state::<PendingFiles>();
+                state.0.lock().extend(paths.clone());
+                let _ = app.emit("open-files", paths);
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -367,6 +393,12 @@ pub fn run() {
         .setup(|app| {
             // 初始化项目管理数据库
             let _ = db::init_project_database(app.handle().clone());
+            // 文件关联启动：收集首次启动时传入的文件路径，前端挂载时取走
+            let initial_paths = collect_file_paths(std::env::args());
+            if !initial_paths.is_empty() {
+                let state = app.state::<PendingFiles>();
+                state.0.lock().extend(initial_paths);
+            }
 
             // 防截屏/防录屏: 通过 runtime-config.json 的 captureProtection 开关控制
             #[cfg(target_os = "windows")]
@@ -492,6 +524,7 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         read_file_as_base64,
         save_file,
         save_file_from_base64,
+        take_pending_files,
 
         copy_file,
         copy_item,
