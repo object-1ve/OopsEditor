@@ -39,6 +39,10 @@ debug/
 target/
 **/*.rs.bk
 
+# Temporary / debug artifacts
+.tmp-*
+.ps-tmp/
+
 # Examples
 example/
 
