@@ -113,6 +113,8 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
+      - name: Sync version from git tag
+        run: node .github/scripts/sync-version.mjs
 
       # ── Tests ───────────────────────────────────────────────────────────
       - name: Run Rust unit tests
@@ -137,8 +139,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (full history)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Download MSI installer
         uses: actions/download-artifact@v4
@@ -153,27 +158,18 @@ jobs:
       - name: List release assets
         run: ls -lh
 
-      # Extract only the changelog section matching this tag (e.g. v0.1.41 ->
-      # "## [0.1.41]"). Pasting the whole CHANGELOG.md made every release show
-      # stale old entries; with generate_release_notes:true GitHub still appends
-      # the auto-generated "Full Changelog" comparison link at the bottom.
-      - name: Extract changelog section for this version
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          awk -v ver="[$VERSION]" '
-            /^## / { if (in_section) exit; if (index($0, ver) > 0) in_section = 1; next }
-            in_section { print }
-          ' CHANGELOG.md > RELEASE_NOTES.md
+      # 发布正文由 release-body.mjs 从 git 提交历史自动生成(上一个标签..当前标签),
+      # 无需手动维护 CHANGELOG。脚本把正文写入临时文件,再用 body_path 指定。
+      - name: Generate release body from git history
+        run: node .github/scripts/release-body.mjs ${{ github.ref_name }} release_body.md
 
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          # Empty when no changelog section exists for this version, so GitHub
-          # falls back to its auto-generated release notes.
-          body_path: RELEASE_NOTES.md
+          # body_path 指定 release-body.mjs 生成的正文;generate_release_notes 追加自动生成的对比链接。
+          body_path: release_body.md
           files: |
             *.msi
             *.dmg
