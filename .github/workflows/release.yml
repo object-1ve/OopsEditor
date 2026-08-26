@@ -63,6 +63,8 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
+      - name: Sync version from git tag
+        run: node .github/scripts/sync-version.mjs
 
       # ── Tests ───────────────────────────────────────────────────────────
       - name: Run Rust unit tests
