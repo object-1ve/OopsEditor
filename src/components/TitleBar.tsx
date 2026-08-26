@@ -7,7 +7,6 @@ import MaterialFileIcon from "./MaterialFileIcon";
 import WindowControls from "./WindowControls";
 import { saveTab } from "@/services/editorSave";
 import { detectLanguage } from "@/types";
-import { useTabStripDensity } from "@/hooks/useTabStripDensity";
 
 const buildChildPath = (basePath: string, fileName: string) => {
   if (/[\\/]$/.test(basePath)) {
@@ -48,7 +47,6 @@ export default function TitleBar() {
   const isSecondary = false; // TitleBar always handles primary pane
   const pane = "primary" as const;
   const isFocused = isSplit && focusedPane === pane;
-  const { ref: tabStripRef, hideClose, hideName } = useTabStripDensity(tabs.length);
 
   // ── Tab actions ──
   const setActive = useCallback((id: string) => {
@@ -313,9 +311,7 @@ export default function TitleBar() {
       },
     ];
   }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, showNotification, unpinFile, isSplit]);
-
-
-  const handleTabDoubleClick = useCallback(async (e: React.MouseEvent) => {
+  const handleTabDoubleClick = useCallback(async () => {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -356,9 +352,9 @@ export default function TitleBar() {
     }
   }, [defaultFolders, defaultSavePath, openTabInPane, pane, showNotification]);
 
+
   return (
     <div
-      ref={tabStripRef}
       data-tauri-drag-region
       onMouseDown={() => isSplit && setFocusedPane(pane)}
       className={`h-8 bg-deepest border-b border-border flex items-center select-none relative z-[100] cursor-default transition-colors ${
@@ -366,17 +362,18 @@ export default function TitleBar() {
       }`}
     >
       {/* Tabs */}
-      <div className="flex items-center flex-initial min-w-0 overflow-x-auto h-full relative">
-        <div className="flex items-center h-full" onDoubleClick={handleTabDoubleClick}>
+      <div data-tauri-drag-region className="flex items-center flex-1 overflow-x-auto h-full relative">
+        <div className="flex items-center h-full">
           {tabs.map((tab) => (
             <div
               key={tab.id}
-              className={`group relative flex items-center gap-1.5 px-3 h-full text-sm cursor-pointer transition-all duration-150 min-w-10 shrink select-none ${
+              className={`group relative flex items-center gap-1.5 px-3 h-full text-sm cursor-pointer transition-all duration-150 min-w-0 shrink-0 select-none ${
                 tab.id === activeTabId
                   ? "bg-primary text-text-primary"
                   : "bg-secondary text-text-muted hover:text-text-secondary hover:bg-surface/50"
-              } ${hideClose ? "tab-no-close" : ""} ${hideName ? "tab-icon-only" : ""}`}
+              }`}
               onClick={() => setActive(tab.id)}
+              onDoubleClick={handleTabDoubleClick}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
               onMouseEnter={() => setHoveredPath(tab.path)}
               onMouseLeave={() => setHoveredPath(null)}
@@ -390,10 +387,10 @@ export default function TitleBar() {
                 path={tab.path}
                 size={16}
               />
-              <span className="tab-name truncate max-w-28">{tab.name}</span>
-              {tab.isDirty && <span className="tab-dirty text-accent-warm text-xs shrink-0">&#9679;</span>}
+              <span className="truncate max-w-28">{tab.name}</span>
+              {tab.isDirty && <span className="text-accent-warm text-xs shrink-0">&#9679;</span>}
               <button
-                className="tab-close ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 cursor-pointer text-text-muted hover:text-text-primary"
+                className="ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 cursor-pointer text-text-muted hover:text-text-primary"
                 onClick={(e) => handleClose(e, tab)}
                 onDoubleClick={(e) => e.stopPropagation()}
               >
@@ -404,12 +401,8 @@ export default function TitleBar() {
         </div>
       </div>
 
-      {/* Native title-bar drag region: press & drag to move the window, double-click to toggle maximize/restore */}
-      <div
-        data-tauri-drag-region
-        onMouseDown={() => isSplit && setFocusedPane(pane)}
-        className="flex-1 min-w-20 h-full"
-      />
+      {/* Reserved window drag area: always draggable & double-click to maximize */}
+      <div data-tauri-drag-region className="w-8 shrink-0" />
 
       <WindowControls />
 

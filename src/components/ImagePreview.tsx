@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
-import FrontEllipsisText from "@/components/FrontEllipsisText";
 
 interface ImagePreviewProps {
   src: string;
@@ -98,7 +97,9 @@ export default function ImagePreview({ src, name, path }: ImagePreviewProps) {
             </div>
           )}
         </div>
-        <FrontEllipsisText text={path} className="ml-8 text-text-muted/60" />
+        <div className="truncate ml-8 text-text-muted/60">
+          {path}
+        </div>
       </div>
 
       <style dangerouslySetInnerHTML={{ __html: `

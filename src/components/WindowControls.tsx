@@ -95,6 +95,7 @@ export default function WindowControls() {
 
   return (
     <div className="flex items-center h-full no-drag" onDoubleClick={(e) => e.stopPropagation()}>
+
       <button
         onClick={handleToggleAlwaysOnTop}
         className={`p-1.5 rounded hover:bg-surface transition-colors cursor-pointer ${

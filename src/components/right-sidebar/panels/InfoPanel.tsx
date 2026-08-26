@@ -3,7 +3,6 @@
  */
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import FrontEllipsisText from "@/components/FrontEllipsisText";
 
 function formatFileSize(bytes: number | undefined): string {
   if (bytes === undefined) return "未知";
@@ -74,7 +73,7 @@ export default function InfoPanel({ filePath }: InfoPanelProps) {
           </div>
           <div className="flex justify-between">
             <span className="text-xs text-text-muted">路径</span>
-            <FrontEllipsisText text={filePath} className="text-xs text-text-secondary max-w-[180px]" />
+            <span className="text-xs text-text-secondary truncate max-w-[180px]" title={filePath}>{filePath}</span>
           </div>
         </div>
       </div>

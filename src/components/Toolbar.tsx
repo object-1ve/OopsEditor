@@ -1,4 +1,4 @@
-import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, SplitSquareHorizontal, ArrowRight } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, ArrowRight } from "lucide-react";
 import { useEditorStore, type EditorPane } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
@@ -6,7 +6,6 @@ import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
 import { saveTab } from "@/services/editorSave";
 import { detectLanguage } from "@/types";
-import { useTabStripDensity } from "@/hooks/useTabStripDensity";
 
 const buildChildPath = (basePath: string, fileName: string) => {
   if (/[\\/]$/.test(basePath)) {
@@ -35,8 +34,6 @@ const tabs = useEditorStore(s => s.tabs);
   const secondaryActiveTabId = useEditorStore(s => s.secondaryActiveTabId);
   const isSplit = useEditorStore(s => s.isSplit);
   const focusedPane = useEditorStore(s => s.focusedPane);
-  const toggleSplit = useEditorStore(s => s.toggleSplit);
-  const setSplit = useEditorStore(s => s.setSplit);
   const setFocusedPane = useEditorStore(s => s.setFocusedPane);
   const setActiveTabInPane = useEditorStore(s => s.setActiveTabInPane);
   const closeTabInPane = useEditorStore(s => s.closeTabInPane);
@@ -50,14 +47,13 @@ const tabs = useEditorStore(s => s.tabs);
   const replaceTabFileLocation = useEditorStore(s => s.replaceTabFileLocation);
   const showModal = useEditorStore(s => s.showModal);
   const setHoveredPath = useEditorStore(s => s.setHoveredPath);
+  const defaultSavePath = useEditorStore(s => s.defaultSavePath);
 
   const isSecondary = pane === "secondary";
   // 副窗口持有独立的标签列表，与主窗口互不影响；同 id 标签共享内容（由 updateContent 同步）
   const paneTabs = isSecondary ? secondaryTabs : tabs;
   const paneActiveTabId = isSecondary ? secondaryActiveTabId : activeTabId;
   const isFocused = isSplit && focusedPane === pane;
-  const defaultSavePath = useEditorStore(s => s.defaultSavePath);
-  const { ref: tabStripRef, hideClose, hideName } = useTabStripDensity(paneTabs.length);
 
   const setActive = useCallback((id: string) => {
     setActiveTabInPane(id, pane);
@@ -330,8 +326,7 @@ const tabs = useEditorStore(s => s.tabs);
       },
     ];
   }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, showNotification, unpinFile, isSplit, isSecondary]);
-
-  const handleDoubleClick = useCallback(async (e: React.MouseEvent) => {
+  const handleDoubleClick = useCallback(async () => {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -374,24 +369,25 @@ const tabs = useEditorStore(s => s.tabs);
 
   return (
     <div
-      ref={tabStripRef}
+      data-tauri-drag-region
       className={`flex items-center h-10 bg-secondary border-b border-border select-none relative z-10 cursor-default transition-colors ${
         isSplit ? (isFocused ? "border-b-2 border-b-accent" : "opacity-80") : ""
       }`}
       onMouseDown={() => isSplit && setFocusedPane(pane)}
     >
       {/* Tabs */}
-      <div className="flex items-center flex-1 overflow-x-auto h-full relative">
-        <div className="flex items-center h-full" onDoubleClick={handleDoubleClick}>
+      <div data-tauri-drag-region className="flex items-center flex-1 overflow-x-auto h-full relative">
+        <div className="flex items-center h-full">
           {paneTabs.map((tab) => (
             <div
               key={tab.id}
-              className={`group relative flex items-center gap-1.5 px-3 h-full text-sm cursor-pointer transition-all duration-150 min-w-10 shrink select-none ${
+              className={`group relative flex items-center gap-1.5 px-3 h-full text-sm cursor-pointer transition-all duration-150 min-w-0 shrink-0 select-none ${
                 tab.id === paneActiveTabId
                   ? "bg-primary text-text-primary"
                   : "bg-secondary text-text-muted hover:text-text-secondary hover:bg-surface/50"
-              } ${hideClose ? "tab-no-close" : ""} ${hideName ? "tab-icon-only" : ""}`}
+              }`}
               onClick={() => setActive(tab.id)}
+              onDoubleClick={handleDoubleClick}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
               onMouseEnter={() => setHoveredPath(tab.path)}
               onMouseLeave={() => setHoveredPath(null)}
@@ -405,10 +401,10 @@ const tabs = useEditorStore(s => s.tabs);
                 path={tab.path}
                 size={16}
               />
-              <span className="tab-name truncate max-w-28">{tab.name}</span>
-              {tab.isDirty && <span className="tab-dirty text-accent-warm text-xs shrink-0">&#9679;</span>}
+              <span className="truncate max-w-28">{tab.name}</span>
+              {tab.isDirty && <span className="text-accent-warm text-xs shrink-0">&#9679;</span>}
               <button
-                className="tab-close ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 cursor-pointer text-text-muted hover:text-text-primary"
+                className="ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 cursor-pointer text-text-muted hover:text-text-primary"
                 onClick={(e) => handleClose(e, tab)}
                 onDoubleClick={(e) => e.stopPropagation()}
               >
@@ -417,28 +413,6 @@ const tabs = useEditorStore(s => s.tabs);
             </div>
           ))}
         </div>
-      </div>
-
-      {/* Split controls */}
-      <div className="flex items-center gap-1 px-2 shrink-0">
-        {!isSplit && pane === "primary" && (
-          <button
-            className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
-            onClick={() => toggleSplit()}
-            title="分屏显示"
-          >
-            <SplitSquareHorizontal size={16} />
-          </button>
-        )}
-        {isSplit && pane === "secondary" && (
-          <button
-            className="p-1.5 rounded hover:bg-surface text-text-muted hover:text-error transition-colors cursor-pointer"
-            onClick={() => setSplit(false)}
-            title="关闭分屏"
-          >
-            <X size={16} />
-          </button>
-        )}
       </div>
 
       {/* Context Menu */}

@@ -12,7 +12,6 @@ import ConfirmModal from "@/components/ConfirmModal";
 import SettingsModal from "@/components/SettingsModal";
 import ContextMenu from "@/components/ContextMenu";
 import UpgradePanel from "@/components/UpgradePanel";
-import FrontEllipsisText from "@/components/FrontEllipsisText";
 import { useEditorStore } from "@/store/editor";
 import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 import { saveSetting, loadSettings } from "@/utils/settings";
@@ -39,11 +38,11 @@ function App() {
   const closeTerminalsToRight = useEditorStore(s => s.closeTerminalsToRight);
   const toggleLeftSidebar = useEditorStore(s => s.toggleLeftSidebar);
   const toggleRightSidebar = useEditorStore(s => s.toggleRightSidebar);
-  const toggleSplit = useEditorStore(s => s.toggleSplit);
-  const openSettings = useEditorStore(s => s.openSettings);
   const init = useEditorStore(s => s.init);
   const hoveredPath = useEditorStore(s => s.hoveredPath);
   const isSplit = useEditorStore(s => s.isSplit);
+  const toggleSplit = useEditorStore(s => s.toggleSplit);
+  const openSettings = useEditorStore(s => s.openSettings);
   const splitRatio = useEditorStore(s => s.splitRatio);
   const setSplitRatio = useEditorStore(s => s.setSplitRatio);
   const setFocusedPane = useEditorStore(s => s.setFocusedPane);
@@ -775,20 +774,6 @@ function App() {
             >
               <ListChecks size={14} />
             </button>
-            <button
-              onClick={toggleSplit}
-              className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
-              title={isSplit ? "关闭分屏" : "分屏显示"}
-            >
-              <SplitSquareHorizontal size={14} />
-            </button>
-            <button
-              onClick={openSettings}
-              className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
-              title="设置"
-            >
-              <Settings size={14} />
-            </button>
 
             <span className="text-border mx-1">|</span>
 
@@ -814,16 +799,30 @@ function App() {
 
                 if (displayPath) {
                   return (
-                    <FrontEllipsisText
-                      text={displayPath}
-                      className="text-accent/70 animate-in fade-in slide-in-from-left-2 duration-200 font-mono text-[10px]"
-                    />
+                    <span className="text-accent/70 truncate animate-in fade-in slide-in-from-left-2 duration-200 font-mono text-[10px]">
+                      {displayPath}
+                    </span>
                   );
                 }
                 return null;
               })()}
             </div>
             <span className="hidden sm:inline text-text-muted/60">拖拽文件到窗口打开</span>
+            <span className="text-border mx-1">|</span>
+            <button
+              onClick={toggleSplit}
+              className={`p-1 rounded hover:bg-surface transition-colors cursor-pointer ${isSplit ? "text-accent bg-surface" : "text-text-muted hover:text-accent"}`}
+              title={isSplit ? "关闭分屏" : "分屏显示"}
+            >
+              <SplitSquareHorizontal size={14} />
+            </button>
+            <button
+              onClick={openSettings}
+              className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
+              title="设置"
+            >
+              <Settings size={14} />
+            </button>
             <button
               onClick={toggleRightSidebar}
               className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
