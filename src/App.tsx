@@ -584,7 +584,7 @@ function App() {
             </svg>
           </div>
           <div className="space-y-2">
-            <h1 className="text-2xl font-semibold tracking-tight shimmer-text">Oops Editor</h1>
+            <h1 className="text-2xl font-semibold tracking-tight shimmer-text">OopsEditor</h1>
             <p className="text-text-secondary">正在完整加载工作区...</p>
           </div>
           <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full border border-border bg-surface/60 text-xs text-text-muted">
@@ -811,7 +811,7 @@ function App() {
               <span>就绪</span>
             </div>
             <span className="text-border">|</span>
-            <span>Oops Editor <span className="text-text-muted/50 text-[10px]">v{APP_VERSION}</span></span>
+            <span>OopsEditor <span className="text-text-muted/50 text-[10px]">v{APP_VERSION}</span></span>
             <div className="flex-1 flex items-center px-4 overflow-hidden">
               {(() => {
                 let displayPath = hoveredPath ?? null;
@@ -909,7 +909,7 @@ function App() {
 
             <div className="mt-8 flex items-center gap-2 text-text-muted text-xs bg-surface/50 px-4 py-2 rounded-full border border-border/50">
               <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-              Oops Editor 准备就绪
+              OopsEditor 准备就绪
             </div>
           </div>
         </div>

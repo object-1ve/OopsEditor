@@ -810,7 +810,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
           </div>
 
           <div className="space-y-2">
-            <h1 className="text-2xl font-semibold tracking-tight shimmer-text">Oops Editor</h1>
+            <h1 className="text-2xl font-semibold tracking-tight shimmer-text">OopsEditor</h1>
             <p className="text-text-secondary">万能编辑器，开始你的创作</p>
           </div>
 
