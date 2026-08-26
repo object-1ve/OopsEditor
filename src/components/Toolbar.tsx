@@ -2,6 +2,7 @@ import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, ArrowRight } from "luci
 import { useEditorStore, type EditorPane } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
+import { useTabStripDensity } from "@/hooks/useTabStripDensity";
 import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
 import { saveTab } from "@/services/editorSave";
@@ -54,6 +55,7 @@ const tabs = useEditorStore(s => s.tabs);
   const paneTabs = isSecondary ? secondaryTabs : tabs;
   const paneActiveTabId = isSecondary ? secondaryActiveTabId : activeTabId;
   const isFocused = isSplit && focusedPane === pane;
+  const { ref: tabStripRef, hideClose, hideName } = useTabStripDensity(paneTabs.length);
 
   const setActive = useCallback((id: string) => {
     setActiveTabInPane(id, pane);
@@ -376,16 +378,16 @@ const tabs = useEditorStore(s => s.tabs);
       onMouseDown={() => isSplit && setFocusedPane(pane)}
     >
       {/* Tabs */}
-      <div data-tauri-drag-region className="flex items-center flex-1 overflow-x-auto h-full relative">
-        <div className="flex items-center h-full">
+      <div ref={tabStripRef} data-tauri-drag-region className="flex items-center flex-1 overflow-x-auto h-full relative">
+        <div className="flex items-center min-w-0 h-full">
           {paneTabs.map((tab) => (
             <div
               key={tab.id}
-              className={`group relative flex items-center gap-1.5 px-3 h-full text-sm cursor-pointer transition-all duration-150 min-w-0 shrink-0 select-none ${
+              className={`group relative flex items-center gap-1.5 px-3 h-full text-sm cursor-pointer transition-all duration-150 min-w-10 shrink select-none ${
                 tab.id === paneActiveTabId
                   ? "bg-primary text-text-primary"
                   : "bg-secondary text-text-muted hover:text-text-secondary hover:bg-surface/50"
-              }`}
+              } ${hideClose ? "tab-no-close" : ""} ${hideName ? "tab-icon-only" : ""}`}
               onClick={() => setActive(tab.id)}
               onDoubleClick={handleDoubleClick}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
@@ -401,10 +403,10 @@ const tabs = useEditorStore(s => s.tabs);
                 path={tab.path}
                 size={16}
               />
-              <span className="truncate max-w-28">{tab.name}</span>
-              {tab.isDirty && <span className="text-accent-warm text-xs shrink-0">&#9679;</span>}
+              <span className="tab-name truncate max-w-28">{tab.name}</span>
+              {tab.isDirty && <span className="tab-dirty text-accent-warm text-xs shrink-0">&#9679;</span>}
               <button
-                className="ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 cursor-pointer text-text-muted hover:text-text-primary"
+                className="tab-close ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 cursor-pointer text-text-muted hover:text-text-primary"
                 onClick={(e) => handleClose(e, tab)}
                 onDoubleClick={(e) => e.stopPropagation()}
               >

@@ -160,6 +160,15 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+/* Tab density compression: shed close button then filename as tabs narrow */
+.tab-no-close .tab-close {
+  display: none;
+}
+
+.tab-icon-only .tab-name,
+.tab-icon-only .tab-dirty {
+  display: none;
+}
 
 .terminal-shell {
   background: #0f1117;
