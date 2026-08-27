@@ -74,7 +74,8 @@ export interface EditorState {
 
   // Actions
   init: () => Promise<void>;
-  reloadTab: (id: string) => Promise<void>;
+  reloadTab: (id: string, options?: { force?: boolean }) => Promise<boolean>;
+  reloadTabFromDisk: (id: string) => void;
   setHoveredPath: (path: string | null) => void;
   openTab: (tab: FileTab) => void;
   closeTab: (id: string) => void;

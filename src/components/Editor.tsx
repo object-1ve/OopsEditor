@@ -13,6 +13,7 @@ import {
   Copy,
   FilePenLine,
   Redo2,
+  RefreshCw,
   Save,
   Scissors,
   Undo2,
@@ -189,6 +190,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
   const updateContent = useEditorStore(s => s.updateContent);
   const togglePreviewMode = useEditorStore(s => s.togglePreviewMode);
   const toggleLivePreviewMode = useEditorStore(s => s.toggleLivePreviewMode);
+  const reloadTabFromDisk = useEditorStore(s => s.reloadTabFromDisk);
   const showNotification = useEditorStore(s => s.showNotification);
   const markdownOutlineTarget = useEditorStore(s => s.markdownOutlineTarget);
   const clearMarkdownOutlineTarget = useEditorStore(s => s.clearMarkdownOutlineTarget);
@@ -762,6 +764,17 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       );
     }
 
+    items.push(
+      { separator: true, label: "", onClick: () => {} },
+      {
+        label: "重新加载",
+        icon: <RefreshCw size={14} />,
+        onClick: () => {
+          if (currentTabId) reloadTabFromDisk(currentTabId);
+        },
+      },
+    );
+
     return items;
   }, [
     activeTab?.isReadOnly,
@@ -774,6 +787,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     handleEditorRedo,
     handleEditorSave,
     handleEditorUndo,
+    reloadTabFromDisk,
     toggleLivePreviewMode,
     togglePreviewMode,
   ]);

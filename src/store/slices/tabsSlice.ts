@@ -6,6 +6,7 @@ import type { FileTab } from "@/types";
 import type { EditorState, EditorPane, PinnedFile } from "@/store/types";
 import { normalizePath, normalizePinnedFiles } from "@/utils/path";
 import { clearScrollMemory } from "@/utils/scrollMemory";
+import { fetchAndSetFileMtime } from "@/store/fileMtime";
 import { invoke } from "@tauri-apps/api/core";
 import { base64ToHexView } from "@/utils/hexView";
 import { isPreviewOnlyLanguage } from "@/types";
@@ -37,6 +38,7 @@ export const createTabsSlice: StateCreator<
     | "updateContent"
     | "markClean"
     | "reloadTab"
+    | "reloadTabFromDisk"
     | "replaceTabFileLocation"
     | "togglePreviewMode"
     | "toggleLivePreviewMode"
@@ -192,12 +194,12 @@ export const createTabsSlice: StateCreator<
     });
   },
 
-  reloadTab: async (id: string) => {
+  reloadTab: async (id: string, options?: { force?: boolean }): Promise<boolean> => {
     const state = get();
     const tab =
       state.tabs.find((t) => t.id === id) ??
       state.secondaryTabs.find((t) => t.id === id);
-    if (!tab || !tab.path) return;
+    if (!tab || !tab.path) return false;
 
     // 预览类模式（图片/PDF/Word/SQLite）：内容不在内存中，通过 revision 强制重新加载
     if (isPreviewOnlyLanguage(tab.language)) {
@@ -212,7 +214,7 @@ export const createTabsSlice: StateCreator<
           secondaryTabs: state.secondaryTabs.map(bump),
         };
       });
-      return;
+      return true;
     }
 
     try {
@@ -226,12 +228,13 @@ export const createTabsSlice: StateCreator<
         content = await invoke<string>("read_file", { path: tab.path });
       }
 
-      // 读取期间用户可能开始输入（isDirty 变为 true），此时不覆盖本地改动
+      // 读取期间用户可能开始输入（isDirty 变为 true），此时不覆盖本地改动；
+      // force（用户已确认丢弃改动）时即使 dirty 也强制应用磁盘内容
       const latest = get();
       const latestTab =
         latest.tabs.find((t) => t.id === id) ??
         latest.secondaryTabs.find((t) => t.id === id);
-      if (!latestTab || latestTab.isDirty) return;
+      if (!latestTab || (latestTab.isDirty && !options?.force)) return false;
 
       clearAutoSaveTimer(id);
       set((state) => {
@@ -242,12 +245,39 @@ export const createTabsSlice: StateCreator<
           secondaryTabs: state.secondaryTabs.map(replace),
         };
       });
-      window.dispatchEvent(
-        new CustomEvent("file-refresh", { detail: { path: tab.path } }),
-      );
+      return true;
     } catch (err) {
       get().showNotification(`无法重新加载文件: ${String(err)}`, "error");
+      return false;
     }
+  },
+
+  reloadTabFromDisk: (id: string) => {
+    const state = get();
+    const tab =
+      state.tabs.find((t) => t.id === id) ??
+      state.secondaryTabs.find((t) => t.id === id);
+    if (!tab || !tab.path) return;
+
+    const doReload = () => {
+      void state.reloadTab(id, { force: true }).then((ok) => {
+        if (!ok) return;
+        // 刷新已知 mtime，避免轮询把本次手动重载误判为外部修改
+        void fetchAndSetFileMtime(tab.path);
+        state.showNotification(`已重新加载 "${tab.name}"`, "success");
+      });
+    };
+
+    if (tab.isDirty) {
+      state.showModal({
+        title: "重新加载文件",
+        message: `"${tab.name}" 有未保存的更改，重新加载将丢弃这些更改。确定要继续吗？`,
+        kind: "warning",
+        onConfirm: doReload,
+      });
+      return;
+    }
+    doReload();
   },
 
   replaceTabFileLocation: (id: string, nextPath: string, nextName?: string) =>

@@ -1,4 +1,4 @@
-import { X, ChevronLeft, ChevronRight, CopyX, Save, Pin, ArrowRight } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, CopyX, Pin, RefreshCw, Save, X } from "lucide-react";
 import { useEditorStore, type EditorPane } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
@@ -46,6 +46,7 @@ const tabs = useEditorStore(s => s.tabs);
   const pinFile = useEditorStore(s => s.pinFile);
   const unpinFile = useEditorStore(s => s.unpinFile);
   const replaceTabFileLocation = useEditorStore(s => s.replaceTabFileLocation);
+  const reloadTabFromDisk = useEditorStore(s => s.reloadTabFromDisk);
   const showModal = useEditorStore(s => s.showModal);
   const setHoveredPath = useEditorStore(s => s.setHoveredPath);
   const defaultSavePath = useEditorStore(s => s.defaultSavePath);
@@ -300,6 +301,11 @@ const tabs = useEditorStore(s => s.tabs);
       ] : []),
       { separator: true, label: "", onClick: () => {} },
       {
+        label: "重新加载",
+        icon: <RefreshCw size={14} />,
+        onClick: () => reloadTabFromDisk(contextMenu.tabId),
+      },
+      {
         label: "关闭标签页",
         icon: <X size={14} />,
         onClick: () => handleClose({ stopPropagation: () => {} } as any, tab)
@@ -327,7 +333,7 @@ const tabs = useEditorStore(s => s.tabs);
         onClick: handleCloseAll
       },
     ];
-  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, showNotification, unpinFile, isSplit, isSecondary]);
+  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, isSecondary]);
   const handleDoubleClick = useCallback(async () => {
     const now = new Date();
     const year = now.getFullYear();
