@@ -10,6 +10,7 @@ function WordModeView({
 }: Pick<EditorModeContext, "activeTab" | "showNotification">) {
   return (
     <WordPreview
+      key={`${activeTab.path}:${activeTab.revision ?? 0}`}
       name={activeTab.name}
       path={activeTab.path}
       showNotification={showNotification}

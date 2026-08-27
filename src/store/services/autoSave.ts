@@ -1,7 +1,9 @@
-﻿/**
+/**
  * Auto-save timer management
  */
+import { fetchAndSetFileMtime } from "@/store/fileMtime";
 import { saveTab } from "@/services/editorSave";
+import type { FileTab } from "@/types";
 
 const AUTO_SAVE_DELAY = 1000;
 const autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -32,9 +34,10 @@ export function scheduleAutoSave(
     id,
     setTimeout(() => {
       autoSaveTimers.delete(id);
-      void saveTab(tab as any)
+      void saveTab(tab as FileTab)
         .then(() => {
           onMarkClean(id);
+          void fetchAndSetFileMtime(tab.path);
           window.dispatchEvent(
             new CustomEvent("file-refresh", { detail: { path: tab.path } }),
           );

@@ -26,7 +26,10 @@ export function usePreviewResource(
     const loadPreview = async () => {
       try {
         if (activeTab.language === "image") {
-          setPreviewUrl(convertFileSrc(activeTab.path));
+          // revision 作为查询参数避免浏览器缓存旧图片，外部变更后可即时显示新内容
+          setPreviewUrl(
+            convertFileSrc(activeTab.path) + `?v=${activeTab.revision ?? 0}`,
+          );
           return;
         }
 
@@ -68,7 +71,7 @@ export function usePreviewResource(
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [activeTab.language, activeTab.path, showNotification]);
+  }, [activeTab.language, activeTab.path, activeTab.revision, showNotification]);
 
   return { previewUrl, previewError };
 }

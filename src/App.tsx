@@ -1,7 +1,8 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { Terminal, PanelRightClose, Plus, X, UploadCloud, ChevronsUp, Minimize2, ChevronLeft, ChevronRight, CopyX, FileText, Image, Link, ListChecks, PanelLeftClose, PanelLeftOpen, PanelRightOpen, SplitSquareHorizontal, Settings } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { invoke } from "@tauri-apps/api/core";
+import { LogicalSize, LogicalPosition } from "@tauri-apps/api/dpi";
 import Sidebar from "@/components/Sidebar";
 import RightSidebar from "@/components/RightSidebar";
 import TitleBar from "@/components/TitleBar";
@@ -21,6 +22,7 @@ import { dispatchFileDrop, isMarkdownEditable } from "@/utils/editorInsert";
 import { version as APP_VERSION } from "../package.json";
 import { DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_POSITION, isValidRestoredWindowSize, isValidRestoredWindowPosition } from "@/hooks/useAppInit";
 import { handleDroppedPath } from "@/hooks/useDragDrop";
+import { startExternalSync, stopExternalSync } from "@/services/externalSync";
 
 function App() {
   const isLeftSidebarCollapsed = useEditorStore(s => s.isLeftSidebarCollapsed);
@@ -394,14 +396,13 @@ function App() {
       }, 5000); // 5秒超时
 
       try {
-        const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-        const { LogicalSize, LogicalPosition } = await import("@tauri-apps/api/dpi");
         const appWindow = getCurrentWebviewWindow();
 
         // 1. 等待核心状态和 Monaco 都准备完成后再显示主界面，避免半加载闪烁。
         await Promise.all([init(), monacoReady]);
 
         if (!isMounted) return;
+        startExternalSync();
 
         // 2. 加载并应用窗口配置
         const settings = await loadSettings();
@@ -537,6 +538,7 @@ function App() {
 
     return () => {
       isMounted = false;
+      stopExternalSync();
       if (unlistenResize) unlistenResize();
       if (unlistenMoved) unlistenMoved();
       if (unlistenDrop) unlistenDrop();

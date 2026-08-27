@@ -30,7 +30,7 @@ function SqliteModeView({
     } finally {
       setLoading(false);
     }
-  }, [activeTab.path, showNotification]);
+  }, [activeTab.path, activeTab.revision, showNotification]);
 
   const loadTableData = useCallback(async () => {
     if (!selectedTable) return;
@@ -48,7 +48,7 @@ function SqliteModeView({
     } finally {
       setLoading(false);
     }
-  }, [activeTab.path, selectedTable, page, showNotification]);
+  }, [activeTab.path, selectedTable, page, activeTab.revision, showNotification]);
 
   useEffect(() => {
     loadTables();

@@ -10,6 +10,8 @@ export interface FileTab {
   isLivePreviewMode?: boolean;
   viewMode?: "text" | "base64";
   isReadOnly?: boolean;
+  // 每次外部文件变更并重新加载时 +1，用于强制预览类模式（图片/PDF/Word/SQLite）重新加载
+  revision?: number;
 }
 
 export type SupportedLanguage = string;

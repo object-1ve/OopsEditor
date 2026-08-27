@@ -29,6 +29,7 @@ import {
 } from "@/utils/editorInsert";
 import ContextMenu from "./ContextMenu";
 import { resolveEditorMode } from "./editor-modes";
+import { fetchAndSetFileMtime } from "@/store/fileMtime";
 import { saveTab } from "@/services/editorSave";
 import { clipboardToMarkdownTable, tsvToMarkdownTable } from "@/utils/clipboardTable";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
@@ -308,7 +309,8 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
 
     await saveTab(tab);
     state.markClean(id);
-    
+    void fetchAndSetFileMtime(tab.path);
+
     // 发送刷新事件，让 Git 面板等组件自动更新
     window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: tab.path } }));
   }, []);
