@@ -6,6 +6,9 @@ import { loadWorkspaceSession } from './workspaceSession';
 export const DEFAULT_MAX_OPEN_TABS = 7;
 export const MIN_OPEN_TABS_LIMIT = 1;
 export const MAX_OPEN_TABS_LIMIT = 50;
+export const DEFAULT_MAX_RECENT_FILES = 20;
+export const MIN_RECENT_FILES_LIMIT = 1;
+export const MAX_RECENT_FILES_LIMIT = 100;
 
 export function sanitizeMaxOpenTabs(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -16,6 +19,31 @@ export function sanitizeMaxOpenTabs(value: unknown): number {
     MAX_OPEN_TABS_LIMIT,
     Math.max(MIN_OPEN_TABS_LIMIT, Math.round(value)),
   );
+}
+export function sanitizeMaxRecentFiles(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_MAX_RECENT_FILES;
+  }
+
+  return Math.min(
+    MAX_RECENT_FILES_LIMIT,
+    Math.max(MIN_RECENT_FILES_LIMIT, Math.round(value)),
+  );
+}
+
+/** 清洗最近文件列表：保留字符串、去重、按上限截断 */
+export function sanitizeRecentFiles(value: unknown, max: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !item) continue;
+    const path = item.replace(/\\/g, '/').replace(/\/$/, '');
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    normalized.push(path);
+  }
+  return normalized.slice(0, max);
 }
 
 export interface AppSettings {
@@ -43,6 +71,8 @@ export interface AppSettings {
   rootPathOrder?: string[];
   defaultSavePath: string;
   maxRecentFolders: number;
+  recentFiles: string[];
+  maxRecentFiles: number;
 }
 
 const DEFAULT_RIGHT_SIDEBAR_ICON_ORDER = ["info", "git", "outline", "help"] as const;
@@ -90,6 +120,8 @@ export const defaultSettings: AppSettings = {
   sidebarSortOrder: 'desc',
   defaultSavePath: '',
   maxRecentFolders: 20,
+  recentFiles: [],
+  maxRecentFiles: DEFAULT_MAX_RECENT_FILES,
 };
 
 // ── SQLite-backed save / load ─────────────────────────────────
@@ -172,6 +204,11 @@ export async function loadSettings(): Promise<AppSettings> {
     if (typeof savedMaxRecentFolders === 'number' && Number.isFinite(savedMaxRecentFolders)) {
       settings.maxRecentFolders = Math.max(1, Math.min(100, Math.round(savedMaxRecentFolders)));
     }
+    const savedMaxRecentFiles = get<number>('maxRecentFiles');
+    settings.maxRecentFiles = sanitizeMaxRecentFiles(savedMaxRecentFiles);
+
+    const savedRecentFiles = get<string[]>('recentFiles');
+    settings.recentFiles = sanitizeRecentFiles(savedRecentFiles, settings.maxRecentFiles);
 
     const workspaceSession = await loadWorkspaceSession(get);
     settings.tabs = workspaceSession.tabs;

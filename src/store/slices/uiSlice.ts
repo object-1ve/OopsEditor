@@ -3,7 +3,14 @@
  */
 import type { StateCreator } from "zustand";
 import type { EditorState, MarkdownOutlineTarget } from "@/store/types";
-import { saveSetting, DEFAULT_MAX_OPEN_TABS, sanitizeMaxOpenTabs } from "@/utils/settings";
+import {
+  saveSetting,
+  DEFAULT_MAX_OPEN_TABS,
+  DEFAULT_MAX_RECENT_FILES,
+  sanitizeMaxOpenTabs,
+  sanitizeMaxRecentFiles,
+  sanitizeRecentFiles,
+} from "@/utils/settings";
 import { enforceTabLimit, formatAutoClosedTabsMessage } from "@/store/services/tabEnforcer";
 import { persistTabsState } from "@/utils/workspaceSession";
 import { clearAutoSaveTimers, getAllAutoSaveKeys } from "@/store/services/autoSave";
@@ -23,6 +30,8 @@ export const createUiSlice: StateCreator<
     | "maxOpenTabs"
     | "defaultSavePath"
     | "maxRecentFolders"
+    | "recentFiles"
+    | "maxRecentFiles"
     | "isSettingsOpen"
     | "modal"
     | "notification"
@@ -38,6 +47,9 @@ export const createUiSlice: StateCreator<
     | "setMaxOpenTabs"
     | "setDefaultSavePath"
     | "setMaxRecentFolders"
+    | "recordRecentFile"
+    | "setRecentFiles"
+    | "setMaxRecentFiles"
     | "isFloatingImageOpen"
     | "setFloatingImageOpen"
     | "openSettings"
@@ -57,6 +69,8 @@ export const createUiSlice: StateCreator<
   maxOpenTabs: DEFAULT_MAX_OPEN_TABS,
   defaultSavePath: '',
   maxRecentFolders: 20,
+  recentFiles: [],
+  maxRecentFiles: DEFAULT_MAX_RECENT_FILES,
   isSettingsOpen: false,
   modal: null,
   notification: null,
@@ -127,6 +141,27 @@ export const createUiSlice: StateCreator<
     const clamped = Math.max(1, Math.min(100, Math.round(value)));
     set({ maxRecentFolders: clamped });
     saveSetting("maxRecentFolders", clamped);
+  },
+
+  recordRecentFile: (path: string) => {
+    if (!path) return;
+    const nextList = sanitizeRecentFiles([path, ...get().recentFiles], get().maxRecentFiles);
+    set({ recentFiles: nextList });
+    void saveSetting("recentFiles", nextList);
+  },
+
+  setRecentFiles: (files: string[]) => {
+    const nextList = sanitizeRecentFiles(files, get().maxRecentFiles);
+    set({ recentFiles: nextList });
+    void saveSetting("recentFiles", nextList);
+  },
+
+  setMaxRecentFiles: (value: number) => {
+    const clamped = sanitizeMaxRecentFiles(value);
+    const trimmed = sanitizeRecentFiles(get().recentFiles, clamped);
+    set({ maxRecentFiles: clamped, recentFiles: trimmed });
+    void saveSetting("maxRecentFiles", clamped);
+    void saveSetting("recentFiles", trimmed);
   },
 
   openSettings: () => set({ isSettingsOpen: true }),

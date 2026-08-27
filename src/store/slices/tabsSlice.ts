@@ -60,6 +60,9 @@ export const createTabsSlice: StateCreator<
 
   openTab: (tab: FileTab) => {
     const state = get();
+    if (tab.path) {
+      get().recordRecentFile(tab.path);
+    }
     if (state.isSplit && state.focusedPane === "secondary") {
       get().openTabInPane(tab, "secondary");
       return;
@@ -422,6 +425,9 @@ export const createTabsSlice: StateCreator<
       get().openTab(tab);
       get().setFocusedPane("primary");
       return;
+    }
+    if (tab.path) {
+      get().recordRecentFile(tab.path);
     }
     set((s) => {
       if (s.secondaryTabs.some((t) => t.id === tab.id)) {

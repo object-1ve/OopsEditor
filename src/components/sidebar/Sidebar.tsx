@@ -5,7 +5,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import {
   Folder, FolderOpen, Plus, Search, X, Edit2, Trash2,
   ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin,
-  ChevronsUp, RotateCw, ArrowDownAZ, ArrowUpAZ, Clock, History,
+  ChevronsUp, RotateCw, ArrowDownAZ, ArrowUpAZ, Clock, FileClock, History,
   SortAsc, SortDesc, Scissors, ClipboardPaste,
 } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
@@ -16,6 +16,7 @@ import { createTimestampFileName, normalizePath, openFileTab, resolveUniquePath 
 import type { DirEntry } from "./sidebarUtils";
 import RootFolder from "./RootFolder";
 import RecentDropdown from "./sections/RecentDropdown";
+import RecentFilesDropdown from "./sections/RecentFilesDropdown";
 import SearchBar from "./sections/SearchBar";
 import PinnedSection from "./sections/PinnedSection";
 import EmptyFolderState from "./sections/EmptyFolderState";
@@ -58,6 +59,7 @@ export default function Sidebar() {
   const setRootPathOrder = useEditorStore((s) => s.setRootPathOrder);
   const recentFolders = useEditorStore((s) => s.recentFolders);
   const loadRecentFolders = useEditorStore((s) => s.loadRecentFolders);
+  const recentFiles = useEditorStore((s) => s.recentFiles);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isPinnedExpanded, setIsPinnedExpanded] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DirEntry } | null>(null);
@@ -79,6 +81,8 @@ export default function Sidebar() {
   const dragMoveSourceRef = useRef<{ path: string; name: string; isDir: boolean } | null>(null);
   const [isRecentOpen, setIsRecentOpen] = useState(false);
   const recentDropdownRef = useRef<HTMLDivElement>(null);
+  const [isRecentFilesOpen, setIsRecentFilesOpen] = useState(false);
+  const recentFilesDropdownRef = useRef<HTMLDivElement>(null);
   const isResizing = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -1150,6 +1154,30 @@ export default function Sidebar() {
               onSelect={(path) => {
                 addRootPath(path);
                 setIsRecentOpen(false);
+              }}
+              onHover={(path) => setHoveredPath(path)}
+            />
+          </div>
+          <div className="relative">
+            <button
+              onClick={() => {
+                setIsRecentFilesOpen(!isRecentFilesOpen);
+              }}
+              className={`p-1 rounded hover:bg-surface transition-colors cursor-pointer ${
+                isRecentFilesOpen ? "text-accent bg-surface" : "text-text-muted hover:text-accent"
+              }`}
+              title="最近打开的文件"
+            >
+              <FileClock size={13} />
+            </button>
+            <RecentFilesDropdown
+              isOpen={isRecentFilesOpen}
+              recentFiles={recentFiles}
+              dropdownRef={recentFilesDropdownRef}
+              onClose={() => setIsRecentFilesOpen(false)}
+              onSelect={(path) => {
+                void openFile(path);
+                setIsRecentFilesOpen(false);
               }}
               onHover={(path) => setHoveredPath(path)}
             />

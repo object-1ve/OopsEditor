@@ -65,6 +65,8 @@ export interface EditorState {
   defaultSavePath: string;
   recentFolders: string[];
   maxRecentFolders: number;
+  recentFiles: string[];
+  maxRecentFiles: number;
   isSplit: boolean;
   secondaryTabs: FileTab[];
   secondaryActiveTabId: string | null;
@@ -144,6 +146,9 @@ export interface EditorState {
   setRecentFolders: (folders: string[]) => void;
   loadRecentFolders: () => Promise<void>;
   setMaxRecentFolders: (value: number) => void;
+  recordRecentFile: (path: string) => void;
+  setRecentFiles: (files: string[]) => void;
+  setMaxRecentFiles: (value: number) => void;
   setRootPathOrder: (order: string[]) => void;
   toggleSplit: () => void;
   setSplit: (enabled: boolean) => void;

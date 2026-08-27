@@ -99,6 +99,8 @@ const useEditorStore = create<EditorState>()((...a) => {
         sidebarSortOrder: settings.sidebarSortOrder,
         defaultSavePath: settings.defaultSavePath,
         maxRecentFolders: settings.maxRecentFolders,
+        recentFiles: settings.recentFiles,
+        maxRecentFiles: settings.maxRecentFiles,
         rootPathOrder: settings.rootPathOrder || settings.rootPaths || [],
       });
 

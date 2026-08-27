@@ -3,7 +3,9 @@ import { Settings, X, FolderOpen } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import {
   MAX_OPEN_TABS_LIMIT,
+  MAX_RECENT_FILES_LIMIT,
   MIN_OPEN_TABS_LIMIT,
+  MIN_RECENT_FILES_LIMIT,
 } from "@/utils/settings";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -21,6 +23,8 @@ export default function SettingsModal() {
     setDefaultSavePath,
     maxRecentFolders,
     setMaxRecentFolders,
+    maxRecentFiles,
+    setMaxRecentFiles,
   } = useEditorStore();
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -213,6 +217,31 @@ export default function SettingsModal() {
                 }}
                 className="w-20 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text outline-none transition-colors focus:border-accent"
                 title="设置最近文件夹保存数量（1-100）"
+              />
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-primary/40 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-text">最近文件记录条数</div>
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  记录最近打开的文件数量，超过上限后自动清理最旧的记录。
+                </p>
+              </div>
+              <input
+                type="number"
+                min={MIN_RECENT_FILES_LIMIT}
+                max={MAX_RECENT_FILES_LIMIT}
+                step={1}
+                value={maxRecentFiles}
+                onChange={(event) => {
+                  const nextValue = event.currentTarget.valueAsNumber;
+                  if (Number.isFinite(nextValue)) {
+                    setMaxRecentFiles(nextValue);
+                  }
+                }}
+                className="w-20 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text outline-none transition-colors focus:border-accent"
+                title={`设置最近文件记录数量（${MIN_RECENT_FILES_LIMIT}-${MAX_RECENT_FILES_LIMIT}）`}
               />
             </div>
           </div>
