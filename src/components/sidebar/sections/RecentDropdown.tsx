@@ -1,34 +1,34 @@
 /**
  * RecentDropdown - Dropdown showing recently opened folders
+ * Rendered via portal to body so it floats above the editor area,
+ * unaffected by the sidebar's overflow clipping.
  */
+import { createPortal } from "react-dom";
 import { FolderOpen } from "lucide-react";
-import type { RefObject } from "react";
 
 interface RecentDropdownProps {
-  isRecentOpen: boolean;
+  position: { x: number; y: number } | null;
   recentFolders: string[];
-  recentDropdownRef: RefObject<HTMLDivElement | null>;
   onClose: () => void;
   onSelect: (path: string) => void;
   onHover: (path: string | null) => void;
 }
 
 export default function RecentDropdown({
-  isRecentOpen,
+  position,
   recentFolders,
-  recentDropdownRef,
   onClose,
   onSelect,
   onHover,
 }: RecentDropdownProps) {
-  if (!isRecentOpen) return null;
+  if (!position) return null;
 
-  return (
+  return createPortal(
     <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-[1000]" onClick={onClose} />
       <div
-        ref={recentDropdownRef}
-        className="absolute left-0 top-full mt-1 w-64 max-w-[200px] max-h-80 overflow-y-auto rounded-lg border border-border bg-secondary shadow-2xl z-50 animate-in fade-in slide-in-from-top-1 duration-150"
+        className="fixed z-[1000] w-64 max-w-[220px] max-h-80 overflow-y-auto rounded-lg border border-border bg-secondary shadow-2xl animate-in fade-in slide-in-from-top-1 duration-150"
+        style={{ left: position.x, top: position.y + 4 }}
       >
         <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted/60 border-b border-border">
           最近打开的文件夹
@@ -58,6 +58,7 @@ export default function RecentDropdown({
           </div>
         )}
       </div>
-    </>
+    </>,
+    document.body,
   );
 }

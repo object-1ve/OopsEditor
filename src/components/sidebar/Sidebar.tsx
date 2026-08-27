@@ -79,10 +79,8 @@ export default function Sidebar() {
   const entryRegistryRef = useRef<Map<string, DirEntry>>(new Map());
   const treeContainerRef = useRef<HTMLDivElement>(null);
   const dragMoveSourceRef = useRef<{ path: string; name: string; isDir: boolean } | null>(null);
-  const [isRecentOpen, setIsRecentOpen] = useState(false);
-  const recentDropdownRef = useRef<HTMLDivElement>(null);
-  const [isRecentFilesOpen, setIsRecentFilesOpen] = useState(false);
-  const recentFilesDropdownRef = useRef<HTMLDivElement>(null);
+  const [recentMenu, setRecentMenu] = useState<{ x: number; y: number } | null>(null);
+  const [recentFilesMenu, setRecentFilesMenu] = useState<{ x: number; y: number } | null>(null);
   const isResizing = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -1135,49 +1133,57 @@ export default function Sidebar() {
         <div className="flex items-center gap-0.5 no-drag">
           <div className="relative">
             <button
-              onClick={() => {
-                setIsRecentOpen(!isRecentOpen);
-                if (!isRecentOpen) loadRecentFolders();
+              onClick={(e) => {
+                if (recentMenu) {
+                  setRecentMenu(null);
+                  return;
+                }
+                loadRecentFolders();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setRecentMenu({ x: rect.left, y: rect.bottom });
               }}
               className={`p-1 rounded hover:bg-surface transition-colors cursor-pointer ${
-                isRecentOpen ? "text-accent bg-surface" : "text-text-muted hover:text-accent"
+                recentMenu ? "text-accent bg-surface" : "text-text-muted hover:text-accent"
               }`}
               title="最近打开的文件夹"
             >
               <History size={13} />
             </button>
             <RecentDropdown
-              isRecentOpen={isRecentOpen}
+              position={recentMenu}
               recentFolders={recentFolders}
-              recentDropdownRef={recentDropdownRef}
-              onClose={() => setIsRecentOpen(false)}
+              onClose={() => setRecentMenu(null)}
               onSelect={(path) => {
                 addRootPath(path);
-                setIsRecentOpen(false);
+                setRecentMenu(null);
               }}
               onHover={(path) => setHoveredPath(path)}
             />
           </div>
           <div className="relative">
             <button
-              onClick={() => {
-                setIsRecentFilesOpen(!isRecentFilesOpen);
+              onClick={(e) => {
+                if (recentFilesMenu) {
+                  setRecentFilesMenu(null);
+                  return;
+                }
+                const rect = e.currentTarget.getBoundingClientRect();
+                setRecentFilesMenu({ x: rect.left, y: rect.bottom });
               }}
               className={`p-1 rounded hover:bg-surface transition-colors cursor-pointer ${
-                isRecentFilesOpen ? "text-accent bg-surface" : "text-text-muted hover:text-accent"
+                recentFilesMenu ? "text-accent bg-surface" : "text-text-muted hover:text-accent"
               }`}
               title="最近打开的文件"
             >
               <FileClock size={13} />
             </button>
             <RecentFilesDropdown
-              isOpen={isRecentFilesOpen}
+              position={recentFilesMenu}
               recentFiles={recentFiles}
-              dropdownRef={recentFilesDropdownRef}
-              onClose={() => setIsRecentFilesOpen(false)}
+              onClose={() => setRecentFilesMenu(null)}
               onSelect={(path) => {
                 void openFile(path);
-                setIsRecentFilesOpen(false);
+                setRecentFilesMenu(null);
               }}
               onHover={(path) => setHoveredPath(path)}
             />
