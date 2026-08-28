@@ -180,8 +180,6 @@ pub fn init_project_database(app: AppHandle) -> Result<(), String> {
             sort_order INTEGER NOT NULL DEFAULT 0
         );
 
-        CREATE INDEX IF NOT EXISTS idx_pinned_files_sort ON pinned_files(sort_order);
-
         CREATE TABLE IF NOT EXISTS pinned_folders (
             id   INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT NOT NULL UNIQUE
@@ -231,6 +229,9 @@ pub fn init_project_database(app: AppHandle) -> Result<(), String> {
             .map_err(|e| format!("回填 pinned_files.sort_order 失败: {}", e))?;
         }
     }
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pinned_files_sort ON pinned_files(sort_order)", [])
+        .map_err(|e| format!("创建 pinned_files.sort_order 索引失败: {}", e))?;
 
     let mut guard = DB.lock();
     *guard = Some(conn);

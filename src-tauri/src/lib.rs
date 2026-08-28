@@ -392,7 +392,9 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             // 初始化项目管理数据库
-            let _ = db::init_project_database(app.handle().clone());
+            if let Err(err) = db::init_project_database(app.handle().clone()) {
+                eprintln!("初始化数据库失败: {}", err);
+            }
             // 文件关联启动：收集首次启动时传入的文件路径，前端挂载时取走
             let initial_paths = collect_file_paths(std::env::args());
             if !initial_paths.is_empty() {

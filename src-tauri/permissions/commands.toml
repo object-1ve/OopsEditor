@@ -6,6 +6,7 @@ commands.allow = [
   "read_file_as_base64",
   "save_file",
   "save_file_from_base64",
+  "take_pending_files",
   "copy_file",
   "copy_item",
   "move_item",
