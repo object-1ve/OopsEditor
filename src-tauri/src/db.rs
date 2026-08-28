@@ -102,6 +102,7 @@ pub struct PinnedFileRecord {
     pub id: i64,
     pub name: String,
     pub path: String,
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -175,8 +176,11 @@ pub fn init_project_database(app: AppHandle) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS pinned_files (
             id   INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            path TEXT NOT NULL UNIQUE
+            path TEXT NOT NULL UNIQUE,
+            sort_order INTEGER NOT NULL DEFAULT 0
         );
+
+        CREATE INDEX IF NOT EXISTS idx_pinned_files_sort ON pinned_files(sort_order);
 
         CREATE TABLE IF NOT EXISTS pinned_folders (
             id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -203,6 +207,30 @@ pub fn init_project_database(app: AppHandle) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_upgrade_items_sort ON upgrade_items(sort_order);",
     )
     .map_err(|e| format!("创建表失败: {}", e))?;
+
+    // 迁移：为旧版 pinned_files 表补充 sort_order 列（老库 CREATE TABLE IF NOT EXISTS 不会加列）
+    {
+        let columns = conn
+            .prepare("PRAGMA table_info(pinned_files)")
+            .map_err(|e| format!("查询 pinned_files 结构失败: {}", e))?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("读取 pinned_files 列失败: {}", e))?
+            .collect::<SqlResult<Vec<String>>>()
+            .map_err(|e| format!("读取 pinned_files 列失败: {}", e))?;
+        if !columns.iter().any(|col| col == "sort_order") {
+            conn.execute(
+                "ALTER TABLE pinned_files ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| format!("迁移 pinned_files.sort_order 失败: {}", e))?;
+            // 按原显示顺序（名称升序）回填序号，保持旧行为
+            conn.execute(
+                "UPDATE pinned_files SET sort_order = (SELECT COUNT(*) FROM pinned_files AS p2 WHERE p2.name < pinned_files.name)",
+                [],
+            )
+            .map_err(|e| format!("回填 pinned_files.sort_order 失败: {}", e))?;
+        }
+    }
 
     let mut guard = DB.lock();
     *guard = Some(conn);
@@ -1317,13 +1345,16 @@ pub fn delete_setting(key: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_pinned_files() -> Result<Vec<PinnedFileRecord>, String> {
     with_db(|conn| {
-        let mut stmt = conn.prepare("SELECT id, name, path FROM pinned_files ORDER BY name")?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, path, sort_order FROM pinned_files ORDER BY sort_order ASC, id ASC",
+        )?;
         let files = stmt
             .query_map([], |row| {
                 Ok(PinnedFileRecord {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     path: row.get(2)?,
+                    sort_order: row.get(3)?,
                 })
             })?
             .collect::<SqlResult<Vec<_>>>()?;
@@ -1336,7 +1367,7 @@ pub fn add_pinned_file(name: String, path: String) -> Result<PinnedFileRecord, S
     let normalized_path = path.replace('\\', "/");
     with_db(|conn| {
         conn.execute(
-            "INSERT OR IGNORE INTO pinned_files (name, path) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO pinned_files (name, path, sort_order) VALUES (?1, ?2, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM pinned_files))",
             params![name, normalized_path],
         )?;
         let id = conn.last_insert_rowid();
@@ -1344,6 +1375,7 @@ pub fn add_pinned_file(name: String, path: String) -> Result<PinnedFileRecord, S
             id,
             name,
             path: normalized_path,
+            sort_order: 0,
         })
     })
 }
@@ -1364,11 +1396,11 @@ pub fn remove_pinned_file(path: String) -> Result<(), String> {
 pub fn sync_pinned_files(files: Vec<PinnedFileInput>) -> Result<(), String> {
     with_db(|conn| {
         conn.execute("DELETE FROM pinned_files", [])?;
-        for file in &files {
+        for (index, file) in files.iter().enumerate() {
             let normalized = file.path.replace('\\', "/");
             conn.execute(
-                "INSERT INTO pinned_files (name, path) VALUES (?1, ?2)",
-                params![file.name, normalized],
+                "INSERT INTO pinned_files (name, path, sort_order) VALUES (?1, ?2, ?3)",
+                params![file.name, normalized, index as i64],
             )?;
         }
         Ok(())

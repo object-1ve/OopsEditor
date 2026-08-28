@@ -99,6 +99,7 @@ export interface EditorState {
   unpinFile: (path: string) => void;
   rebasePinnedFilePath: (oldPath: string, newPath: string, nextName?: string) => void;
   removePinnedFile: (path: string) => void;
+  setPinnedFilesOrder: (files: PinnedFile[]) => void;
   pinFolder: (path: string) => void;
   unpinFolder: (path: string) => void;
   rebasePinnedFolderPaths: (oldPath: string, newPath: string) => void;

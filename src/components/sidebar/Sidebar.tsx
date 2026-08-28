@@ -54,6 +54,7 @@ export default function Sidebar() {
   const updateDefaultFolder = useEditorStore((s) => s.updateDefaultFolder);
   const pinnedFiles = useEditorStore((s) => s.pinnedFiles);
   const removePinnedFile = useEditorStore((s) => s.removePinnedFile);
+  const setPinnedFilesOrder = useEditorStore((s) => s.setPinnedFilesOrder);
   const pinnedFolders = useEditorStore((s) => s.pinnedFolders);
   const pinFolder = useEditorStore((s) => s.pinFolder);
   const unpinFolder = useEditorStore((s) => s.unpinFolder);
@@ -1262,6 +1263,7 @@ export default function Sidebar() {
           onOpenFile={(path) => void openFile(path)}
           onContextMenu={handlePinnedFileContextMenu}
           onHover={(path) => setHoveredPath(path)}
+          onReorder={setPinnedFilesOrder}
         />
 
         {/* ── Folder tree area ── */}

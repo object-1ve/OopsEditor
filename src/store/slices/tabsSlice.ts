@@ -46,6 +46,7 @@ export const createTabsSlice: StateCreator<
     | "unpinFile"
     | "rebasePinnedFilePath"
     | "removePinnedFile"
+    | "setPinnedFilesOrder"
     | "pinnedFiles"
     | "openTabInPane"
     | "closeTabInPane"
@@ -416,6 +417,11 @@ export const createTabsSlice: StateCreator<
     );
     set({ pinnedFiles: nextPinnedFiles });
     persistPinnedFilesState(nextPinnedFiles);
+  },
+
+  setPinnedFilesOrder: (files: PinnedFile[]) => {
+    set({ pinnedFiles: files });
+    persistPinnedFilesState(files);
   },
 
   // ── Split-pane tab operations ──
