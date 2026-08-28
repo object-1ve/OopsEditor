@@ -1,8 +1,10 @@
-﻿/**
+/**
  * RootFolder - Root-level folder entry in the sidebar
  */
 import { useState, useEffect, useCallback, useMemo, memo } from "react";
 import { ChevronRight, ChevronDown, X } from "lucide-react";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "@/store/editor";
 import { normalizePath, sortTreeEntries } from "./sidebarUtils";
@@ -24,11 +26,6 @@ const RootFolder = memo(function RootFolder({
   dropTargetPath,
   dragMoveSourcePath,
   onContextMenu,
-  onDragStart,
-  onDragEnter,
-  onDragOver,
-  onDragEnd,
-  isDragging,
 }: {
   path: string;
   selectedPaths: string[];
@@ -43,12 +40,16 @@ const RootFolder = memo(function RootFolder({
   dropTargetPath: string | null;
   dragMoveSourcePath: string | null;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
-  onDragStart: (e: React.DragEvent) => void;
-  onDragEnter: (e: React.DragEvent) => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDragEnd: (e: React.DragEvent) => void;
-  isDragging: boolean;
 }) {
+  const {
+    setNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: path });
+
   const removeRootPath = useEditorStore((s) => s.removeRootPath);
   const expandedFolders = useEditorStore((s) => s.expandedFolders);
   const pinnedFolders = useEditorStore((s) => s.pinnedFolders);
@@ -95,10 +96,10 @@ const RootFolder = memo(function RootFolder({
   useEffect(() => {
     registerEntry(rootEntry);
   }, [rootEntry, registerEntry]);
-
   useEffect(() => {
-    const handleRefreshEvent = (e: any) => {
-      if (normalizePath(e.detail.path) === normalizePath(path)) {
+    const handleRefreshEvent = (e: Event) => {
+      const detail = (e as CustomEvent<{ path: string }>).detail;
+      if (normalizePath(detail.path) === normalizePath(path)) {
         loadRoot();
       }
     };
@@ -113,12 +114,12 @@ const RootFolder = memo(function RootFolder({
 
   return (
     <div
-      className={`mb-2 transition-all duration-200 ${isDragging ? "opacity-30 scale-[0.98] bg-surface/20" : "opacity-100"}`}
-      draggable
-      onDragStart={onDragStart}
-      onDragEnter={onDragEnter}
-      onDragOver={onDragOver}
-      onDragEnd={onDragEnd}
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+      className={`mb-2 ${isDragging ? "opacity-30" : "opacity-100"}`}
     >
       <div
         className={`px-3 py-1.5 flex items-center justify-between group/folder cursor-grab active:cursor-grabbing select-none hover:bg-surface/30 transition-colors ${
@@ -128,6 +129,8 @@ const RootFolder = memo(function RootFolder({
         }`}
         style={isCutSource ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : undefined}
         data-sidebar-path={path}
+        {...attributes}
+        {...listeners}
         onClick={(e) => onRowClick(e, rootEntry)}
         onDragOver={(e) => onFolderDragOver(e, path)}
         onDragLeave={onFolderDragLeave}

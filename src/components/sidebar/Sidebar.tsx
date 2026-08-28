@@ -11,6 +11,19 @@ import {
 import { useEditorStore } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import {
+  DndContext,
+  DragEndEvent,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import ContextMenu from "../ContextMenu";
 import { createTimestampFileName, normalizePath, openFileTab, resolveUniquePath } from "./sidebarUtils";
 import type { DirEntry } from "./sidebarUtils";
@@ -67,7 +80,6 @@ export default function Sidebar() {
   const [defaultFolderContextMenu, setDefaultFolderContextMenu] = useState<{ x: number; y: number; folderId: string } | null>(null);
   const [pinnedFileContextMenu, setPinnedFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   const [sortContextMenu, setSortContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [draggedRootPath, setDraggedRootPath] = useState<string | null>(null);
   const [clipboardItem, setClipboardItem] = useState<{
     operation: "copy" | "cut";
     items: { sourcePath: string; isDir: boolean; name: string }[];
@@ -112,31 +124,23 @@ export default function Sidebar() {
     });
   }, [rootPaths, pinnedFolders, defaultFolders, rootPathOrder]);
 
-  const handleDragStart = (e: React.DragEvent, path: string) => {
-    setDraggedRootPath(path);
-    e.dataTransfer.setData("text/plain", path);
-    e.dataTransfer.effectAllowed = "move";
-  };
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+  );
 
-  const handleDragEnter = (e: React.DragEvent, targetPath: string) => {
-    e.preventDefault();
-    if (!draggedRootPath || draggedRootPath === targetPath) return;
-    const newOrder = [...sortedRootPaths];
-    const draggedIdx = newOrder.indexOf(draggedRootPath);
-    const targetIdx = newOrder.indexOf(targetPath);
-    if (draggedIdx !== -1 && targetIdx !== -1) {
-      newOrder.splice(draggedIdx, 1);
-      newOrder.splice(targetIdx, 0, draggedRootPath);
-      setRootPathOrder(newOrder);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-  };
-
-  const handleDragEnd = () => setDraggedRootPath(null);
+  const handleRootDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const oldIndex = sortedRootPaths.indexOf(String(active.id));
+      const newIndex = sortedRootPaths.indexOf(String(over.id));
+      if (oldIndex === -1 || newIndex === -1) return;
+      setRootPathOrder(arrayMove(sortedRootPaths, oldIndex, newIndex));
+    },
+    [sortedRootPaths, setRootPathOrder],
+  );
 
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -1263,29 +1267,28 @@ export default function Sidebar() {
         {/* ── Folder tree area ── */}
         {rootPaths.length > 0 ? (
           <div className="py-0.5" ref={treeContainerRef}>
-            {sortedRootPaths.map((path) => (
-              <RootFolder
-                key={path}
-                path={path}
-                selectedPaths={selectedPaths}
-                cutSourcePaths={cutSourcePaths}
-                onRowClick={handleRowClick}
-                registerEntry={registerEntry}
-                onItemDragStart={handleItemDragStart}
-                onItemDragEnd={handleItemDragEnd}
-                onFolderDragOver={handleFolderDragOver}
-                onFolderDragLeave={handleFolderDragLeave}
-                onFolderDrop={handleFolderDrop}
-                dropTargetPath={dropTargetPath}
-                dragMoveSourcePath={dragMoveSource?.path ?? null}
-                onContextMenu={handleContextMenu}
-                onDragStart={(e) => handleDragStart(e, path)}
-                onDragEnter={(e) => handleDragEnter(e, path)}
-                onDragOver={handleDragOver}
-                onDragEnd={handleDragEnd}
-                isDragging={draggedRootPath === path}
-              />
-            ))}
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleRootDragEnd}>
+              <SortableContext items={sortedRootPaths} strategy={verticalListSortingStrategy}>
+                {sortedRootPaths.map((path) => (
+                  <RootFolder
+                    key={path}
+                    path={path}
+                    selectedPaths={selectedPaths}
+                    cutSourcePaths={cutSourcePaths}
+                    onRowClick={handleRowClick}
+                    registerEntry={registerEntry}
+                    onItemDragStart={handleItemDragStart}
+                    onItemDragEnd={handleItemDragEnd}
+                    onFolderDragOver={handleFolderDragOver}
+                    onFolderDragLeave={handleFolderDragLeave}
+                    onFolderDrop={handleFolderDrop}
+                    dropTargetPath={dropTargetPath}
+                    dragMoveSourcePath={dragMoveSource?.path ?? null}
+                    onContextMenu={handleContextMenu}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
           </div>
         ) : (
           <EmptyFolderState onOpenFolder={handleOpenFolder} />
