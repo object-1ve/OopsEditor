@@ -388,13 +388,18 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .manage(PendingFiles(parking_lot::Mutex::new(Vec::new())))
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            let paths = collect_file_paths(args);
-            if !paths.is_empty() {
-                let state = app.state::<PendingFiles>();
-                state.0.lock().extend(paths.clone());
-                let _ = app.emit("open-files", paths);
-            }
-            show_main_window(app);
+            let app = app.clone();
+            // WM_COPYDATA 是跨进程 sent message,在其消息上下文内调用激活类 API
+            // 会被 Windows 限制(SetForegroundWindow 被忽略)。延迟移出该上下文执行。
+            std::thread::spawn(move || {
+                let paths = collect_file_paths(args);
+                if !paths.is_empty() {
+                    let state = app.state::<PendingFiles>();
+                    state.0.lock().extend(paths.clone());
+                    let _ = app.emit("open-files", paths);
+                }
+                show_main_window(&app);
+            });
         }))
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
