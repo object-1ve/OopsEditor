@@ -36,6 +36,19 @@ fn is_capture_protection_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// 显示并激活主窗口,确保在文件关联双击/托盘点击时弹出到前台。
+/// Windows 前台锁会阻止后台进程直接抢焦点(set_focus 会被忽略),
+/// 置顶再取消置顶可绕过该限制,强制把窗口带到前台。
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_always_on_top(false);
+    }
+}
+
 mod terminal;
 use terminal::{close_terminal, create_terminal, resize_terminal, write_to_terminal};
 
@@ -381,10 +394,7 @@ pub fn run() {
                 state.0.lock().extend(paths.clone());
                 let _ = app.emit("open-files", paths);
             }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
@@ -442,11 +452,7 @@ pub fn run() {
                         app.exit(0);
                     }
                     "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(app);
                     }
                     _ => {}
                 })
@@ -456,12 +462,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(tray.app_handle());
                     }
                 })
                 .build(app)?;
