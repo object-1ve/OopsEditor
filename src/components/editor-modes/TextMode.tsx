@@ -1,12 +1,14 @@
 /**
- * Text editor mode - Monaco editor with optional live markdown preview
+ * Text editor mode - Monaco editor with optional markdown snippet completion and live preview
  */
 import { useCallback, useEffect, useRef } from "react";
 import MonacoEditor, { type EditorProps, type OnMount } from "@monaco-editor/react";
 import { FilePenLine } from "lucide-react";
 import { useMonacoScrollMemory } from "./sharedHooks";
 import { MarkdownPreviewPane } from "./MarkdownMode";
+import { registerMarkdownSnippets, type MarkdownSnippetsHandle } from "./markdownSnippets";
 import type { EditorModeContext, EditorModeAdapter, SharedContextMenuItem } from "./types";
+
 
 function TextModeView({
   activeTab,
@@ -31,6 +33,7 @@ function TextModeView({
   | "showNotification"
 >) {
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const snippetsHandleRef = useRef<MarkdownSnippetsHandle | null>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const isSyncingRef = useRef(false);
   const restoreMonacoScroll = useMonacoScrollMemory(activeTab.id);
@@ -40,6 +43,8 @@ function TextModeView({
     return () => {
       monacoMemoryCleanupRef.current?.();
       monacoMemoryCleanupRef.current = null;
+      snippetsHandleRef.current?.release();
+      snippetsHandleRef.current = null;
     };
   }, []);
 
@@ -139,6 +144,10 @@ function TextModeView({
         onEditorMount(editor, monaco);
         monacoMemoryCleanupRef.current?.();
         monacoMemoryCleanupRef.current = restoreMonacoScroll(editor);
+        // markdown 文件：注册 @ 片段补全（引用计数，卸载时释放）
+        if (activeTab.language === "markdown") {
+          snippetsHandleRef.current = registerMarkdownSnippets();
+        }
       }}
       options={{
         fontSize: 14,
