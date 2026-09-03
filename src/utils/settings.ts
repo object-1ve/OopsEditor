@@ -75,7 +75,7 @@ export interface AppSettings {
   maxRecentFiles: number;
 }
 
-const DEFAULT_RIGHT_SIDEBAR_ICON_ORDER = ["info", "git", "outline", "help"] as const;
+const DEFAULT_RIGHT_SIDEBAR_ICON_ORDER = ["info", "outline", "help"] as const;
 
 function sanitizeRightSidebarIconOrder(order?: string[]): string[] {
   if (!Array.isArray(order)) {

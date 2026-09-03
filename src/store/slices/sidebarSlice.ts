@@ -63,7 +63,7 @@ export const createSidebarSlice: StateCreator<
   sidebarSortOrder: "desc",
   rootPathOrder: [],
   recentFolders: [],
-  rightSidebarIconOrder: ["info", "git", "outline", "help"],
+  rightSidebarIconOrder: ["info", "outline", "help"],
 
   setHoveredPath: (path: string | null) => set({ hoveredPath: path }),
 

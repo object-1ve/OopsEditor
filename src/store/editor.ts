@@ -65,16 +65,11 @@ const useEditorStore = create<EditorState>()((...a) => {
         settings.maxOpenTabs,
       );
 
-      const rightSidebarIconOrder =
-        settings.rightSidebarIconOrder || ["info", "git", "outline", "help"];
-      if (!rightSidebarIconOrder.includes("git")) {
-        const infoIdx = rightSidebarIconOrder.indexOf("info");
-        if (infoIdx !== -1) {
-          rightSidebarIconOrder.splice(infoIdx + 1, 0, "git");
-        } else {
-          rightSidebarIconOrder.unshift("git");
-        }
-      }
+      const rightSidebarIconOrder = (settings.rightSidebarIconOrder || [
+        "info",
+        "outline",
+        "help",
+      ]).filter((id) => id !== "git");
 
       set({
         isLeftSidebarCollapsed: settings.isLeftSidebarCollapsed,
