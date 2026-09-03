@@ -200,7 +200,7 @@ export default function RightSidebar() {
             <span className="text-sm font-medium text-text-primary">目录</span>
           </div>
           <div className="flex-1 overflow-y-auto">
-            <OutlinePanel content={activeTab?.content} filePath={activeTab?.path} />
+            <OutlinePanel content={activeTab?.content} tabId={activeTab?.id} />
           </div>
         </div>
       )}

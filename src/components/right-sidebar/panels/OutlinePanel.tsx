@@ -8,18 +8,18 @@ import { parseMarkdownHeadings } from "@/utils/markdown";
 
 interface OutlinePanelProps {
   content?: string;
-  filePath?: string;
+  tabId?: string;
   onNavigate?: (headingId: string, line: number) => void;
 }
 
-export default function OutlinePanel({ content, filePath, onNavigate }: OutlinePanelProps) {
+export default function OutlinePanel({ content, tabId, onNavigate }: OutlinePanelProps) {
   const navigateToMarkdownHeading = useEditorStore((s) => s.navigateToMarkdownHeading);
 
   const handleClick = useMemo(() => {
     return onNavigate || ((headingId: string, line: number) => {
-      navigateToMarkdownHeading({ tabId: filePath || "", headingId, line });
+      navigateToMarkdownHeading({ tabId: tabId || "", headingId, line });
     });
-  }, [onNavigate, navigateToMarkdownHeading, filePath]);
+  }, [onNavigate, navigateToMarkdownHeading, tabId]);
 
   const headings = useMemo(() => {
     if (!content) return [];
@@ -30,7 +30,7 @@ export default function OutlinePanel({ content, filePath, onNavigate }: OutlineP
     }
   }, [content]);
 
-  if (!filePath) {
+  if (!tabId) {
     return (
       <div className="p-4 text-xs text-text-muted italic">
         未选择文件
@@ -55,7 +55,7 @@ export default function OutlinePanel({ content, filePath, onNavigate }: OutlineP
       {headings.map((h, i) => (
         <button
           key={`${h.level}-${h.text}-${i}`}
-          onClick={() => handleClick(h.text, h.level)}
+          onClick={() => handleClick(h.id, h.line)}
           className="w-full flex items-center gap-2 px-3 py-1 text-xs text-left hover:bg-surface/30 hover:text-text transition-colors"
           style={{ paddingLeft: `${12 + (h.level - 1) * 16}px` }}
           title={h.text}
