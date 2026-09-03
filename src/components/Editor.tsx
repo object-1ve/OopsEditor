@@ -34,6 +34,7 @@ import { fetchAndSetFileMtime } from "@/store/fileMtime";
 import { saveTab } from "@/services/editorSave";
 import { clipboardToMarkdownTable, tsvToMarkdownTable } from "@/utils/clipboardTable";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 
 /* Bright terracotta-themed Monaco editor */
@@ -487,7 +488,21 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       const line = model.getLineContent(e.target.position.lineNumber);
       const col = e.target.position.column - 1; // 0-indexed
 
-      // Find all ![](...) patterns and check if click lies within one
+      // Ctrl+Click on [text](https://...) opens the URL in the system browser
+      const linkPattern = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
+      let linkMatch;
+      while ((linkMatch = linkPattern.exec(line)) !== null) {
+        const startIdx = linkMatch.index;
+        const endIdx = linkMatch.index + linkMatch[0].length;
+        if (col >= startIdx && col < endIdx) {
+          e.event.preventDefault();
+          e.event.stopPropagation();
+          void openUrl(linkMatch[2]);
+          return;
+        }
+      }
+
+      // Ctrl+Click on ![](path) opens the image in a new tab
       const pattern = /!\[([^\]]*)\]\(([^)]+)\)/g;
       let match;
       while ((match = pattern.exec(line)) !== null) {

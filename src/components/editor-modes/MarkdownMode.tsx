@@ -17,6 +17,7 @@ import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import { Copy, FilePenLine } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { getPreviewScrollTop, setPreviewScrollTop } from "@/utils/scrollMemory";
 import { createMarkdownHeadingIdFactory, extractTextFromReactNode } from "@/utils/markdown";
 import ContextMenu from "@/components/ContextMenu";
@@ -51,6 +52,16 @@ function useMarkdownComponents(activeTab: FileTab) {
       };
 
     return {
+      // 链接：阻止 WebView 默认跳转，改用系统浏览器打开；#anchor 保留预览内跳转
+      a: function LinkRenderer({ children, href, node: _node, ...props }: React.ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
+        const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+          if (!href || href.startsWith("#")) return;
+          e.preventDefault();
+          e.stopPropagation();
+          void openUrl(href);
+        };
+        return createElement("a", { ...props, href, onClick: handleClick }, children);
+      },
       h1: createBaseRenderer("h1"),
       h2: createBaseRenderer("h2"),
       h3: createBaseRenderer("h3"),
