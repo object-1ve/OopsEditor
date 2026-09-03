@@ -488,17 +488,26 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       const line = model.getLineContent(e.target.position.lineNumber);
       const col = e.target.position.column - 1; // 0-indexed
 
-      // Ctrl+Click on [text](https://...) opens the URL in the system browser
+      // Ctrl+Click on [text](https://...) or a bare https://... URL opens the system browser.
+      // 裸 URL 优先匹配 [..](..) 内部，避免把整个 markdown 链接的括号部分重复当作裸链接。
       const linkPattern = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
-      let linkMatch;
-      while ((linkMatch = linkPattern.exec(line)) !== null) {
-        const startIdx = linkMatch.index;
-        const endIdx = linkMatch.index + linkMatch[0].length;
-        if (col >= startIdx && col < endIdx) {
-          e.event.preventDefault();
-          e.event.stopPropagation();
-          void openUrl(linkMatch[2]);
-          return;
+      const bareUrlPattern = /https?:\/\/[^\s)<>]+/g;
+      const urlPatterns: Array<{ regex: RegExp; urlGroup: number }> = [
+        { regex: linkPattern, urlGroup: 2 },
+        { regex: bareUrlPattern, urlGroup: 0 },
+      ];
+      for (const { regex, urlGroup } of urlPatterns) {
+        regex.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = regex.exec(line)) !== null) {
+          const startIdx = m.index;
+          const endIdx = m.index + m[0].length;
+          if (col >= startIdx && col < endIdx) {
+            e.event.preventDefault();
+            e.event.stopPropagation();
+            void openUrl(m[urlGroup]);
+            return;
+          }
         }
       }
 
