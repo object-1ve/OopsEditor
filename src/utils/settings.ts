@@ -65,6 +65,7 @@ export interface AppSettings {
   expandedFolders: string[];
   pinnedFolders: string[];
   rightSidebarIconOrder?: string[];
+  captureProtection: boolean;
   maxOpenTabs: number;
   sidebarSortField: 'name' | 'modified';
   sidebarSortOrder: 'asc' | 'desc';
@@ -115,6 +116,7 @@ export const defaultSettings: AppSettings = {
   expandedFolders: [],
   pinnedFolders: [],
   rightSidebarIconOrder: [...DEFAULT_RIGHT_SIDEBAR_ICON_ORDER],
+  captureProtection: true,
   maxOpenTabs: DEFAULT_MAX_OPEN_TABS,
   sidebarSortField: 'modified',
   sidebarSortOrder: 'desc',
@@ -206,6 +208,11 @@ export async function loadSettings(): Promise<AppSettings> {
     }
     const savedMaxRecentFiles = get<number>('maxRecentFiles');
     settings.maxRecentFiles = sanitizeMaxRecentFiles(savedMaxRecentFiles);
+
+    const savedCaptureProtection = get<boolean>('captureProtection');
+    if (typeof savedCaptureProtection === 'boolean') {
+      settings.captureProtection = savedCaptureProtection;
+    }
 
     const savedRecentFiles = get<string[]>('recentFiles');
     settings.recentFiles = sanitizeRecentFiles(savedRecentFiles, settings.maxRecentFiles);

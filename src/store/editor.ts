@@ -93,6 +93,7 @@ const useEditorStore = create<EditorState>()((...a) => {
         sidebarSortField: settings.sidebarSortField,
         sidebarSortOrder: settings.sidebarSortOrder,
         defaultSavePath: settings.defaultSavePath,
+        captureProtection: settings.captureProtection,
         maxRecentFolders: settings.maxRecentFolders,
         recentFiles: settings.recentFiles,
         maxRecentFiles: settings.maxRecentFiles,

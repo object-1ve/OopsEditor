@@ -36,6 +36,44 @@ fn is_capture_protection_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// 应用防截屏/防录屏设置（Windows: SetWindowDisplayAffinity）。
+/// enabled = true → WDA_EXCLUDEFROMCAPTURE（截图黑屏）；false → WDA_NONE。
+#[cfg(target_os = "windows")]
+fn apply_capture_protection(app: &tauri::AppHandle, enabled: bool) {
+    use raw_window_handle::HasWindowHandle;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+    };
+
+    if let Some(window) = app.get_webview_window("main") {
+        if let Ok(handle) = window.window_handle() {
+            if let raw_window_handle::RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                let hwnd = HWND(win_handle.hwnd.get() as _);
+                unsafe {
+                    let affinity = if enabled {
+                        WDA_EXCLUDEFROMCAPTURE
+                    } else {
+                        WDA_NONE
+                    };
+                    let _ = SetWindowDisplayAffinity(hwnd, affinity);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_capture_protection(_app: &tauri::AppHandle, _enabled: bool) {}
+
+/// 运行时切换防截屏：持久化到设置 DB 并立即应用。
+#[tauri::command]
+fn set_capture_protection(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    db::set_setting("captureProtection".to_string(), enabled.to_string())?;
+    apply_capture_protection(&app, enabled);
+    Ok(())
+}
+
 /// 显示并激活主窗口,确保在文件关联双击/托盘点击时弹出到前台。
 /// Windows 前台锁会阻止后台进程直接抢焦点(set_focus 会被忽略),
 /// 置顶再取消置顶可绕过该限制,强制把窗口带到前台。
@@ -417,32 +455,13 @@ pub fn run() {
                 state.0.lock().extend(initial_paths);
             }
 
-            // 防截屏/防录屏: 通过 runtime-config.json 的 captureProtection 开关控制
-            #[cfg(target_os = "windows")]
-            {
-                use tauri::Manager;
-                use raw_window_handle::HasWindowHandle;
-                use windows::Win32::Foundation::HWND;
-                use windows::Win32::UI::WindowsAndMessaging::{
-                    SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
-                };
-
-                if let Some(window) = app.get_webview_window("main") {
-                    if let Ok(handle) = window.window_handle() {
-                        if let raw_window_handle::RawWindowHandle::Win32(win_handle) = handle.as_raw() {
-                            let hwnd = HWND(win_handle.hwnd.get() as _);
-                            unsafe {
-                                let affinity = if is_capture_protection_enabled() {
-                                    WDA_EXCLUDEFROMCAPTURE
-                                } else {
-                                    WDA_NONE
-                                };
-                                let _ = SetWindowDisplayAffinity(hwnd, affinity);
-                            }
-                        }
-                    }
-                }
-            }
+            // 防截屏/防录屏: 优先读取设置 DB 中用户保存的 captureProtection（通过设置界面切换），
+            // 未保存时回退 runtime-config.json 的默认开关。
+            let capture_protection = match db::get_setting("captureProtection".to_string()) {
+                Ok(Some(value)) => value == "true",
+                _ => is_capture_protection_enabled(),
+            };
+            apply_capture_protection(app.handle(), capture_protection);
 
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let show_i = MenuItem::with_id(app, "show", "显示", true, None::<&str>)?;
@@ -620,5 +639,7 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         git_remote_add,
         git_remote_get,
         git_get_user,
+        // 防截屏
+        set_capture_protection,
     ]
 }

@@ -2,6 +2,7 @@
  * UI slice - sidebar collapse/width, settings, modals, notifications
  */
 import type { StateCreator } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import type { EditorState, MarkdownOutlineTarget } from "@/store/types";
 import {
   saveSetting,
@@ -19,46 +20,48 @@ export const createUiSlice: StateCreator<
   EditorState,
   [],
   [],
-  Pick<
-    EditorState,
-    | "isLeftSidebarCollapsed"
-    | "isRightSidebarCollapsed"
-    | "leftSidebarWidth"
-    | "rightSidebarWidth"
-    | "editorWordWrap"
-    | "autoSaveOnEdit"
-    | "maxOpenTabs"
-    | "defaultSavePath"
-    | "maxRecentFolders"
-    | "recentFiles"
-    | "maxRecentFiles"
-    | "isSettingsOpen"
-    | "modal"
-    | "notification"
-    | "markdownOutlineTarget"
-    | "navigateToMarkdownHeading"
-    | "clearMarkdownOutlineTarget"
-    | "toggleLeftSidebar"
-    | "toggleRightSidebar"
-    | "setLeftSidebarWidth"
-    | "setRightSidebarWidth"
-    | "setEditorWordWrap"
-    | "setAutoSaveOnEdit"
-    | "setMaxOpenTabs"
-    | "setDefaultSavePath"
-    | "setMaxRecentFolders"
-    | "recordRecentFile"
-    | "setRecentFiles"
-    | "setMaxRecentFiles"
-    | "isFloatingImageOpen"
-    | "setFloatingImageOpen"
-    | "openSettings"
-    | "closeSettings"
-    | "showModal"
-    | "closeModal"
-    | "showNotification"
-    | "clearNotification"
-  >
+      Pick<
+        EditorState,
+        | "isLeftSidebarCollapsed"
+        | "isRightSidebarCollapsed"
+        | "leftSidebarWidth"
+        | "rightSidebarWidth"
+        | "editorWordWrap"
+        | "autoSaveOnEdit"
+        | "captureProtection"
+        | "setCaptureProtection"
+        | "maxOpenTabs"
+        | "defaultSavePath"
+        | "maxRecentFolders"
+        | "recentFiles"
+        | "maxRecentFiles"
+        | "isSettingsOpen"
+        | "modal"
+        | "notification"
+        | "markdownOutlineTarget"
+        | "navigateToMarkdownHeading"
+        | "clearMarkdownOutlineTarget"
+        | "toggleLeftSidebar"
+        | "toggleRightSidebar"
+        | "setLeftSidebarWidth"
+        | "setRightSidebarWidth"
+        | "setEditorWordWrap"
+        | "setAutoSaveOnEdit"
+        | "setMaxOpenTabs"
+        | "setDefaultSavePath"
+        | "setMaxRecentFolders"
+        | "recordRecentFile"
+        | "setRecentFiles"
+        | "setMaxRecentFiles"
+        | "isFloatingImageOpen"
+        | "setFloatingImageOpen"
+        | "openSettings"
+        | "closeSettings"
+        | "showModal"
+        | "closeModal"
+        | "showNotification"
+        | "clearNotification"
+    >
 > = (set, get) => ({
   isLeftSidebarCollapsed: false,
   isRightSidebarCollapsed: false,
@@ -76,6 +79,7 @@ export const createUiSlice: StateCreator<
   notification: null,
   markdownOutlineTarget: null,
   isFloatingImageOpen: false,
+  captureProtection: true,
 
   toggleLeftSidebar: () => {
     const newValue = !get().isLeftSidebarCollapsed;
@@ -110,6 +114,14 @@ export const createUiSlice: StateCreator<
     if (!enabled) {
       clearAutoSaveTimers(getAllAutoSaveKeys());
     }
+  },
+
+  setCaptureProtection: (enabled: boolean) => {
+    set({ captureProtection: enabled });
+    saveSetting("captureProtection", enabled);
+    void invoke("set_capture_protection", { enabled }).catch((err) => {
+      console.error("应用防截屏设置失败:", err);
+    });
   },
 
   setMaxOpenTabs: (value: number) => {

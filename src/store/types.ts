@@ -59,6 +59,7 @@ export interface EditorState {
   hoveredPath: string | null;
   markdownOutlineTarget: MarkdownOutlineTarget | null;
   rightSidebarIconOrder: string[];
+  captureProtection: boolean;
   sidebarSortField: "name" | "modified";
   sidebarSortOrder: "asc" | "desc";
   rootPathOrder: string[];
@@ -114,6 +115,7 @@ export interface EditorState {
   setEditorWordWrap: (enabled: boolean) => void;
   setAutoSaveOnEdit: (enabled: boolean) => void;
   setMaxOpenTabs: (value: number) => void;
+  setCaptureProtection: (enabled: boolean) => void;
   openSettings: () => void;
   closeSettings: () => void;
   addTerminal: (path?: string | null) => void;

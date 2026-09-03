@@ -17,6 +17,8 @@ export default function SettingsModal() {
     setEditorWordWrap,
     autoSaveOnEdit,
     setAutoSaveOnEdit,
+    captureProtection,
+    setCaptureProtection,
     maxOpenTabs,
     setMaxOpenTabs,
     defaultSavePath,
@@ -122,6 +124,33 @@ export default function SettingsModal() {
                 <span
                   className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
                     autoSaveOnEdit ? "translate-x-5" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-primary/40 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-text">防截图保护</div>
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  开启后，屏幕截图/录屏无法捕获本应用窗口内容（系统级防护）。部分屏幕录制工具也会受影响。
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={captureProtection}
+                onClick={() => setCaptureProtection(!captureProtection)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  captureProtection ? "bg-accent" : "bg-surface"
+                }`}
+                title={captureProtection ? "关闭防截图保护" : "开启防截图保护"}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    captureProtection ? "translate-x-5" : "translate-x-1"
                   }`}
                 />
               </button>
