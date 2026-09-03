@@ -97,7 +97,7 @@ export default function ImagePreview({ src, name, path }: ImagePreviewProps) {
             </div>
           )}
         </div>
-        <div className="truncate ml-8 text-text-muted/60">
+        <div className="truncate ml-8 text-text-muted/85">
           {path}
         </div>
       </div>

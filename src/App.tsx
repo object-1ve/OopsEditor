@@ -813,7 +813,7 @@ function App() {
               <span>就绪</span>
             </div>
             <span className="text-border">|</span>
-            <span>OopsEditor <span className="text-text-muted/50 text-[10px]">v{APP_VERSION}</span></span>
+            <span>OopsEditor <span className="text-text-muted/80 text-[10px]">v{APP_VERSION}</span></span>
             <div className="flex-1 flex items-center px-4 overflow-hidden">
               {(() => {
                 let displayPath = hoveredPath ?? null;
@@ -838,7 +838,7 @@ function App() {
                 return null;
               })()}
             </div>
-            <span className="hidden sm:inline text-text-muted/60">拖拽文件到窗口打开</span>
+            <span className="hidden sm:inline text-text-muted/85">拖拽文件到窗口打开</span>
             <span className="text-border mx-1">|</span>
             <button
               onClick={toggleSplit}

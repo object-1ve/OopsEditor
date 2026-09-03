@@ -113,11 +113,11 @@ export default function PinnedSection({
         ) : (
           <ChevronRight size={12} className="text-text-muted shrink-0" />
         )}
-        <Pin size={11} className="text-text-muted/60 shrink-0" />
-        <span className="text-[10px] font-semibold tracking-wider uppercase text-text-muted/60">
+        <Pin size={11} className="text-text-muted/85 shrink-0" />
+        <span className="text-[10px] font-semibold tracking-wider uppercase text-text-muted/85">
           固定文件
         </span>
-        <span className="text-[10px] text-text-muted/30 font-medium ml-0.5">
+        <span className="text-[10px] text-text-muted/70 font-medium ml-0.5">
           {pinnedFiles.length}
         </span>
       </div>
@@ -142,7 +142,7 @@ export default function PinnedSection({
               </DndContext>
             </div>
           ) : (
-            <div className="px-3 py-1.5 text-[11px] text-text-muted/40 italic">
+            <div className="px-3 py-1.5 text-[11px] text-text-muted/70 italic">
               在文件标签上右键固定
             </div>
           )}

@@ -30,7 +30,7 @@ export default function RecentFilesDropdown({
         className="fixed z-[1000] w-64 max-w-[220px] max-h-80 overflow-y-auto rounded-lg border border-border bg-secondary shadow-2xl animate-in fade-in slide-in-from-top-1 duration-150"
         style={{ left: position.x, top: position.y + 4 }}
       >
-        <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted/60 border-b border-border">
+        <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted/85 border-b border-border">
           最近打开的文件
         </div>
         {recentFiles.length > 0 ? (
@@ -46,14 +46,14 @@ export default function RecentFilesDropdown({
                   onMouseLeave={() => onHover(null)}
                   title={path}
                 >
-                  <FileText size={13} className="shrink-0 text-text-muted/50" />
+                  <FileText size={13} className="shrink-0 text-text-muted/80" />
                   <span className="truncate mr-2">{name}</span>
                 </button>
               );
             })}
           </div>
         ) : (
-          <div className="px-3 py-4 text-xs text-text-muted/50 text-center italic">
+          <div className="px-3 py-4 text-xs text-text-muted/80 text-center italic">
             暂无最近打开的文件
           </div>
         )}

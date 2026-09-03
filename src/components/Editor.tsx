@@ -79,9 +79,10 @@ const TERRACOTTA_THEME = {
     "editorWidget.border": "#d4c5b8",
     "editorSuggestWidget.background": "#fdfaf7",
     "editorSuggestWidget.border": "#d4c5b8",
+    "editorSuggestWidget.foreground": "#5c4c42",
+    "editorSuggestWidget.highlightForeground": "#c86a4e",
+    "editorSuggestWidget.focusHighlightForeground": "#c86a4e",
     "editorSuggestWidget.selectedBackground": "#f0e8e0",
-    "editorHoverWidget.background": "#fdfaf7",
-    "editorHoverWidget.border": "#d4c5b8",
     "focusBorder": "#d4785c",
     "editorIndentGuide.background": "#f0e8e0",
     "editorIndentGuide.activeBackground": "#e5dbd0",
@@ -828,7 +829,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
               <Columns2 size={20} />
             </div>
             <p className="text-sm text-text-muted">在此面板打开文件</p>
-            <p className="text-xs text-text-muted/50">从左侧文件树打开，或拖拽文件到此区域</p>
+            <p className="text-xs text-text-muted/80">从左侧文件树打开，或拖拽文件到此区域</p>
           </div>
         </div>
       );

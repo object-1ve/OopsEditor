@@ -44,7 +44,7 @@ export default function OutlinePanel({ content, tabId, onNavigate }: OutlinePane
         <div className="flex flex-col items-center gap-2 py-6">
           <ListTree size={20} className="opacity-20" />
           <span>当前文件无标题结构</span>
-          <span className="text-[10px] text-text-muted/40">仅支持 Markdown 文件</span>
+          <span className="text-[10px] text-text-muted/70">仅支持 Markdown 文件</span>
         </div>
       </div>
     );

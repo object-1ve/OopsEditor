@@ -61,7 +61,7 @@ export default function InfoPanel({ filePath }: InfoPanelProps) {
   return (
     <div className="p-4 space-y-4">
       <div className="space-y-2">
-        <h3 className="text-[10px] font-semibold uppercase tracking-wider text-text-muted/60">文件信息</h3>
+        <h3 className="text-[10px] font-semibold uppercase tracking-wider text-text-muted/85">文件信息</h3>
         <div className="space-y-1.5">
           <div className="flex justify-between">
             <span className="text-xs text-text-muted">大小</span>

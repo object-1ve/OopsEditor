@@ -172,7 +172,7 @@ function SqliteModeView({
                           title={val === null ? "NULL" : String(val)}
                         >
                           {val === null ? (
-                            <span className="text-text-muted/40 italic text-xs">NULL</span>
+                            <span className="text-text-muted/70 italic text-xs">NULL</span>
                           ) : typeof val === 'boolean' ? (
                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${val ? 'bg-success/10 text-success' : 'bg-error/10 text-error'}`}>
                               {val ? 'TRUE' : 'FALSE'}
@@ -208,7 +208,7 @@ function SqliteModeView({
                 <div className="flex flex-col items-center gap-2 max-w-xs text-center">
                   <Table size={32} className="opacity-20 mb-2" />
                   <p className="text-sm font-medium">请从左侧选择一个表</p>
-                  <p className="text-xs text-text-muted/60">SQLite 数据库已就绪，点击左侧表名开始查看数据</p>
+                  <p className="text-xs text-text-muted/85">SQLite 数据库已就绪，点击左侧表名开始查看数据</p>
                 </div>
               )}
             </div>

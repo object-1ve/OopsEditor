@@ -189,7 +189,7 @@ export default function SettingsModal() {
               </div>
             )}
             {!defaultSavePath && (
-              <div className="mt-2 rounded-md bg-deepest/60 px-3 py-2 text-xs font-mono text-text-muted/50 italic">
+              <div className="mt-2 rounded-md bg-deepest/60 px-3 py-2 text-xs font-mono text-text-muted/80 italic">
                 未设置，将使用默认文件夹路径
               </div>
             )}
