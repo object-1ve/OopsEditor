@@ -81,5 +81,6 @@ commands.allow = [
   "git_pull",
   "git_remote_add",
   "git_remote_get",
-  "git_get_user"
+  "git_get_user",
+  "set_capture_protection"
 ]
