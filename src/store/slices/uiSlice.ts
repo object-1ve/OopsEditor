@@ -119,9 +119,17 @@ export const createUiSlice: StateCreator<
   setCaptureProtection: (enabled: boolean) => {
     set({ captureProtection: enabled });
     saveSetting("captureProtection", enabled);
-    void invoke("set_capture_protection", { enabled }).catch((err) => {
-      console.error("应用防截屏设置失败:", err);
-    });
+    void invoke("set_capture_protection", { enabled })
+      .then(() => {
+        get().showNotification(
+          enabled ? "防截图保护已开启" : "防截图保护已关闭（需重启应用后完全生效）",
+          "success",
+        );
+      })
+      .catch((err) => {
+        console.error("应用防截屏设置失败:", err);
+        get().showNotification(`应用防截屏设置失败: ${String(err)}`, "error");
+      });
   },
 
   setMaxOpenTabs: (value: number) => {

@@ -38,40 +38,53 @@ fn is_capture_protection_enabled() -> bool {
 
 /// 应用防截屏/防录屏设置（Windows: SetWindowDisplayAffinity）。
 /// enabled = true → WDA_EXCLUDEFROMCAPTURE（截图黑屏）；false → WDA_NONE。
+/// 返回具体错误，避免静默失败（如窗口句柄获取失败、API 调用失败）。
 #[cfg(target_os = "windows")]
-fn apply_capture_protection(app: &tauri::AppHandle, enabled: bool) {
+fn apply_capture_protection(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
     use raw_window_handle::HasWindowHandle;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
         SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
     };
 
-    if let Some(window) = app.get_webview_window("main") {
-        if let Ok(handle) = window.window_handle() {
-            if let raw_window_handle::RawWindowHandle::Win32(win_handle) = handle.as_raw() {
-                let hwnd = HWND(win_handle.hwnd.get() as _);
-                unsafe {
-                    let affinity = if enabled {
-                        WDA_EXCLUDEFROMCAPTURE
-                    } else {
-                        WDA_NONE
-                    };
-                    let _ = SetWindowDisplayAffinity(hwnd, affinity);
-                }
-            }
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "未找到主窗口".to_string())?;
+    let handle = window
+        .window_handle()
+        .map_err(|e| format!("获取窗口句柄失败: {}", e))?;
+    let raw_window_handle::RawWindowHandle::Win32(win_handle) = handle.as_raw() else {
+        return Err("非 Windows 窗口句柄".to_string());
+    };
+
+    let hwnd = HWND(win_handle.hwnd.get() as _);
+    let affinity = if enabled {
+        WDA_EXCLUDEFROMCAPTURE
+    } else {
+        WDA_NONE
+    };
+    // 关键：SetWindowDisplayAffinity 失败必须上报，否则用户以为已关闭。
+    unsafe {
+        if SetWindowDisplayAffinity(hwnd, affinity).is_err() {
+            return Err(format!(
+                "SetWindowDisplayAffinity 调用失败 (enabled={})",
+                enabled
+            ));
         }
     }
+    Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
-fn apply_capture_protection(_app: &tauri::AppHandle, _enabled: bool) {}
+fn apply_capture_protection(_app: &tauri::AppHandle, _enabled: bool) -> Result<(), String> {
+    Ok(())
+}
 
 /// 运行时切换防截屏：持久化到设置 DB 并立即应用。
 #[tauri::command]
 fn set_capture_protection(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     db::set_setting("captureProtection".to_string(), enabled.to_string())?;
-    apply_capture_protection(&app, enabled);
-    Ok(())
+    apply_capture_protection(&app, enabled)
 }
 
 /// 显示并激活主窗口,确保在文件关联双击/托盘点击时弹出到前台。
@@ -461,7 +474,10 @@ pub fn run() {
                 Ok(Some(value)) => value == "true",
                 _ => is_capture_protection_enabled(),
             };
-            apply_capture_protection(app.handle(), capture_protection);
+            // 启动兜底：失败仅记录，不阻塞启动（运行时切换失败会走命令的显式报错）。
+            if let Err(err) = apply_capture_protection(app.handle(), capture_protection) {
+                eprintln!("应用防截屏设置失败: {}", err);
+            }
 
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let show_i = MenuItem::with_id(app, "show", "显示", true, None::<&str>)?;
