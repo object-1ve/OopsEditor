@@ -245,8 +245,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     editor.focus();
     clearMarkdownOutlineTarget();
   }, [activeTab, clearMarkdownOutlineTarget, markdownOutlineTarget]);
-
-  // 内容搜索跳行:选中命中行内首个匹配串(大小写不敏感),找不到则落到行首
+  // 内容搜索跳行:选中命中行内首个匹配串,再用选区种子打开查找框(全文高亮+计数+箭头跳转)
   useEffect(() => {
     if (
       !searchJumpTarget ||
@@ -274,11 +273,15 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
 
     editor.revealLineInCenter(line);
     editor.setSelection({ startLineNumber: line, startColumn, endLineNumber: line, endColumn });
-    editor.focus();
+    // 有选中才开查找框:空选区会清空上次搜索串,无匹配(内容已变)则只跳行
+    if (endColumn > startColumn) {
+      void editor.getAction("actions.findWithSelection")?.run();
+    } else {
+      editor.focus();
+    }
     clearSearchJumpTarget();
   }, [activeTab, clearSearchJumpTarget, searchJumpTarget]);
-
-  // 监听 App 层发起的文件拖放事件（来自 Tauri onDragDropEvent）
+  // 监听 App 层发起的文件拖放事件(来自 Tauri onDragDropEvent)
   useEffect(() => {
     const handleFileDrop = async (e: Event) => {
       const detail = (e as CustomEvent).detail as { paths: string[] } | undefined;
