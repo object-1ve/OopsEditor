@@ -34,6 +34,7 @@ import { fetchAndSetFileMtime } from "@/store/fileMtime";
 import { saveTab } from "@/services/editorSave";
 import { clipboardToMarkdownTable, tsvToMarkdownTable } from "@/utils/clipboardTable";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { findMatchColumns } from "@/utils/editorJump";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 
@@ -198,6 +199,8 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
   const showNotification = useEditorStore(s => s.showNotification);
   const markdownOutlineTarget = useEditorStore(s => s.markdownOutlineTarget);
   const clearMarkdownOutlineTarget = useEditorStore(s => s.clearMarkdownOutlineTarget);
+  const searchJumpTarget = useEditorStore(s => s.searchJumpTarget);
+  const clearSearchJumpTarget = useEditorStore(s => s.clearSearchJumpTarget);
   const editorWordWrap = useEditorStore(s => s.editorWordWrap);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const pasteCleanupRef = useRef<(() => void) | null>(null);
@@ -242,6 +245,38 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     editor.focus();
     clearMarkdownOutlineTarget();
   }, [activeTab, clearMarkdownOutlineTarget, markdownOutlineTarget]);
+
+  // 内容搜索跳行:选中命中行内首个匹配串(大小写不敏感),找不到则落到行首
+  useEffect(() => {
+    if (
+      !searchJumpTarget ||
+      !activeTab ||
+      activeTab.path !== searchJumpTarget.path ||
+      activeTab.isPreviewMode
+    ) {
+      return;
+    }
+
+    const editor = editorRef.current;
+    if (!editor) {
+      return;
+    }
+
+    const model = editor.getModel();
+    const lineCount = model?.getLineCount() ?? 0;
+    const line = Math.min(Math.max(1, searchJumpTarget.line), Math.max(1, lineCount));
+    let startColumn = 1;
+    let endColumn = 1;
+    if (model && line <= lineCount) {
+      const cols = findMatchColumns(model.getLineContent(line), searchJumpTarget.query);
+      if (cols) [startColumn, endColumn] = cols;
+    }
+
+    editor.revealLineInCenter(line);
+    editor.setSelection({ startLineNumber: line, startColumn, endLineNumber: line, endColumn });
+    editor.focus();
+    clearSearchJumpTarget();
+  }, [activeTab, clearSearchJumpTarget, searchJumpTarget]);
 
   // 监听 App 层发起的文件拖放事件（来自 Tauri onDragDropEvent）
   useEffect(() => {

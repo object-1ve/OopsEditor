@@ -61,6 +61,7 @@ export default function Sidebar() {
   const removePinnedFoldersUnder = useEditorStore((s) => s.removePinnedFoldersUnder);
   const collapseAllFolders = useEditorStore((s) => s.collapseAllFolders);
   const showModal = useEditorStore((s) => s.showModal);
+  const navigateToSearchMatch = useEditorStore((s) => s.navigateToSearchMatch);
   const setHoveredPath = useEditorStore((s) => s.setHoveredPath);
   const hoveredPath = useEditorStore((s) => s.hoveredPath);
   const setFolderExpanded = useEditorStore((s) => s.setFolderExpanded);
@@ -1265,7 +1266,14 @@ export default function Sidebar() {
       {isSearchOpen && (
         <ContentSearchDialog
           roots={sortedRootPaths}
-          onOpenFile={(path) => void openFile(path)}
+          onOpenFile={(match, query) => {
+            void (async () => {
+              await openFile(match.path);
+              if (query) {
+                navigateToSearchMatch({ path: match.path, line: match.line, query });
+              }
+            })();
+          }}
           onClose={() => setIsSearchOpen(false)}
         />
       )}

@@ -17,7 +17,7 @@ interface ContentMatch {
 
 interface ContentSearchDialogProps {
   roots: string[];
-  onOpenFile: (path: string) => void;
+  onOpenFile: (match: ContentMatch, query: string) => void;
   onClose: () => void;
 }
 
@@ -77,13 +77,13 @@ export default function ContentSearchDialog({ roots, onOpenFile, onClose }: Cont
     if (hasQuery) {
       const m = matches[index];
       if (m) {
-        onOpenFile(m.path);
+        onOpenFile(m, query.trim());
         onClose();
       }
     } else {
       const p = recentItems[index];
       if (p) {
-        onOpenFile(p);
+        onOpenFile({ path: p, line: 1, preview: "" }, "");
         onClose();
       }
     }

@@ -3,7 +3,7 @@
  */
 import type { StateCreator } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { EditorState, MarkdownOutlineTarget } from "@/store/types";
+import type { EditorState, MarkdownOutlineTarget, SearchJumpTarget } from "@/store/types";
 import {
   saveSetting,
   DEFAULT_MAX_OPEN_TABS,
@@ -41,6 +41,9 @@ export const createUiSlice: StateCreator<
     | "markdownOutlineTarget"
     | "navigateToMarkdownHeading"
     | "clearMarkdownOutlineTarget"
+    | "searchJumpTarget"
+    | "navigateToSearchMatch"
+    | "clearSearchJumpTarget"
     | "toggleLeftSidebar"
     | "toggleRightSidebar"
     | "setLeftSidebarWidth"
@@ -74,6 +77,7 @@ export const createUiSlice: StateCreator<
   maxRecentFolders: 20,
   recentFiles: [],
   maxRecentFiles: DEFAULT_MAX_RECENT_FILES,
+  searchJumpTarget: null,
   isSettingsOpen: false,
   modal: null,
   notification: null,
@@ -209,5 +213,8 @@ export const createUiSlice: StateCreator<
 
   clearMarkdownOutlineTarget: () => set({ markdownOutlineTarget: null }),
 
+  navigateToSearchMatch: (target: SearchJumpTarget) => set({ searchJumpTarget: target }),
+
+  clearSearchJumpTarget: () => set({ searchJumpTarget: null }),
   setFloatingImageOpen: (open: boolean) => set({ isFloatingImageOpen: open }),
 });

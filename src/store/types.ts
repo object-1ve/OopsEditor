@@ -23,6 +23,12 @@ export interface MarkdownOutlineTarget {
   line: number;
 }
 
+export interface SearchJumpTarget {
+  path: string;
+  line: number;
+  query: string;
+}
+
 export type EditorPane = "primary" | "secondary";
 
 /* ── Full EditorState interface including all actions ── */
@@ -58,6 +64,7 @@ export interface EditorState {
   pinnedFolders: string[];
   hoveredPath: string | null;
   markdownOutlineTarget: MarkdownOutlineTarget | null;
+  searchJumpTarget: SearchJumpTarget | null;
   rightSidebarIconOrder: string[];
   captureProtection: boolean;
   sidebarSortField: "name" | "modified";
@@ -142,6 +149,8 @@ export interface EditorState {
   collapseAllFolders: () => void;
   navigateToMarkdownHeading: (target: MarkdownOutlineTarget) => void;
   clearMarkdownOutlineTarget: () => void;
+  navigateToSearchMatch: (target: SearchJumpTarget) => void;
+  clearSearchJumpTarget: () => void;
   setRightSidebarIconOrder: (order: string[]) => void;
   setSidebarSortField: (field: "name" | "modified") => void;
   setSidebarSortOrder: (order: "asc" | "desc") => void;
