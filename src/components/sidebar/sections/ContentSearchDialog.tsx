@@ -73,7 +73,6 @@ export default function ContentSearchDialog({ roots, onOpenFile, onClose }: Cont
   // 有查询走搜索结果,空查询走最近打开(与 Launcher 一致)
   const recentItems = recentFiles.slice(0, 15);
   const listLength = hasQuery ? matches.length : recentItems.length;
-
   const openAt = (index: number) => {
     if (hasQuery) {
       const m = matches[index];
@@ -118,8 +117,8 @@ export default function ContentSearchDialog({ roots, onOpenFile, onClose }: Cont
 
       {/* Dialog */}
       <div className="relative w-full max-w-[560px] mx-4 bg-secondary border border-border rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
-        {/* Search box */}
-        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
+        {/* Search box:焦点反馈在整行容器上;输入框 outline 用内联盖掉全局 :focus-visible */}
+        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border transition-colors focus-within:border-accent/60 focus-within:bg-accent/[0.04]">
           <Search size={20} className="shrink-0 text-text-muted" />
           <input
             ref={inputRef}
@@ -128,7 +127,8 @@ export default function ContentSearchDialog({ roots, onOpenFile, onClose }: Cont
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="搜索文件内容..."
-            className="flex-1 bg-transparent border-none outline-none text-base font-medium text-text placeholder:text-text-muted placeholder:font-normal"
+            style={{ outline: "none" }}
+            className="flex-1 bg-transparent border-none text-base font-medium text-text placeholder:text-text-muted placeholder:font-normal"
           />
           {searching && <Loader2 size={16} className="shrink-0 text-text-muted animate-spin" />}
         </div>
