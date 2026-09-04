@@ -6,7 +6,7 @@ import {
   Folder, FolderOpen, Plus, Search, X, Edit2, Trash2,
   ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin,
   ChevronsUp, RotateCw, ArrowDownAZ, ArrowUpAZ, Clock, FileClock, History,
-  SortAsc, SortDesc, Scissors, ClipboardPaste,
+  SortAsc, SortDesc, Scissors, ClipboardPaste, Eraser,
 } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
@@ -761,6 +761,35 @@ export default function Sidebar() {
               showNotification(`已刷新目录 ${name}`, "success");
             }
             break;
+          case "clear-empty": {
+            if (!is_dir) break;
+            try {
+              const preview = await invoke<{ count: number; files: string[] }>("delete_empty_files", { path, dryRun: true });
+              if (preview.count === 0) {
+                showNotification(`"${name}" 下没有空文件`, "info");
+                break;
+              }
+              const shown = preview.files.slice(0, 8).map((f) => f.split(/[/\\]/).pop() || f).join("、");
+              const more = preview.count > 8 ? `等共 ${preview.count} 个` : "";
+              showModal({
+                title: "清空空文件",
+                message: `在 "${name}" 下发现 ${preview.count} 个空文件(${shown}${more})，确定要永久删除吗？此操作无法撤销。`,
+                kind: "danger",
+                onConfirm: async () => {
+                  try {
+                    const result = await invoke<{ count: number; files: string[] }>("delete_empty_files", { path, dryRun: false });
+                    window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path } }));
+                    showNotification(`已删除 ${result.count} 个空文件`, "success");
+                  } catch (err) {
+                    showNotification(`清空失败: ${err}`, "error");
+                  }
+                },
+              });
+            } catch (err) {
+              showNotification(`扫描失败: ${err}`, "error");
+            }
+            break;
+          }
           case "pin":
             pinFolder(path);
             showNotification(`已置顶文件夹 ${name}`, "success");
@@ -990,6 +1019,7 @@ export default function Sidebar() {
       { label: "新建文件", icon: <FilePlus size={14} />, onClick: () => handleAction("new-file") },
       { label: "新建文件夹", icon: <FolderPlus size={14} />, onClick: () => handleAction("new-folder") },
       ...(contextMenu.entry.is_dir ? [{ label: "刷新", icon: <RotateCw size={14} />, onClick: () => handleAction("refresh") }] : []),
+      ...(contextMenu.entry.is_dir ? [{ label: "清空空文件", icon: <Eraser size={14} />, onClick: () => handleAction("clear-empty") }] : []),
       { separator: true, label: "", onClick: () => {} },
       ...(rootPaths.length > 0 ? [{ label: "全部折叠", icon: <ChevronsUp size={14} />, onClick: handleCollapseAllFolders }] : []),
       ...(rootPaths.length > 0 ? [{ separator: true, label: "", onClick: () => {} }] : []),

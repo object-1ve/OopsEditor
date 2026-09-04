@@ -415,6 +415,30 @@ fn rename_item(path: String, new_path: String) -> Result<(), String> {
     fs::rename(&path, &new_path).map_err(|e| format!("重命名失败: {}", e))
 }
 
+#[derive(serde::Serialize)]
+struct EmptyFilesResult {
+    count: usize,
+    files: Vec<String>,
+}
+
+fn collect_empty_files(dir: &std::path::Path, out: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        // 跳过符号链接:避免跳出根目录或循环递归;删软链本身语义也与"清空空文件"不符
+        let Ok(meta) = fs::symlink_metadata(&path) else { continue };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            collect_empty_files(&path, out);
+        } else if meta.is_file() && meta.len() == 0 {
+            out.push(path.to_string_lossy().replace('\\', "/"));
+        }
+    }
+}
+
 #[tauri::command]
 fn delete_item(path: String) -> Result<(), String> {
     let metadata = fs::metadata(&path).map_err(|e| format!("获取文件信息失败: {}", e))?;
@@ -423,6 +447,23 @@ fn delete_item(path: String) -> Result<(), String> {
     } else {
         fs::remove_file(&path).map_err(|e| format!("删除文件失败: {}", e))
     }
+}
+
+#[tauri::command]
+fn delete_empty_files(path: String, dry_run: bool) -> Result<EmptyFilesResult, String> {
+    let root = std::path::Path::new(&path);
+    if !root.is_dir() {
+        return Err(format!("不是目录: {}", path));
+    }
+    let mut files = Vec::new();
+    collect_empty_files(root, &mut files);
+    files.sort();
+    if !dry_run {
+        for f in &files {
+            fs::remove_file(f).map_err(|e| format!("删除文件失败 {}: {}", f, e))?;
+        }
+    }
+    Ok(EmptyFilesResult { count: files.len(), files })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -582,6 +623,7 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         reveal_in_explorer,
         rename_item,
         delete_item,
+        delete_empty_files,
         create_terminal,
         write_to_terminal,
         resize_terminal,
@@ -658,4 +700,49 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         // 防截屏
         set_capture_protection,
     ]
+}
+
+#[cfg(test)]
+mod empty_files_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn fixture() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "oops-empty-test-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("empty1.txt"), b"").unwrap();
+        fs::write(root.join("sub").join("empty2.txt"), b"").unwrap();
+        fs::write(root.join("sub").join("full.txt"), b"data").unwrap();
+        root
+    }
+
+    #[test]
+    fn dry_run_lists_without_deleting() {
+        let root = fixture();
+        let result = delete_empty_files(root.to_string_lossy().to_string(), true).unwrap();
+        assert_eq!(result.count, 2, "files: {:?}", result.files);
+        assert!(root.join("empty1.txt").exists());
+        assert!(root.join("sub").join("empty2.txt").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn real_run_deletes_only_empty() {
+        let root = fixture();
+        let result = delete_empty_files(root.to_string_lossy().to_string(), false).unwrap();
+        assert_eq!(result.count, 2, "files: {:?}", result.files);
+        assert!(!root.join("empty1.txt").exists());
+        assert!(!root.join("sub").join("empty2.txt").exists());
+        assert!(root.join("sub").join("full.txt").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_directory() {
+        assert!(delete_empty_files("Z:/no-such-dir-xyz".to_string(), true).is_err());
+    }
 }

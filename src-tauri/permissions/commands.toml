@@ -20,6 +20,7 @@ commands.allow = [
   "reveal_in_explorer",
   "rename_item",
   "delete_item",
+  "delete_empty_files",
   "create_terminal",
   "write_to_terminal",
   "resize_terminal",
