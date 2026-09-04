@@ -31,7 +31,7 @@
     "@xterm/xterm": "^6.0.0",
     "docx-preview": "^0.3.7",
     "highlight.js": "^11.11.1",
-    "lucide-react": "^1.16.0",
+    "lucide-react": "^1.34.0",
     "material-icon-theme": "^5.35.0",
     "monaco-editor": "^0.55.1",
     "react": "^19.1.0",
