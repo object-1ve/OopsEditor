@@ -115,6 +115,8 @@ fn show_main_window(app: &tauri::AppHandle) {
 
 /// Win32 原生抢前台:还原最小化/隐藏窗口,借前台线程输入权限后激活。
 /// 在 single-instance 回调的 spawned thread 或托盘事件线程调用均可。
+/// 注意 tao 的窗口操作是异步转发到主线程的,原生调用必须在最后再补一次,
+/// 否则排队中的 tao 操作可能后执行并覆盖 z 序/激活状态。
 #[cfg(target_os = "windows")]
 fn force_foreground_native(window: &tauri::WebviewWindow) {
     use raw_window_handle::HasWindowHandle;
@@ -122,7 +124,8 @@ fn force_foreground_native(window: &tauri::WebviewWindow) {
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows::Win32::UI::WindowsAndMessaging::{
         BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
-        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+        SetForegroundWindow, SetWindowPos, ShowWindow, HWND_NOTOPMOST, HWND_TOPMOST,
+        SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE, SW_SHOW,
     };
 
     let Ok(handle) = window.window_handle() else {
@@ -146,7 +149,27 @@ fn force_foreground_native(window: &tauri::WebviewWindow) {
         let attached = !foreground.0.is_null()
             && foreground_tid != current_tid
             && AttachThreadInput(foreground_tid, current_tid, true).as_bool();
+        // 置顶切换不用 SWP_NOACTIVATE:带激活语义的 z 序提升才能抢前台。
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
+        let _ = SetForegroundWindow(hwnd);
         let _ = BringWindowToTop(hwnd);
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_NOTOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
         let _ = SetForegroundWindow(hwnd);
         if attached {
             let _ = AttachThreadInput(foreground_tid, current_tid, false);
