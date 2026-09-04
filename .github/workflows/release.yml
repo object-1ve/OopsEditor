@@ -140,8 +140,9 @@ jobs:
         working-directory: src-tauri
 
       # ── Build ───────────────────────────────────────────────────────────
+      # bundles 必须含 app:createUpdaterArtifacts 只给 app 包生成 .app.tar.gz + .sig（纯 dmg 不出 updater 包）
       - name: Build Tauri application (DMG)
-        run: pnpm tbuild --bundles dmg
+        run: pnpm tbuild --bundles dmg,app
 
       # ── Upload build artifacts ──────────────────────────────────────────
       # 多路径上传会保留目录层级,release 步骤必须用 **/ 递归 glob 取包。
@@ -201,11 +202,8 @@ jobs:
             **/*.msi
             **/*.msi.sig
             **/*.dmg
-            **/*.zip
-            **/*.zip.sig
             **/*.tar.gz
             **/*.tar.gz.sig
-            **/*.sig
             **/latest.json
           generate_release_notes: true
           make_latest: true
