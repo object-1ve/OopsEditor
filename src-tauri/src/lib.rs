@@ -814,13 +814,19 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
 #[cfg(test)]
 mod empty_files_tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
+
     fn fixture() -> std::path::PathBuf {
+        // 并行测试 + Windows 粗粒度时钟会让同 tick 的 nanos 重名，加线程 id 与序列号隔离。
         let root = std::env::temp_dir().join(format!(
-            "oops-empty-test-{}-{}",
+            "oops-empty-test-{}-{}-{:?}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+            std::thread::current().id(),
+            FIXTURE_SEQ.fetch_add(1, Ordering::SeqCst)
         ));
         fs::create_dir_all(root.join("sub")).unwrap();
         fs::write(root.join("empty1.txt"), b"").unwrap();
@@ -859,13 +865,19 @@ mod empty_files_tests {
 #[cfg(test)]
 mod content_search_tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
+
     fn fixture() -> std::path::PathBuf {
+        // 并行测试 + Windows 粗粒度时钟会让同 tick 的 nanos 重名，加线程 id 与序列号隔离。
         let root = std::env::temp_dir().join(format!(
-            "oops-search-test-{}-{}",
+            "oops-search-test-{}-{}-{:?}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+            std::thread::current().id(),
+            FIXTURE_SEQ.fetch_add(1, Ordering::SeqCst)
         ));
         fs::create_dir_all(root.join("sub")).unwrap();
         fs::create_dir_all(root.join("node_modules")).unwrap();
