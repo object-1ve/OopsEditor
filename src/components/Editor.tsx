@@ -245,42 +245,48 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     editor.focus();
     clearMarkdownOutlineTarget();
   }, [activeTab, clearMarkdownOutlineTarget, markdownOutlineTarget]);
-  // 内容搜索跳行:选中命中行内首个匹配串,再用选区种子打开查找框(全文高亮+计数+箭头跳转)
-  useEffect(() => {
-    if (
-      !searchJumpTarget ||
-      !activeTab ||
-      activeTab.path !== searchJumpTarget.path ||
-      activeTab.isPreviewMode
-    ) {
+  // 内容搜索跳行:effect(实例已挂载)与 handleMount(新实例刚挂载)双入口消费,
+  // mount 前 effect 空转留 target,失败不清 target 等 mount 回调重试
+  const consumeSearchJump = useCallback((editor: Parameters<OnMount>[0]) => {
+    const state = useEditorStore.getState();
+    const target = state.searchJumpTarget;
+    const id = currentTabIdRef.current;
+    const tab =
+      state.tabs.find((t) => t.id === id) ?? state.secondaryTabs.find((t) => t.id === id);
+    if (!target || !tab || tab.path !== target.path || tab.isPreviewMode || tab.viewMode === "base64") {
       return;
     }
+    try {
+      const model = editor.getModel();
+      const lineCount = model?.getLineCount() ?? 0;
+      const line = Math.min(Math.max(1, target.line), Math.max(1, lineCount));
+      let startColumn = 1;
+      let endColumn = 1;
+      if (model && line <= lineCount) {
+        const cols = findMatchColumns(model.getLineContent(line), target.query);
+        if (cols) [startColumn, endColumn] = cols;
+      }
+      editor.revealLineInCenter(line);
+      editor.setSelection({ startLineNumber: line, startColumn, endLineNumber: line, endColumn });
+      // 有选中才开查找框:空选区会清空上次搜索串,无匹配(内容已变)则只跳行
+      if (endColumn > startColumn) {
+        void editor.getAction("actions.findWithSelection")?.run();
+      } else {
+        editor.focus();
+      }
+      state.clearSearchJumpTarget();
+    } catch {
+      // 实例正处挂载过渡(陈旧 editor)时不消费,留给 handleMount 重试
+    }
+  }, []);
 
+  useEffect(() => {
     const editor = editorRef.current;
     if (!editor) {
       return;
     }
-
-    const model = editor.getModel();
-    const lineCount = model?.getLineCount() ?? 0;
-    const line = Math.min(Math.max(1, searchJumpTarget.line), Math.max(1, lineCount));
-    let startColumn = 1;
-    let endColumn = 1;
-    if (model && line <= lineCount) {
-      const cols = findMatchColumns(model.getLineContent(line), searchJumpTarget.query);
-      if (cols) [startColumn, endColumn] = cols;
-    }
-
-    editor.revealLineInCenter(line);
-    editor.setSelection({ startLineNumber: line, startColumn, endLineNumber: line, endColumn });
-    // 有选中才开查找框:空选区会清空上次搜索串,无匹配(内容已变)则只跳行
-    if (endColumn > startColumn) {
-      void editor.getAction("actions.findWithSelection")?.run();
-    } else {
-      editor.focus();
-    }
-    clearSearchJumpTarget();
-  }, [activeTab, clearSearchJumpTarget, searchJumpTarget]);
+    consumeSearchJump(editor);
+  }, [activeTab, consumeSearchJump, searchJumpTarget]);
   // 监听 App 层发起的文件拖放事件(来自 Tauri onDragDropEvent)
   useEffect(() => {
     const handleFileDrop = async (e: Event) => {
@@ -361,7 +367,8 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
-
+    // 新实例刚挂载:消费 mount 前已到达的搜索跳转
+    consumeSearchJump(editor);
     // 注册编辑器插入回调，供拖放等其他模块使用
     registerEditorInsert((text: string) => {
       const selection = editor.getSelection();
@@ -640,7 +647,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
         }
       },
     });
-  }, [persistTab]);
+  }, [persistTab, consumeSearchJump]);
 
   // 组件卸载时清理编辑器插入回调
   useEffect(() => {
