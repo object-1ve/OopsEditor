@@ -94,15 +94,63 @@ fn exit_app(app: tauri::AppHandle) {
 }
 
 /// 显示并激活主窗口,确保在文件关联双击/托盘点击时弹出到前台。
-/// Windows 前台锁会阻止后台进程直接抢焦点(set_focus 会被忽略),
-/// 置顶再取消置顶可绕过该限制,强制把窗口带到前台。
+/// Windows 前台锁会阻止后台进程直接抢焦点:
+/// - tao 的 set_focus 内部有守卫(要求 VISIBLE 且非最小化),隐藏到托盘后可能直接跳过;
+/// - tao 的 set_always_on_top 底层带 SWP_NOACTIVATE,只改 z 序不激活。
+/// 因此在 tao 调用之外再走一遍 Win32 原生抢前台:
+/// ShowWindow 还原 + AttachThreadInput 借前台线程输入权限 + BringWindowToTop/SetForegroundWindow。
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
+        #[cfg(target_os = "windows")]
+        force_foreground_native(&window);
         let _ = window.set_focus();
         let _ = window.set_always_on_top(true);
         let _ = window.set_always_on_top(false);
+        #[cfg(target_os = "windows")]
+        force_foreground_native(&window);
+    }
+}
+
+/// Win32 原生抢前台:还原最小化/隐藏窗口,借前台线程输入权限后激活。
+/// 在 single-instance 回调的 spawned thread 或托盘事件线程调用均可。
+#[cfg(target_os = "windows")]
+fn force_foreground_native(window: &tauri::WebviewWindow) {
+    use raw_window_handle::HasWindowHandle;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
+        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+    let raw_window_handle::RawWindowHandle::Win32(win_handle) = handle.as_raw() else {
+        return;
+    };
+    let hwnd = HWND(win_handle.hwnd.get() as _);
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        } else {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+        }
+        // 借用当前前台窗口线程的输入权限,绕过前台锁对 SetForegroundWindow 的拒绝。
+        let foreground = GetForegroundWindow();
+        let mut foreground_pid = 0u32;
+        let foreground_tid = GetWindowThreadProcessId(foreground, Some(&mut foreground_pid));
+        let current_tid = GetCurrentThreadId();
+        let attached = !foreground.0.is_null()
+            && foreground_tid != current_tid
+            && AttachThreadInput(foreground_tid, current_tid, true).as_bool();
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+        if attached {
+            let _ = AttachThreadInput(foreground_tid, current_tid, false);
+        }
     }
 }
 
