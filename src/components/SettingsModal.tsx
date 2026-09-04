@@ -8,6 +8,8 @@ import {
   MIN_RECENT_FILES_LIMIT,
 } from "@/utils/settings";
 import { open } from "@tauri-apps/plugin-dialog";
+import { checkForUpdates, useUpdaterDialog } from "@/hooks/useUpdater";
+import { version as APP_VERSION } from "../../package.json";
 
 export default function SettingsModal() {
   const {
@@ -29,6 +31,7 @@ export default function SettingsModal() {
     setMaxRecentFiles,
   } = useEditorStore();
   const modalRef = useRef<HTMLDivElement>(null);
+  const { checking } = useUpdaterDialog();
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -272,6 +275,25 @@ export default function SettingsModal() {
                 className="w-20 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text outline-none transition-colors focus:border-accent"
                 title={`设置最近文件记录数量（${MIN_RECENT_FILES_LIMIT}-${MAX_RECENT_FILES_LIMIT}）`}
               />
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-primary/40 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-text">软件更新</div>
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  当前版本 v{APP_VERSION}，发现新版本时启动后会自动提示。
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={checking}
+                onClick={() => void checkForUpdates({ manual: true })}
+                className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-accent-bright disabled:cursor-not-allowed disabled:opacity-50"
+                title="立即检查新版本"
+              >
+                {checking ? "检查中…" : "检查更新"}
+              </button>
             </div>
           </div>
         </div>

@@ -12,6 +12,8 @@ import TerminalView from "@/components/Terminal";
 import Toast from "@/components/Toast";
 import ConfirmModal from "@/components/ConfirmModal";
 import SettingsModal from "@/components/SettingsModal";
+import UpdateDialog from "@/components/UpdateDialog";
+import { checkForUpdates } from "@/hooks/useUpdater";
 import ContextMenu from "@/components/ContextMenu";
 import UpgradePanel from "@/components/UpgradePanel";
 import { useEditorStore } from "@/store/editor";
@@ -574,6 +576,14 @@ function App() {
     };
   }, []);
 
+  // 应用内自动更新：主窗口启动后延迟检查一次（模块内 checkedOnce 守卫，失败静默）
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void checkForUpdates({ manual: false });
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
   if (!isAppReady) {
     return (
       <div className="h-screen w-screen flex items-center justify-center overflow-hidden bg-deepest">
@@ -946,6 +956,7 @@ function App() {
       )}
 
       <ConfirmModal />
+      <UpdateDialog />
       <SettingsModal />
       {showUpgradePanel && <UpgradePanel onClose={() => setShowUpgradePanel(false)} />}
       <Toast />

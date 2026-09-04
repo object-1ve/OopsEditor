@@ -87,6 +87,12 @@ fn set_capture_protection(app: tauri::AppHandle, enabled: bool) -> Result<(), St
     apply_capture_protection(&app, enabled)
 }
 
+/// 退出应用（更新安装完成后由前端调用，控制权交还给安装器）。
+#[tauri::command]
+fn exit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 /// 显示并激活主窗口,确保在文件关联双击/托盘点击时弹出到前台。
 /// Windows 前台锁会阻止后台进程直接抢焦点(set_focus 会被忽略),
 /// 置顶再取消置顶可绕过该限制,强制把窗口带到前台。
@@ -594,6 +600,7 @@ pub fn run() {
                 show_main_window(&app);
             });
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -797,9 +804,10 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         git_pull,
         git_remote_add,
         git_remote_get,
-        git_get_user,
         // 防截屏
         set_capture_protection,
+        // 应用内更新完成后退出，由安装器接管
+        exit_app,
     ]
 }
 

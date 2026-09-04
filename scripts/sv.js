@@ -7,11 +7,11 @@ const packageJsonPath = path.join(rootDir, "package.json");
 const tauriConfigPath = path.join(rootDir, "src-tauri", "tauri.conf.json");
 const cargoTomlPath = path.join(rootDir, "src-tauri", "Cargo.toml");
 
-const inputVersion = process.argv[2]?.trim();
-
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 const currentVersion = packageJson.version;
-const targetVersion = inputVersion || currentVersion;
+const rawInput = process.argv[2]?.trim() ?? "";
+// 接受 v 前缀（如 v0.1.53），写入时统一去掉前缀；无参数时保留原值
+const targetVersion = rawInput.replace(/^v/, "") || currentVersion;
 
 if (!/^\d+\.\d+\.\d+$/.test(targetVersion)) {
   console.error("版本号格式必须是 x.y.z，例如 0.3.25");

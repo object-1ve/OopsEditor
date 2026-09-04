@@ -10,9 +10,9 @@
     "tauri": "tauri",
     "tdev": "tauri dev",
     "tbuild": "tauri build",
+    "v": "node scripts/sv.js",
     "tbundle": "tauri build --bundles msi",
     "tbundle:mac": "tauri build --bundles dmg",
-    "v": "node scripts/sync-version.js",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:frontend": "tsc --noEmit"
   },
@@ -26,6 +26,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-updater": "^2.11.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "docx-preview": "^0.3.7",

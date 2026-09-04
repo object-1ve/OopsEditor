@@ -34,10 +34,14 @@ jobs:
   # ── Build (Windows x64) ─────────────────────────────────────────────────────
   build:
     runs-on: windows-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # ── Rust toolchain ──────────────────────────────────────────────────
       - name: Setup Rust toolchain
@@ -76,20 +80,32 @@ jobs:
         run: pnpm tbuild --bundles msi
 
       # ── Upload build artifacts ──────────────────────────────────────────
+      # 多路径上传会保留目录层级,release 步骤必须用 **/ 递归 glob 取包。
       - name: Upload MSI installer
         uses: actions/upload-artifact@v4
         with:
           name: OopsEditor-Windows
-          path: src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: warn
-
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.sig
+            src-tauri/target/release/bundle/msi/*.zip
+            src-tauri/target/release/bundle/msi/*.zip.sig
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
+            src-tauri/target/release/bundle/nsis/*.zip
+            src-tauri/target/release/bundle/nsis/*.zip.sig
+          if-no-files-found: error
   # ── Build (macOS ARM64) ──────────────────────────────────────────────────────
   build-macos:
     runs-on: macos-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # ── Rust toolchain ──
       - name: Setup Rust toolchain
@@ -128,12 +144,17 @@ jobs:
         run: pnpm tbuild --bundles dmg
 
       # ── Upload build artifacts ──────────────────────────────────────────
+      # 多路径上传会保留目录层级,release 步骤必须用 **/ 递归 glob 取包。
       - name: Upload DMG installer
         uses: actions/upload-artifact@v4
         with:
           name: OopsEditor-macOS
-          path: src-tauri/target/release/bundle/dmg/*.dmg
-          if-no-files-found: warn
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/dmg/*.sig
+            src-tauri/target/release/bundle/macos/*.tar.gz
+            src-tauri/target/release/bundle/macos/*.sig
+          if-no-files-found: error
 
   # ── Release (after all builds succeed) ───────────────────────────────────────
   release:
@@ -158,7 +179,11 @@ jobs:
           name: OopsEditor-macOS
 
       - name: List release assets
-        run: ls -lh
+        run: find . -maxdepth 4 -type f | sort
+
+      # updater 通道:用带签名的安装包拼装 latest.json(无签名包时脚本 exit 1 直接爆红)。
+      - name: Generate latest.json for updater
+        run: node .github/scripts/gen-latest-json.mjs ${{ github.ref_name }}
 
       # 发布正文由 release-body.mjs 从 git 提交历史自动生成(上一个标签..当前标签),
       # 无需手动维护 CHANGELOG。脚本把正文写入临时文件,再用 body_path 指定。
@@ -173,8 +198,15 @@ jobs:
           # body_path 指定 release-body.mjs 生成的正文;generate_release_notes 追加自动生成的对比链接。
           body_path: release_body.md
           files: |
-            *.msi
-            *.dmg
+            **/*.msi
+            **/*.msi.sig
+            **/*.dmg
+            **/*.zip
+            **/*.zip.sig
+            **/*.tar.gz
+            **/*.tar.gz.sig
+            **/*.sig
+            **/latest.json
           generate_release_notes: true
           make_latest: true
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
