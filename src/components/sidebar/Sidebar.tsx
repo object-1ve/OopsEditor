@@ -30,7 +30,7 @@ import type { DirEntry } from "./sidebarUtils";
 import RootFolder from "./RootFolder";
 import RecentDropdown from "./sections/RecentDropdown";
 import RecentFilesDropdown from "./sections/RecentFilesDropdown";
-import SearchBar from "./sections/SearchBar";
+import ContentSearchDialog from "./sections/ContentSearchDialog";
 import PinnedSection from "./sections/PinnedSection";
 import EmptyFolderState from "./sections/EmptyFolderState";
 
@@ -95,7 +95,6 @@ export default function Sidebar() {
   const [recentMenu, setRecentMenu] = useState<{ x: number; y: number } | null>(null);
   const [recentFilesMenu, setRecentFilesMenu] = useState<{ x: number; y: number } | null>(null);
   const isResizing = useRef(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const sortedRootPaths = useMemo(() => {
     const defaultPathsSet = new Set(defaultFolders.map((f) => normalizePath(f.path)));
@@ -906,13 +905,6 @@ export default function Sidebar() {
     [defaultFolderContextMenu, updateDefaultFolder, removeDefaultFolder, showNotification],
   );
 
-  // Focus search input when opened
-  useEffect(() => {
-    if (isSearchOpen && searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
-  }, [isSearchOpen]);
-
   // F2 rename shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1224,11 +1216,9 @@ export default function Sidebar() {
             />
           </div>
           <button
-            onClick={() => setIsSearchOpen(!isSearchOpen)}
-            className={`p-1 rounded hover:bg-surface transition-colors cursor-pointer ${
-              isSearchOpen ? "text-accent bg-surface" : "text-text-muted hover:text-accent"
-            }`}
-            title="搜索文件"
+            onClick={() => setIsSearchOpen(true)}
+            className="p-1 rounded hover:bg-surface transition-colors cursor-pointer text-text-muted hover:text-accent"
+            title="搜索文件内容"
           >
             <Search size={13} />
           </button>
@@ -1272,9 +1262,13 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {isSearchOpen && <SearchBar searchInputRef={searchInputRef} roots={sortedRootPaths} onOpenFile={(path) => void openFile(path)} />}
-
-      {/* ── Main content area ── */}
+      {isSearchOpen && (
+        <ContentSearchDialog
+          roots={sortedRootPaths}
+          onOpenFile={(path) => void openFile(path)}
+          onClose={() => setIsSearchOpen(false)}
+        />
+      )}
       <div
         className="flex-1 overflow-auto"
         onContextMenu={handleEmptyAreaContextMenu}
