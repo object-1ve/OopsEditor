@@ -21,6 +21,7 @@ commands.allow = [
   "rename_item",
   "delete_item",
   "delete_empty_files",
+  "search_file_contents",
   "create_terminal",
   "write_to_terminal",
   "resize_terminal",

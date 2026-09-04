@@ -1272,7 +1272,7 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {isSearchOpen && <SearchBar searchInputRef={searchInputRef} />}
+      {isSearchOpen && <SearchBar searchInputRef={searchInputRef} roots={sortedRootPaths} onOpenFile={(path) => void openFile(path)} />}
 
       {/* ── Main content area ── */}
       <div

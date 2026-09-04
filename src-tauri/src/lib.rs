@@ -466,6 +466,107 @@ fn delete_empty_files(path: String, dry_run: bool) -> Result<EmptyFilesResult, S
     Ok(EmptyFilesResult { count: files.len(), files })
 }
 
+#[derive(serde::Serialize, Debug)]
+struct ContentMatch {
+    path: String,
+    line: usize,
+    preview: String,
+}
+
+#[derive(serde::Serialize, Debug)]
+struct ContentSearchResult {
+    matches: Vec<ContentMatch>,
+    truncated: bool,
+}
+
+const SEARCH_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const SEARCH_MAX_MATCHES: usize = 300;
+
+fn search_should_skip_dir(name: &str) -> bool {
+    // 隐藏目录 + 常见构建/依赖目录:内容搜索跳过,否则又慢又吵
+    if name.starts_with('.') {
+        return true;
+    }
+    matches!(
+        name,
+        "node_modules" | "target" | "dist" | "build" | "__pycache__" | "vendors"
+    )
+}
+
+fn search_file(path: &std::path::Path, needle: &str, case_sensitive: bool, out: &mut Vec<ContentMatch>) -> bool {
+    let Ok(meta) = fs::symlink_metadata(path) else { return false };
+    if !meta.is_file() || meta.len() > SEARCH_MAX_FILE_BYTES {
+        return false;
+    }
+    let Ok(bytes) = fs::read(path) else { return false };
+    // 二进制文件:含 NUL 字节即跳过
+    if bytes.contains(&0) {
+        return false;
+    }
+    let Ok(text) = String::from_utf8(bytes) else { return false };
+    let display = path.to_string_lossy().replace('\\', "/");
+    for (idx, line) in text.lines().enumerate() {
+        if out.len() >= SEARCH_MAX_MATCHES {
+            return true;
+        }
+        let hit = if case_sensitive { line.contains(needle) } else { line.to_lowercase().contains(needle) };
+        if hit {
+            let preview: String = line.trim().chars().take(120).collect();
+            out.push(ContentMatch { path: display.clone(), line: idx + 1, preview });
+        }
+    }
+    false
+}
+
+fn search_dir(dir: &std::path::Path, needle: &str, case_sensitive: bool, out: &mut Vec<ContentMatch>) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else { return false };
+    for entry in entries {
+        if out.len() >= SEARCH_MAX_MATCHES {
+            return true;
+        }
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        let Ok(meta) = fs::symlink_metadata(&path) else { continue };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            let skip = path.file_name().and_then(|n| n.to_str()).map(search_should_skip_dir).unwrap_or(false);
+            if !skip && search_dir(&path, needle, case_sensitive, out) {
+                return true;
+            }
+        } else if meta.is_file() && search_file(&path, needle, case_sensitive, out) {
+            return true;
+        }
+    }
+    false
+}
+
+#[tauri::command]
+fn search_file_contents(roots: Vec<String>, query: String, case_sensitive: bool) -> Result<ContentSearchResult, String> {
+    if query.is_empty() {
+        return Ok(ContentSearchResult { matches: Vec::new(), truncated: false });
+    }
+    let needle = if case_sensitive { query } else { query.to_lowercase() };
+    let mut matches = Vec::new();
+    let mut truncated = false;
+    for root in &roots {
+        if matches.len() >= SEARCH_MAX_MATCHES {
+            truncated = true;
+            break;
+        }
+        let root_path = std::path::Path::new(root);
+        if !root_path.is_dir() {
+            continue;
+        }
+        truncated = search_dir(root_path, &needle, case_sensitive, &mut matches);
+        if truncated {
+            break;
+        }
+    }
+    Ok(ContentSearchResult { matches, truncated })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "windows")]
@@ -523,7 +624,6 @@ pub fn run() {
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let show_i = MenuItem::with_id(app, "show", "显示", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
-
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
@@ -624,6 +724,7 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         rename_item,
         delete_item,
         delete_empty_files,
+        search_file_contents,
         create_terminal,
         write_to_terminal,
         resize_terminal,
@@ -744,5 +845,64 @@ mod empty_files_tests {
     #[test]
     fn rejects_non_directory() {
         assert!(delete_empty_files("Z:/no-such-dir-xyz".to_string(), true).is_err());
+    }
+}
+
+#[cfg(test)]
+mod content_search_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn fixture() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "oops-search-test-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::create_dir_all(root.join("node_modules")).unwrap();
+        fs::write(root.join("a.txt"), "hello world\nsecond line\n").unwrap();
+        fs::write(root.join("sub").join("b.md"), "HELLO again\n").unwrap();
+        fs::write(root.join("sub").join("c.txt"), "nothing here\n").unwrap();
+        fs::write(root.join("node_modules").join("lib.js"), "hello from deps\n").unwrap();
+        // 二进制文件:含 NUL,纵有匹配串也应跳过
+        let mut bin = b"hello\x00binary".to_vec();
+        bin.extend_from_slice(&[0u8; 16]);
+        fs::write(root.join("d.bin"), bin).unwrap();
+        root
+    }
+
+    fn roots_of(root: &std::path::Path) -> Vec<String> {
+        vec![root.to_string_lossy().to_string()]
+    }
+
+    #[test]
+    fn finds_matches_case_insensitive() {
+        let root = fixture();
+        let result = search_file_contents(roots_of(&root), "hello".to_string(), false).unwrap();
+        assert!(!result.truncated);
+        // a.txt:1, b.md:1;node_modules 与 d.bin 被跳过
+        assert_eq!(result.matches.len(), 2, "matches: {:?}", result.matches);
+        assert!(result.matches.iter().all(|m| m.preview.to_lowercase().contains("hello")));
+        let lines: Vec<usize> = result.matches.iter().map(|m| m.line).collect();
+        assert!(lines.contains(&1));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn case_sensitive_filters() {
+        let root = fixture();
+        let result = search_file_contents(roots_of(&root), "HELLO".to_string(), true).unwrap();
+        assert_eq!(result.matches.len(), 1, "matches: {:?}", result.matches);
+        assert!(result.matches[0].path.ends_with("b.md"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn empty_query_returns_empty() {
+        let root = fixture();
+        let result = search_file_contents(roots_of(&root), "".to_string(), false).unwrap();
+        assert!(result.matches.is_empty() && !result.truncated);
+        fs::remove_dir_all(&root).unwrap();
     }
 }
