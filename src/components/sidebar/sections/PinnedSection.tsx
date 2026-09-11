@@ -14,6 +14,8 @@ import {
 } from "@dnd-kit/core";
 import { ChevronDown, ChevronRight, Pin } from "lucide-react";
 import MaterialFileIcon from "@/components/MaterialFileIcon";
+import { revealFlashClass } from "@/components/sidebar/sidebarUtils";
+import type { SidebarRevealHighlight } from "@/components/sidebar/sidebarUtils";
 import type { PinnedFile } from "@/store/types";
 
 interface PinnedSectionProps {
@@ -25,6 +27,7 @@ interface PinnedSectionProps {
   onContextMenu: (e: React.MouseEvent, path: string) => void;
   onHover: (path: string | null) => void;
   onReorder: (files: PinnedFile[]) => void;
+  revealHighlight: SidebarRevealHighlight | null;
 }
 
 function PinnedFileItem({
@@ -33,12 +36,14 @@ function PinnedFileItem({
   onOpenFile,
   onContextMenu,
   onHover,
+  revealHighlight,
 }: {
   file: PinnedFile;
   cutSourcePaths?: string[] | null;
   onOpenFile: (path: string) => void;
   onContextMenu: (e: React.MouseEvent, path: string) => void;
   onHover: (path: string | null) => void;
+  revealHighlight: SidebarRevealHighlight | null;
 }) {
   const {
     setNodeRef,
@@ -52,6 +57,7 @@ function PinnedFileItem({
   return (
     <button
       ref={setNodeRef}
+      data-sidebar-path={file.path}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -59,7 +65,9 @@ function PinnedFileItem({
       }}
       className={`flex w-full items-center gap-1.5 px-3 py-1 text-[12px] text-text-secondary transition-colors hover:bg-surface/30 hover:text-text ${
         cutSourcePaths?.includes(file.path) ? "opacity-40" : ""
-      } ${isDragging ? "opacity-30" : ""}`}
+      } ${isDragging ? "opacity-30" : ""} ${
+        revealHighlight && revealHighlight.path === file.path ? revealFlashClass(revealHighlight.variant) : ""
+      }`}
       {...attributes}
       {...listeners}
       onClick={() => onOpenFile(file.path)}
@@ -83,6 +91,7 @@ export default function PinnedSection({
   onContextMenu,
   onHover,
   onReorder,
+  revealHighlight,
 }: PinnedSectionProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -136,6 +145,7 @@ export default function PinnedSection({
                       onOpenFile={onOpenFile}
                       onContextMenu={onContextMenu}
                       onHover={onHover}
+                      revealHighlight={revealHighlight}
                     />
                   ))}
                 </SortableContext>

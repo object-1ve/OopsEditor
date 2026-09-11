@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronLeft, ChevronRight, CopyX, Pin, RefreshCw, Save, X } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, CopyX, Locate, Pin, RefreshCw, Save, X } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
@@ -45,6 +45,7 @@ export default function TitleBar() {
   const showModal = useEditorStore(s => s.showModal);
   const setHoveredPath = useEditorStore(s => s.setHoveredPath);
   const defaultSavePath = useEditorStore(s => s.defaultSavePath);
+  const revealPathInSidebar = useEditorStore(s => s.revealPathInSidebar);
 
   const isSecondary = false; // TitleBar always handles primary pane
   const pane = "primary" as const;
@@ -276,6 +277,15 @@ export default function TitleBar() {
           showNotification(`已固定到左侧边栏: ${tab.name}`, "success");
         },
       },
+      ...(tab.path
+        ? [
+            {
+              label: "在左侧边栏中定位",
+              icon: <Locate size={14} />,
+              onClick: () => revealPathInSidebar(tab.path),
+            },
+          ]
+        : []),
       ...(isSplit ? [
         { separator: true, label: "", onClick: () => {} },
         {
@@ -318,7 +328,7 @@ export default function TitleBar() {
         onClick: handleCloseAll
       },
     ];
-  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit]);
+  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, revealPathInSidebar]);
   const handleTabDoubleClick = useCallback(async () => {
     const now = new Date();
     const year = now.getFullYear();

@@ -10,6 +10,54 @@ import type { DefaultFolder } from "@/store/types";
 
 export { normalizePath };
 
+/** 归一化后比较两个路径是否相同（忽略分隔符与盘符大小写差异） */
+export const isSamePath = (a: string, b: string): boolean => {
+  const normalizedA = normalizePath(a).toLowerCase();
+  const normalizedB = normalizePath(b).toLowerCase();
+  return normalizedA !== "" && normalizedA === normalizedB;
+};
+
+/** 判断 target 是否位于 folder 之内（含 folder 自身） */
+export const isPathInside = (target: string, folder: string): boolean => {
+  const normalizedTarget = normalizePath(target).toLowerCase();
+  const normalizedFolder = normalizePath(folder).toLowerCase();
+  if (!normalizedTarget || !normalizedFolder) return false;
+  return (
+    normalizedTarget === normalizedFolder ||
+    normalizedTarget.startsWith(`${normalizedFolder}/`)
+  );
+};
+
+/**
+ * 返回包含该路径的最长工作区根目录（保持根目录在状态中的原始写法，
+ * 以便与文件树节点的 data-sidebar-path 完全一致）。
+ */
+export const findWorkspaceRoot = (target: string, roots: string[]): string | null => {
+  let matched: string | null = null;
+  roots.forEach((root) => {
+    if (!isPathInside(target, root)) return;
+    if (matched === null || normalizePath(root).length > normalizePath(matched).length) {
+      matched = root;
+    }
+  });
+  return matched;
+};
+
+/** 返回 target 相对 root 的中间目录层级（不含文件名），大小写保持 target 原样 */
+export const relativeFolderSegments = (target: string, root: string): string[] => {
+  const normalizedTarget = normalizePath(target);
+  const normalizedRoot = normalizePath(root);
+  if (!normalizedRoot || normalizedTarget.length <= normalizedRoot.length) return [];
+  // 前缀匹配与大小写无关（Windows 路径），但截取时保留 target 原样
+  if (!normalizedTarget.toLowerCase().startsWith(normalizedRoot.toLowerCase())) return [];
+  const segments = normalizedTarget
+    .slice(normalizedRoot.length)
+    .split("/")
+    .filter(Boolean);
+  segments.pop();
+  return segments;
+};
+
 export function createTimestampFileName(): string {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -25,6 +73,15 @@ export interface DirEntry {
 }
 
 export type OpenMode = "text" | "base64";
+
+/** 定位高亮目标：variant 交替两个等价类名，保证连续定位同一行时高亮动画可以重播 */
+export interface SidebarRevealHighlight {
+  path: string;
+  variant: number;
+}
+
+export const revealFlashClass = (variant: number) =>
+  variant % 2 === 0 ? "sidebar-reveal-flash" : "sidebar-reveal-flash-alt";
 
 export const getRenameSelectionEnd = (entryName: string, isDirectory: boolean) => {
   if (isDirectory) return entryName.length;

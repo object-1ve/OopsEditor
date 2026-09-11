@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Sidebar slice - root paths, folders, pinned items
  */
 import type { StateCreator } from "zustand";
@@ -25,6 +25,7 @@ export const createSidebarSlice: StateCreator<
     | "pinnedFiles"
     | "pinnedFolders"
     | "expandedFolders"
+    | "sidebarRevealRequest"
     | "hoveredPath"
     | "sidebarSortField"
     | "sidebarSortOrder"
@@ -43,7 +44,9 @@ export const createSidebarSlice: StateCreator<
     | "setHoveredPath"
     | "toggleFolderExpanded"
     | "setFolderExpanded"
+    | "expandFolders"
     | "collapseAllFolders"
+    | "revealPathInSidebar"
     | "setSidebarSortField"
     | "setSidebarSortOrder"
     | "setRootPathOrder"
@@ -58,6 +61,7 @@ export const createSidebarSlice: StateCreator<
   pinnedFiles: [],
   pinnedFolders: [],
   expandedFolders: [],
+  sidebarRevealRequest: null,
   hoveredPath: null,
   sidebarSortField: "modified",
   sidebarSortOrder: "desc",
@@ -215,6 +219,35 @@ export const createSidebarSlice: StateCreator<
   collapseAllFolders: () => {
     set({ expandedFolders: [] });
     persistExpandedFoldersState([]);
+  },
+
+  expandFolders: (paths: string[]) => {
+    const requested = paths.filter(Boolean);
+    if (requested.length === 0) return;
+    const { expandedFolders } = get();
+    const nextExpanded = Array.from(new Set([...expandedFolders, ...requested]));
+    if (nextExpanded.length === expandedFolders.length) return;
+    set({ expandedFolders: nextExpanded });
+    persistExpandedFoldersState(nextExpanded);
+  },
+
+  /**
+   * 请求在左侧边栏中定位某个文件：展开侧边栏并递增 token，
+   * 由 Sidebar 组件负责展开目录链、选中、滚动与高亮。
+   */
+  revealPathInSidebar: (path: string) => {
+    const target = normalizePath(path);
+    if (!target) return;
+    const state = get();
+    if (state.isLeftSidebarCollapsed) {
+      state.toggleLeftSidebar();
+    }
+    set({
+      sidebarRevealRequest: {
+        path: target,
+        token: (state.sidebarRevealRequest?.token ?? 0) + 1,
+      },
+    });
   },
 
   setSidebarSortField: (field: "name" | "modified") => {

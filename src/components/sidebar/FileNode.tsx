@@ -5,8 +5,8 @@ import { useState, useEffect, useCallback, useMemo, memo, useRef } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "@/store/editor";
-import { normalizePath, sortTreeEntries, getRenameSelectionEnd } from "./sidebarUtils";
-import type { DirEntry } from "./sidebarUtils";
+import { normalizePath, sortTreeEntries, getRenameSelectionEnd, revealFlashClass } from "./sidebarUtils";
+import type { DirEntry, SidebarRevealHighlight } from "./sidebarUtils";
 import MaterialFileIcon from "../MaterialFileIcon";
 
 /** 缩进引导线：depth 为祖先层级，hasMore 表示该层级是否还有后续兄弟 */
@@ -32,10 +32,11 @@ interface FileNodeProps extends DirEntry {
   dragMoveSourcePath: string | null;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
   onRefresh?: () => void;
+  revealHighlight: SidebarRevealHighlight | null;
 }
 
 const FileNode = memo(function FileNode({
-  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, selectedPaths, cutSourcePaths, onRowClick, registerEntry, onItemDragStart, onItemDragEnd, onFolderDragOver, onFolderDragLeave, onFolderDrop, dropTargetPath, dragMoveSourcePath, onContextMenu, onRefresh,
+  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, selectedPaths, cutSourcePaths, onRowClick, registerEntry, onItemDragStart, onItemDragEnd, onFolderDragOver, onFolderDragLeave, onFolderDrop, dropTargetPath, dragMoveSourcePath, onContextMenu, onRefresh, revealHighlight,
 }: FileNodeProps) {
   const {
     showNotification,
@@ -57,6 +58,7 @@ const FileNode = memo(function FileNode({
   const isSelected = selectedPaths.includes(path);
   const isDropTarget = is_dir && dropTargetPath === path;
   const isDragging = dragMoveSourcePath === path;
+  const isRevealHighlighted = revealHighlight !== null && revealHighlight.path === path;
   const isDefault = is_dir && defaultFolders.some((f) => normalizePath(f.path) === normalizePath(path));
   const isPinned = is_dir && (isDefault || pinnedFolders.includes(normalizePath(path)));
   const [children, setChildren] = useState<DirEntry[]>([]);
@@ -164,7 +166,7 @@ const FileNode = memo(function FileNode({
           isActive ? "bg-surface text-accent font-medium" : isSelected ? "bg-surface/60 text-text" : "text-text-secondary"
         } ${!is_dir ? "draggable-file" : ""} ${isCutSource || isDragging ? "opacity-40" : ""} ${
           isDropTarget ? "bg-accent/10 ring-1 ring-inset ring-accent/60" : ""
-        }`}
+        } ${isRevealHighlighted ? revealFlashClass(revealHighlight.variant) : ""}`}
         style={{
           paddingLeft: `${level * 12 + 24}px`,
           paddingRight: "12px",
@@ -270,6 +272,7 @@ const FileNode = memo(function FileNode({
               dragMoveSourcePath={dragMoveSourcePath}
               onContextMenu={onContextMenu}
               onRefresh={refreshChildren}
+              revealHighlight={revealHighlight}
             />
           ))}
         </div>

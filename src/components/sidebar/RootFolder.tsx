@@ -8,7 +8,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "@/store/editor";
 import { normalizePath, sortTreeEntries } from "./sidebarUtils";
-import type { DirEntry } from "./sidebarUtils";
+import type { DirEntry, SidebarRevealHighlight } from "./sidebarUtils";
 import FileNode from "./FileNode";
 import MaterialFileIcon from "../MaterialFileIcon";
 
@@ -26,6 +26,7 @@ const RootFolder = memo(function RootFolder({
   dropTargetPath,
   dragMoveSourcePath,
   onContextMenu,
+  revealHighlight,
 }: {
   path: string;
   selectedPaths: string[];
@@ -40,6 +41,7 @@ const RootFolder = memo(function RootFolder({
   dropTargetPath: string | null;
   dragMoveSourcePath: string | null;
   onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
+  revealHighlight: SidebarRevealHighlight | null;
 }) {
   const {
     setNodeRef,
@@ -193,6 +195,7 @@ const RootFolder = memo(function RootFolder({
                 dragMoveSourcePath={dragMoveSourcePath}
                 onContextMenu={onContextMenu}
                 onRefresh={loadRoot}
+                revealHighlight={revealHighlight}
               />
             ))
           ) : (

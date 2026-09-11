@@ -29,6 +29,12 @@ export interface SearchJumpTarget {
   query: string;
 }
 
+/** 左侧边栏定位请求：token 递增以便重复定位同一路径时再次触发 */
+export interface SidebarRevealRequest {
+  path: string;
+  token: number;
+}
+
 export type EditorPane = "primary" | "secondary";
 
 /* ── Full EditorState interface including all actions ── */
@@ -62,6 +68,7 @@ export interface EditorState {
   notification: { message: string; type: "info" | "error" | "success" } | null;
   expandedFolders: string[];
   pinnedFolders: string[];
+  sidebarRevealRequest: SidebarRevealRequest | null;
   hoveredPath: string | null;
   markdownOutlineTarget: MarkdownOutlineTarget | null;
   searchJumpTarget: SearchJumpTarget | null;
@@ -146,7 +153,9 @@ export interface EditorState {
   toggleLivePreviewMode: (id: string) => void;
   toggleFolderExpanded: (path: string) => void;
   setFolderExpanded: (path: string, expanded: boolean) => void;
+  expandFolders: (paths: string[]) => void;
   collapseAllFolders: () => void;
+  revealPathInSidebar: (path: string) => void;
   navigateToMarkdownHeading: (target: MarkdownOutlineTarget) => void;
   clearMarkdownOutlineTarget: () => void;
   navigateToSearchMatch: (target: SearchJumpTarget) => void;

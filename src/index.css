@@ -149,6 +149,27 @@ body {
   }
 }
 
+/* 从标签栏定位到侧边栏文件树时的短暂高亮 */
+@keyframes sidebar-reveal-flash {
+  0% {
+    background-color: rgba(200, 106, 78, 0.42);
+    box-shadow: inset 0 0 0 1px rgba(200, 106, 78, 0.55);
+  }
+  60% {
+    background-color: rgba(200, 106, 78, 0.16);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 1px rgba(200, 106, 78, 0);
+  }
+}
+
+.sidebar-reveal-flash,
+.sidebar-reveal-flash-alt {
+  animation: sidebar-reveal-flash 1.6s ease-out 1;
+  border-radius: 4px;
+}
+
 .status-dot {
   animation: pulse-dot 2s ease-in-out infinite;
 }

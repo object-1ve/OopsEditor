@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronLeft, ChevronRight, CopyX, Pin, RefreshCw, Save, X } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, CopyX, Locate, Pin, RefreshCw, Save, X } from "lucide-react";
 import { useEditorStore, type EditorPane } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
@@ -50,6 +50,7 @@ const tabs = useEditorStore(s => s.tabs);
   const showModal = useEditorStore(s => s.showModal);
   const setHoveredPath = useEditorStore(s => s.setHoveredPath);
   const defaultSavePath = useEditorStore(s => s.defaultSavePath);
+  const revealPathInSidebar = useEditorStore(s => s.revealPathInSidebar);
 
   const isSecondary = pane === "secondary";
   // 副窗口持有独立的标签列表，与主窗口互不影响；同 id 标签共享内容（由 updateContent 同步）
@@ -291,6 +292,15 @@ const tabs = useEditorStore(s => s.tabs);
           showNotification(`已固定到左侧边栏: ${tab.name}`, "success");
         },
       },
+      ...(tab.path
+        ? [
+            {
+              label: "在左侧边栏中定位",
+              icon: <Locate size={14} />,
+              onClick: () => revealPathInSidebar(tab.path),
+            },
+          ]
+        : []),
       ...(isSplit ? [
         { separator: true, label: "", onClick: () => {} },
         {
@@ -333,7 +343,7 @@ const tabs = useEditorStore(s => s.tabs);
         onClick: handleCloseAll
       },
     ];
-  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, isSecondary]);
+  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, isSecondary, revealPathInSidebar]);
   const handleDoubleClick = useCallback(async () => {
     const now = new Date();
     const year = now.getFullYear();

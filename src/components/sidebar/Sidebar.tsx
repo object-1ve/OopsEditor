@@ -25,14 +25,42 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import ContextMenu from "../ContextMenu";
-import { createTimestampFileName, normalizePath, openFileTab, resolveUniquePath } from "./sidebarUtils";
-import type { DirEntry } from "./sidebarUtils";
+import {
+  createTimestampFileName,
+  findWorkspaceRoot,
+  isSamePath,
+  normalizePath,
+  openFileTab,
+  relativeFolderSegments,
+  resolveUniquePath,
+} from "./sidebarUtils";
+import type { DirEntry, SidebarRevealHighlight } from "./sidebarUtils";
 import RootFolder from "./RootFolder";
 import RecentDropdown from "./sections/RecentDropdown";
 import RecentFilesDropdown from "./sections/RecentFilesDropdown";
 import ContentSearchDialog from "./sections/ContentSearchDialog";
 import PinnedSection from "./sections/PinnedSection";
 import EmptyFolderState from "./sections/EmptyFolderState";
+
+/** 定位请求的轮询参数：目录子级是异步加载的，需要等待目标行渲染完成 */
+const REVEAL_POLL_INTERVAL_MS = 50;
+const REVEAL_POLL_ATTEMPTS = 80;
+const REVEAL_FLASH_DURATION_MS = 1600;
+
+const findSidebarRow = (scope: HTMLElement | null, targetPath: string): HTMLElement | null => {
+  if (!scope) return null;
+  const rows = Array.from(scope.querySelectorAll<HTMLElement>("[data-sidebar-path]"));
+  return rows.find((row) => isSamePath(row.dataset.sidebarPath || "", targetPath)) ?? null;
+};
+
+/** 在滚动容器内把目标行滚动到可视区域中间 */
+const scrollRowIntoView = (container: HTMLElement, row: HTMLElement) => {
+  const rowRect = row.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const delta = rowRect.top + rowRect.height / 2 - (containerRect.top + containerRect.height / 2);
+  if (Math.abs(delta) < 1) return;
+  container.scrollTo({ top: container.scrollTop + delta, behavior: "smooth" });
+};
 
 export default function Sidebar() {
   const rootPaths = useEditorStore((s) => s.rootPaths);
@@ -66,6 +94,7 @@ export default function Sidebar() {
   const hoveredPath = useEditorStore((s) => s.hoveredPath);
   const setFolderExpanded = useEditorStore((s) => s.setFolderExpanded);
   const toggleFolderExpanded = useEditorStore((s) => s.toggleFolderExpanded);
+  const sidebarRevealRequest = useEditorStore((s) => s.sidebarRevealRequest);
   const sidebarSortField = useEditorStore((s) => s.sidebarSortField);
   const sidebarSortOrder = useEditorStore((s) => s.sidebarSortOrder);
   const setSidebarSortField = useEditorStore((s) => s.setSidebarSortField);
@@ -88,10 +117,14 @@ export default function Sidebar() {
   } | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
+  const [revealHighlight, setRevealHighlight] = useState<SidebarRevealHighlight | null>(null);
   const [dragMoveSource, setDragMoveSource] = useState<{ path: string; name: string; isDir: boolean } | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const entryRegistryRef = useRef<Map<string, DirEntry>>(new Map());
   const treeContainerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const revealHighlightTimerRef = useRef<number | null>(null);
+  const revealVariantRef = useRef(0);
   const dragMoveSourceRef = useRef<{ path: string; name: string; isDir: boolean } | null>(null);
   const [recentMenu, setRecentMenu] = useState<{ x: number; y: number } | null>(null);
   const [recentFilesMenu, setRecentFilesMenu] = useState<{ x: number; y: number } | null>(null);
@@ -291,6 +324,125 @@ export default function Sidebar() {
       }
     },
     [selectionAnchor, getVisibleRowPaths, toggleFolderExpanded, openFile],
+  );
+
+  // ── 顶部标签栏右键「在左侧边栏中定位」：展开目录链、选中、滚动并高亮 ──
+  useEffect(() => {
+    if (!sidebarRevealRequest) return;
+    const targetPath = sidebarRevealRequest.path;
+    let cancelled = false;
+    const timers: number[] = [];
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        timers.push(window.setTimeout(resolve, ms));
+      });
+
+    const waitForRow = async (getScope: () => HTMLElement | null): Promise<HTMLElement | null> => {
+      for (let attempt = 0; attempt < REVEAL_POLL_ATTEMPTS; attempt += 1) {
+        if (cancelled) return null;
+        const row = findSidebarRow(getScope(), targetPath);
+        if (row) return row;
+        await sleep(REVEAL_POLL_INTERVAL_MS);
+      }
+      return null;
+    };
+
+    const run = async () => {
+      const { rootPaths, pinnedFiles, expandFolders, showNotification } = useEditorStore.getState();
+      const root = findWorkspaceRoot(targetPath, rootPaths);
+      let folderChainResolved = false;
+
+      if (root) {
+        // 逐级与磁盘上的真实目录名（大小写）校对，保证展开的路径与树节点 data-sidebar-path 完全一致
+        const chain = [root];
+        const segments = relativeFolderSegments(targetPath, root);
+        let current = root;
+        let matchedAll = true;
+
+        for (const segment of segments) {
+          let entries: DirEntry[] = [];
+          try {
+            entries = await invoke<DirEntry[]>("list_dir", { path: current });
+          } catch {
+            matchedAll = false;
+            break;
+          }
+          if (cancelled) return;
+
+          const expected = `${normalizePath(current).toLowerCase()}/${segment.toLowerCase()}`;
+          const next = entries.find(
+            (entry) => entry.is_dir && normalizePath(entry.path).toLowerCase() === expected,
+          );
+          if (!next) {
+            matchedAll = false;
+            break;
+          }
+          current = next.path;
+          chain.push(current);
+        }
+
+        if (matchedAll) {
+          folderChainResolved = true;
+          expandFolders(chain);
+        }
+      }
+
+      let row = folderChainResolved ? await waitForRow(() => treeContainerRef.current) : null;
+
+      // 文件不在工作区文件树中时，回退到「固定文件」区域定位
+      if (!row && !cancelled) {
+        const isPinnedInSidebar = pinnedFiles.some((file) => isSamePath(file.path, targetPath));
+        if (isPinnedInSidebar) {
+          setIsPinnedExpanded(true);
+          row = await waitForRow(() => scrollContainerRef.current);
+        }
+      }
+
+      if (cancelled) return;
+
+      const container = scrollContainerRef.current;
+      if (!row || !container) {
+        showNotification(
+          root
+            ? "未能在左侧边栏中定位该文件，它可能已被移动或删除"
+            : "该文件不在左侧边栏的工作区中，可先将它所在的文件夹添加到工作区",
+          "info",
+        );
+        return;
+      }
+
+      const rowPath = row.dataset.sidebarPath || targetPath;
+      setSelectedPaths([rowPath]);
+      setSelectionAnchor(rowPath);
+      scrollRowIntoView(container, row);
+      // 高亮交给 React 状态渲染：直接改 className 会被随后的重渲染覆盖
+      revealVariantRef.current += 1;
+      setRevealHighlight({ path: rowPath, variant: revealVariantRef.current });
+      if (revealHighlightTimerRef.current !== null) {
+        window.clearTimeout(revealHighlightTimerRef.current);
+      }
+      revealHighlightTimerRef.current = window.setTimeout(() => {
+        revealHighlightTimerRef.current = null;
+        setRevealHighlight(null);
+      }, REVEAL_FLASH_DURATION_MS);
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [sidebarRevealRequest]);
+
+  useEffect(
+    () => () => {
+      if (revealHighlightTimerRef.current !== null) {
+        window.clearTimeout(revealHighlightTimerRef.current);
+      }
+    },
+    [],
   );
 
   const setClipboard = useCallback(
@@ -1278,6 +1430,7 @@ export default function Sidebar() {
         />
       )}
       <div
+        ref={scrollContainerRef}
         className="flex-1 overflow-auto"
         onContextMenu={handleEmptyAreaContextMenu}
         onDragOver={handleEmptyDragOver}
@@ -1296,6 +1449,7 @@ export default function Sidebar() {
           onContextMenu={handlePinnedFileContextMenu}
           onHover={(path) => setHoveredPath(path)}
           onReorder={setPinnedFilesOrder}
+          revealHighlight={revealHighlight}
         />
 
         {/* ── Folder tree area ── */}
@@ -1319,6 +1473,7 @@ export default function Sidebar() {
                     dropTargetPath={dropTargetPath}
                     dragMoveSourcePath={dragMoveSource?.path ?? null}
                     onContextMenu={handleContextMenu}
+                    revealHighlight={revealHighlight}
                   />
                 ))}
               </SortableContext>
