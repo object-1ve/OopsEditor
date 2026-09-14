@@ -20,6 +20,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getPreviewScrollTop, setPreviewScrollTop } from "@/utils/scrollMemory";
 import { createMarkdownHeadingIdFactory, extractTextFromReactNode } from "@/utils/markdown";
+import { collapsePathSegments } from "@/utils/path";
 import ContextMenu from "@/components/ContextMenu";
 import type { MarkdownOutlineTarget } from "@/store/types";
 import type { FileTab } from "@/types";
@@ -120,10 +121,9 @@ function useMarkdownComponents(activeTab: FileTab) {
           if (/^[A-Za-z]:[^/\\]/.test(src)) {
             absolutePath = src.substring(0, 2) + "\\" + src.substring(2);
           }
-          const normalizedPath = absolutePath.replace(/\\/g, "/");
-          resolvedSrc = convertFileSrc(normalizedPath);
+          resolvedSrc = convertFileSrc(collapsePathSegments(absolutePath));
         } else if (activeTab.path) {
-          // 5. 处理相对路径
+          // 5. 处理相对路径：跨文件夹引用（../A/Attachment/x.png）需折叠后再转 asset URL
           try {
             const lastSeparatorIndex = Math.max(
               activeTab.path.lastIndexOf("/"),
@@ -132,9 +132,7 @@ function useMarkdownComponents(activeTab: FileTab) {
             if (lastSeparatorIndex !== -1) {
               const dir = activeTab.path.substring(0, lastSeparatorIndex);
               const separator = activeTab.path.includes("\\") ? "\\" : "/";
-              const absolutePath = `${dir}${separator}${src}`;
-              const normalizedPath = absolutePath.replace(/\\/g, "/");
-              resolvedSrc = convertFileSrc(normalizedPath);
+              resolvedSrc = convertFileSrc(collapsePathSegments(`${dir}${separator}${src}`));
             }
           } catch (e) {
             console.error("Failed to resolve relative image path:", e);

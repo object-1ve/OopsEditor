@@ -207,6 +207,9 @@ use sqlite::{get_sqlite_table_data, get_sqlite_tables};
 mod docconv;
 use docconv::convert_doc_to_docx;
 
+mod attachment;
+use attachment::{import_image_base64, import_image_file};
+
 // ── 原有命令 ──
 
 #[tauri::command]
@@ -791,6 +794,9 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         copy_file,
         copy_item,
         move_item,
+        // 图片附件：按内容哈希命名，重复图片复用已有文件
+        import_image_file,
+        import_image_base64,
         list_dir,
         get_file_info,
         is_directory,

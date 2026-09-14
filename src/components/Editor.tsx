@@ -35,6 +35,7 @@ import { saveTab } from "@/services/editorSave";
 import { clipboardToMarkdownTable, tsvToMarkdownTable } from "@/utils/clipboardTable";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { findMatchColumns } from "@/utils/editorJump";
+import { collapsePathSegments } from "@/utils/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 
@@ -315,12 +316,16 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       for (const path of detail.paths) {
         if (isImageFile(path)) {
           try {
-            // 转换路径：将图片复制到 md 文件同级的 Attachment 目录，插入相对路径
-            const { filename } = await importImageIntoAttachment(
+            // 转换路径：导入到 Attachment 目录，插入相对引用
+            // 同一根目录内相同内容的图片会复用已有附件，不产生副本
+            const { reference, reused } = await importImageIntoAttachment(
               tab.path || "",
               { type: "file", path },
             );
-            if (insertAtCursor(`![](Attachment/${filename})\n`)) insertedCount++;
+            if (insertAtCursor(`![](${reference})\n`)) insertedCount++;
+            if (reused) {
+              state.showNotification(`图片已存在，复用 ${reference}`, "info");
+            }
           } catch (err) {
             // 文件未保存或复制失败时，回退为插入绝对路径
             if (insertAtCursor(buildImageSyntax(path))) insertedCount++;
@@ -410,7 +415,6 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     // Markdown 编辑模式下，把粘贴的表格（HTML <table> 或 TSV）转为 GFM 表格语法
     // 同时检测剪贴板中的图片，保存到 md 文件同级 Attachment 目录
     const domNode = editor.getDomNode();
-    console.log("[PasteImage] domNode:", domNode);
     if (domNode) {
       const handlePaste = async (e: ClipboardEvent) => {
         // 只处理发生在 Monaco 编辑器内的粘贴事件，不拦截其他输入框
@@ -427,37 +431,27 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
         }
 
         // 检测剪贴板中的图片文件（截图、复制图片等）
-        console.log("[PasteImage] paste event fired, clipboardData:", e.clipboardData);
         const items = e.clipboardData?.items;
-        console.log("[PasteImage] items:", items, "length:", items?.length);
         if (items) {
           for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            console.log(`[PasteImage] item[${i}] kind=${item.kind} type=${item.type}`);
             if (item.kind === "file" && item.type.startsWith("image/")) {
-              console.log("[PasteImage] image file item detected!");
               const file = item.getAsFile();
-              console.log("[PasteImage] getAsFile:", file, "name:", file?.name, "size:", file?.size);
               if (file) {
                 e.preventDefault();
                 e.stopPropagation();
-                console.log("[PasteImage] reading file as data URL...");
 
                 // 读取图片为 base64
                 const reader = new FileReader();
                 reader.onload = async () => {
                   try {
-                    console.log("[PasteImage] FileReader onload fired, result length:", (reader.result as string)?.length);
                     const base64 = (reader.result as string).split(",")[1];
-                    console.log("[PasteImage] base64 length:", base64?.length);
 
-                    // 转换路径：保存到 md 文件同级 Attachment 目录，并刷新左侧文件树
-                    console.log("[PasteImage] importing into Attachment...");
-                    const { filename } = await importImageIntoAttachment(
+                    // 导入到 Attachment 目录：同根目录内的相同图片会复用已有附件
+                    const { reference, reused } = await importImageIntoAttachment(
                       tab.path || "",
                       { type: "base64", data: base64, name: file.name },
                     );
-                    console.log("[PasteImage] import succeeded:", filename);
 
                     // 插入 markdown 图片语法
                     const selection = editor.getSelection();
@@ -470,9 +464,14 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
                         )
                       : new monaco.Range(1, 1, 1, 1);
                     editor.executeEdits("paste-image", [
-                      { range, text: `![](Attachment/${filename})\n`, forceMoveMarkers: true },
+                      { range, text: `![](${reference})\n`, forceMoveMarkers: true },
                     ]);
-                    console.log("[PasteImage] inserted markdown image syntax");
+                    if (reused) {
+                      useEditorStore.getState().showNotification(
+                        `图片已存在，复用 ${reference}`,
+                        "info",
+                      );
+                    }
                     editor.focus();
                   } catch (err) {
                     console.error("[PasteImage] error:", err);
@@ -492,14 +491,9 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
                 };
                 reader.readAsDataURL(file);
                 return;
-              } else {
-                console.log("[PasteImage] getAsFile returned null/undefined");
               }
             }
           }
-          console.log("[PasteImage] no image file found in items");
-        } else {
-          console.log("[PasteImage] clipboardData.items is null/undefined");
         }
 
         // 原有的表格粘贴处理
@@ -588,7 +582,8 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
           // Open the image in floating preview
           (async () => {
             try {
-              const exists = await invoke<boolean>("path_exists", { path: resolvedPath });
+              const resolved = collapsePathSegments(resolvedPath);
+              const exists = await invoke<boolean>("path_exists", { path: resolved });
               if (!exists) {
                 useEditorStore.getState().showNotification(
                   `文件不存在: ${matchedPath}`,
@@ -597,8 +592,8 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
                 return;
               }
 
-              const name = resolvedPath.split(/[/\\]/).pop() ?? resolvedPath;
-              const src = convertFileSrc(resolvedPath);
+              const name = resolved.split(/[/\\]/).pop() ?? resolved;
+              const src = convertFileSrc(resolved);
               setFloatingImage({ src, name });
               useEditorStore.getState().setFloatingImageOpen(true);
             } catch (err) {

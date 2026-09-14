@@ -10,6 +10,8 @@ commands.allow = [
   "copy_file",
   "copy_item",
   "move_item",
+  "import_image_file",
+  "import_image_base64",
   "list_dir",
   "get_file_info",
   "is_directory",

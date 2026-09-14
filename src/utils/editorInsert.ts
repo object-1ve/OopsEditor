@@ -6,6 +6,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { useEditorStore } from "@/store/editor";
 
 type InsertCallback = (text: string) => void;
 
@@ -63,74 +64,78 @@ export type ImageImportSource =
   | { type: "file"; path: string }
   | { type: "base64"; data: string; name?: string };
 
-/** 若目标路径已存在，追加 _1、_2 … 后缀生成唯一路径 */
-async function findUniquePath(basePath: string): Promise<string> {
-  if (!(await invoke<boolean>("path_exists", { path: basePath }))) {
-    return basePath;
-  }
-  const lastDot = basePath.lastIndexOf(".");
-  const stem = lastDot > 0 ? basePath.slice(0, lastDot) : basePath;
-  const ext = lastDot > 0 ? basePath.slice(lastDot) : "";
-  for (let i = 1; ; i++) {
-    const candidate = `${stem}_${i}${ext}`;
-    if (!(await invoke<boolean>("path_exists", { path: candidate }))) {
-      return candidate;
-    }
-  }
+/** Rust 侧按内容哈希落盘后的导入结果（字段名与 Rust 结构体一致，snake_case） */
+interface AttachmentImportResult {
+  /** 所在 Attachment 目录内的文件名 */
+  filename: string;
+  /** 图片完整路径（正斜杠） */
+  path: string;
+  /** markdown 中使用的相对引用（相对 md 所在目录） */
+  reference: string;
+  parent_dir: string;
+  save_dir: string;
+  /** true = 复用了已存在的图片，本次未写入新文件 */
+  reused: boolean;
+}
+
+export interface AttachmentImportOutcome {
+  filename: string;
+  savePath: string;
+  reference: string;
+  saveDir: string;
+  parentDir: string;
+  /** 命中了已有图片（内容相同），未产生副本 */
+  reused: boolean;
 }
 
 /**
- * 将图片导入到 md 文件同级的 Attachment 目录（转换路径），
- * 并刷新左侧文件树中对应的文件夹目录显示。
+ * 将图片导入到 md 文件同级的 Attachment 目录（转换路径）。
  *
- * @returns 导入结果，包含最终文件名、Attachment 目录与完整保存路径
+ * 文件名由 Rust 侧按内容 sha256 生成（`<原名>-<hash16>.<ext>`），复用范围是 md 文件
+ * 所属的侧边栏根目录：同一根目录下（含其它文件夹）相同内容的图片只保留一份，
+ * 重复导入会复用已有文件并返回相对引用（如 `../B/Attachment/image-x.png`），
+ * 不写副本、不依赖数据库或索引文件。
+ *
+ * @returns 导入结果，包含文件名、相对引用、目录信息与是否复用
  */
 export async function importImageIntoAttachment(
   mdPath: string,
   source: ImageImportSource,
-): Promise<{ filename: string; saveDir: string; savePath: string; parentDir: string }> {
+): Promise<AttachmentImportOutcome> {
   const normalizedMdPath = mdPath.replace(/\\/g, "/");
-  const lastSlash = normalizedMdPath.lastIndexOf("/");
-  if (lastSlash < 0) {
-    throw new Error("当前文件尚未保存到磁盘，请先保存文件");
-  }
-  const parentDir = normalizedMdPath.substring(0, lastSlash);
-  const saveDir = parentDir + "/Attachment";
+  // 复用范围由 Rust 侧从根目录里挑「层级最深的那个祖先目录」
+  const scopeRoots = useEditorStore.getState().rootPaths;
 
-  // 生成目标文件名
-  let rawName: string;
-  if (source.type === "file") {
-    rawName = source.path.split(/[/\\]/).pop() || "image.png";
-  } else {
-    const ext = (source.name || "image.png").split(".").pop() || "png";
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    rawName = `image_${ts}.${ext}`;
-  }
+  const result =
+    source.type === "file"
+      ? await invoke<AttachmentImportResult>("import_image_file", {
+          mdPath: normalizedMdPath,
+          scopeRoots,
+          sourcePath: source.path,
+        })
+      : await invoke<AttachmentImportResult>("import_image_base64", {
+          mdPath: normalizedMdPath,
+          scopeRoots,
+          data: source.data,
+          name: source.name ?? null,
+        });
 
-  try {
-    await invoke("create_dir", { path: saveDir });
-  } catch (e) {
-    const msg = String(e);
-    if (!msg.includes("目录已存在") && !msg.includes("exists")) throw e;
-  }
-
-  const savePath = await findUniquePath(`${saveDir}/${rawName}`);
-  const filename = savePath.split("/").pop() ?? rawName;
-
-  if (source.type === "file") {
-    await invoke("copy_file", { sourcePath: source.path, targetPath: savePath });
-  } else {
-    await invoke("save_file_from_base64", { path: savePath, content: source.data });
-  }
-
-  // 刷新左侧文件树：
+  // 复用时目录内容没变化，无需刷新左侧文件树：
   // 1. 父目录 —— 让新建的 Attachment 目录出现在列表中
   // 2. Attachment 目录 —— 显示刚保存的图片文件
-  window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: parentDir } }));
-  window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: saveDir } }));
-  return { filename, saveDir, savePath, parentDir };
+  if (!result.reused) {
+    window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: result.parent_dir } }));
+    window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: result.save_dir } }));
+  }
+
+  return {
+    filename: result.filename,
+    savePath: result.path,
+    reference: result.reference,
+    saveDir: result.save_dir,
+    parentDir: result.parent_dir,
+    reused: result.reused,
+  };
 }
 
 /** Tauri 层 onDragDropEvent 落点：检查当前 tab 是否为可编辑的 Markdown */
