@@ -38,6 +38,15 @@ export interface SidebarRevealRequest {
 
 export type EditorPane = "primary" | "secondary";
 
+/** 全屏图片查看请求：本地路径走 asset 协议，url 用于已经是可直接加载的地址 */
+export interface ImagePreviewRequest {
+  path: string;
+  name: string;
+  url?: string | null;
+  /** 外部替换图片后用于破缓存 */
+  revision?: number;
+}
+
 /* ── Full EditorState interface including all actions ── */
 export interface EditorState {
   // Data
@@ -96,7 +105,8 @@ export interface EditorState {
   secondaryActiveTabId: string | null;
   focusedPane: EditorPane;
   splitRatio: number;
-  isFloatingImageOpen: boolean;
+  /** 全屏图片查看请求；null 表示未打开 */
+  imagePreview: ImagePreviewRequest | null;
 
   // Actions
   init: () => Promise<void>;
@@ -198,7 +208,8 @@ export interface EditorState {
   setSplit: (enabled: boolean) => void;
   setFocusedPane: (pane: EditorPane) => void;
   setSplitRatio: (ratio: number) => void;
-  setFloatingImageOpen: (open: boolean) => void;
+  openImagePreview: (request: ImagePreviewRequest) => void;
+  closeImagePreview: () => void;
   openTabInPane: (tab: FileTab, pane: EditorPane) => void;
   closeTabInPane: (id: string, pane: EditorPane) => void;
   closeTabsInPane: (ids: string[], pane: EditorPane) => void;

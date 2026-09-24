@@ -22,6 +22,7 @@ import { saveSetting, loadSettings } from "@/utils/settings";
 import { monacoReady } from "@/monaco";
 import { dispatchFileDrop, isMarkdownEditable } from "@/utils/editorInsert";
 import ChatView from "@/components/chat/ChatView";
+import ImageLightbox from "@/components/ImageLightbox";
 import { dispatchPathsToChat, isPointInsideChatDropZone, notifyChatDragOver } from "@/components/chat/dropTarget";
 import { version as APP_VERSION } from "../package.json";
 import { DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_POSITION, isValidRestoredWindowSize, isValidRestoredWindowPosition } from "@/hooks/useAppInit";
@@ -58,7 +59,7 @@ function App() {
   const tabs = useEditorStore(s => s.tabs);
   const activeTabId = useEditorStore(s => s.activeTabId);
   const secondaryTabs = useEditorStore(s => s.secondaryTabs);
-  const isFloatingImageOpen = useEditorStore(s => s.isFloatingImageOpen);
+  const imagePreview = useEditorStore(s => s.imagePreview);
   const activeView = useEditorStore(s => s.activeView);
 
   const [isDragging, setIsDragging] = useState(false);
@@ -807,7 +808,7 @@ function App() {
             )}
           </div>
 
-          {!isFloatingImageOpen && (
+          {!imagePreview && (
           <div className="h-6 bg-deepest border-t border-border flex items-center px-1 text-xs text-text-muted gap-2 relative z-10">
             <button
               onClick={toggleLeftSidebar}
@@ -970,6 +971,7 @@ function App() {
         </div>
       )}
 
+      <ImageLightbox />
       <ConfirmModal />
       <UpdateDialog />
       <SettingsModal />

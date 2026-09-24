@@ -33,7 +33,7 @@ import { resolveEditorMode } from "./editor-modes";
 import { fetchAndSetFileMtime } from "@/store/fileMtime";
 import { saveTab } from "@/services/editorSave";
 import { clipboardToMarkdownTable, tsvToMarkdownTable } from "@/utils/clipboardTable";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { findMatchColumns } from "@/utils/editorJump";
 import { collapsePathSegments } from "@/utils/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -112,83 +112,6 @@ function applyTerracottaTheme(monaco: Parameters<OnMount>[1]) {
   monaco.editor.setTheme("terracotta-dark");
 }
 
-function FloatingImagePreview({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const dragRef = useRef({ dragging: false, startX: 0, startY: 0, baseX: 0, baseY: 0 });
-
-  // Reset on new image
-  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, [src]);
-
-  // Escape to close
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
-
-  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    setZoom(z => clamp(z + (e.deltaY < 0 ? 0.15 : -0.15), 0.2, 5));
-  };
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    dragRef.current = { dragging: true, startX: e.clientX, startY: e.clientY, baseX: pan.x, baseY: pan.y };
-  };
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!dragRef.current.dragging) return;
-    setPan({
-      x: dragRef.current.baseX + (e.clientX - dragRef.current.startX),
-      y: dragRef.current.baseY + (e.clientY - dragRef.current.startY),
-    });
-  };
-
-  const handlePointerUp = () => { dragRef.current.dragging = false; };
-
-  return (
-    <div
-      className="fixed inset-0 z-[300] flex items-center justify-center overflow-hidden"
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onWheel={handleWheel}
-    >
-      <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={onClose} />
-
-      <img
-        src={src}
-        alt={name}
-        className="relative select-none rounded-lg shadow-2xl"
-        style={{
-          transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
-          maxWidth: "90vw",
-          maxHeight: "90vh",
-          objectFit: "contain",
-          cursor: dragRef.current.dragging ? "grabbing" : "grab",
-        }}
-        draggable={false}
-        onPointerDown={handlePointerDown}
-        onClick={(e) => e.stopPropagation()}
-      />
-
-      <button onClick={onClose} className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-xl leading-none transition-colors">×</button>
-
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-2 rounded-full bg-black/40 backdrop-blur-sm">
-        <button onClick={() => setZoom(z => clamp(z - 0.25, 0.2, 5))} className="w-6 h-6 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/25 text-white text-sm leading-none">−</button>
-        <span className="text-white/60 text-xs tabular-nums min-w-[3.5em] text-center">{Math.round(zoom * 100)}%</span>
-        <button onClick={() => setZoom(z => clamp(z + 0.25, 0.2, 5))} className="w-6 h-6 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/25 text-white text-sm leading-none">+</button>
-        <span className="w-px h-4 bg-white/15" />
-        <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="text-white/50 hover:text-white/80 text-xs transition-colors">重置</button>
-        <span className="text-white/30 text-xs ml-1">{name}</span>
-      </div>
-    </div>
-  );
-}
-
 export default function Editor({ tabId, pane = "primary" }: { tabId?: string | null; pane?: "primary" | "secondary" } = {}) {
   const tabs = useEditorStore(s => s.tabs);
   const secondaryTabs = useEditorStore(s => s.secondaryTabs);
@@ -220,7 +143,6 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     y: number;
     hasSelection: boolean;
   } | null>(null);
-  const [floatingImage, setFloatingImage] = useState<{ src: string; name: string } | null>(null);
   useEffect(() => {
     setEditorContextMenu(null);
   }, [activeTab?.id, activeTab?.isLivePreviewMode, activeTab?.isPreviewMode]);
@@ -593,9 +515,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
               }
 
               const name = resolved.split(/[/\\]/).pop() ?? resolved;
-              const src = convertFileSrc(resolved);
-              setFloatingImage({ src, name });
-              useEditorStore.getState().setFloatingImageOpen(true);
+              useEditorStore.getState().openImagePreview({ path: resolved, name });
             } catch (err) {
               useEditorStore.getState().showNotification(
                 `无法打开文件: ${String(err)}`,
@@ -930,13 +850,6 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
           y={editorContextMenu.y}
           items={editorContextMenuItems}
           onClose={() => setEditorContextMenu(null)}
-        />
-      )}
-      {floatingImage && (
-        <FloatingImagePreview
-          src={floatingImage.src}
-          name={floatingImage.name}
-          onClose={() => { setFloatingImage(null); useEditorStore.getState().setFloatingImageOpen(false); }}
         />
       )}
     </>

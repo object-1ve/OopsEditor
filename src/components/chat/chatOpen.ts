@@ -12,6 +12,17 @@ import { chatDisplayName } from "./chatFormat";
 
 type Notify = (message: string, type?: "info" | "error" | "success") => void;
 
+/**
+ * 全屏查看会话图片。
+ * 会话视图下主编辑区被对话占据，开标签页等于看不见，因此图片默认放大查看。
+ */
+export function previewChatImage(path: string, name?: string) {
+  useEditorStore.getState().openImagePreview({
+    path,
+    name: name || path.split(/[/\\]/).pop() || path,
+  });
+}
+
 export async function openChatFile(path: string, showNotification: Notify) {
   const storedName = path.split(/[/\\]/).pop() ?? path;
   // 存储文件名带内容哈希（去重用），编辑器标签页显示去哈希后的名字

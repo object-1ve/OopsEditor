@@ -12,7 +12,7 @@ import { formatChatDateTime, formatDayDivider, needsTimeDivider } from "@/utils/
 import ChatComposer from "./ChatComposer";
 import MessageBubble from "./MessageBubble";
 import type { ChatMessageActions } from "./MessageBubble";
-import { openChatFile, revealChatFile } from "./chatOpen";
+import { openChatFile, previewChatImage, revealChatFile } from "./chatOpen";
 
 export default function ChatView() {
   const sessions = useEditorStore((s) => s.chatSessions);
@@ -65,6 +65,7 @@ export default function ChatView() {
       onDelete: (id) => deleteChatMessage(id),
       onOpenFile: (path) => void openChatFile(path, showNotification),
       onRevealFile: (path) => revealChatFile(path, showNotification),
+      onPreviewImage: (path, name) => previewChatImage(path, name ?? undefined),
     }),
     [deleteChatMessage, editChatMessage, showNotification],
   );

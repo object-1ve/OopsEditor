@@ -2,7 +2,7 @@
  * 单条会话消息气泡：文字 / 文件 / 图片三种形态，右侧自己、左侧对方。
  */
 import { useCallback, useState } from "react";
-import { Check, Copy, Download, ExternalLink, PencilLine, Trash2, X } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, Maximize2, PencilLine, Trash2, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import ContextMenu from "@/components/ContextMenu";
 import type { ChatMessage } from "@/services/chat";
@@ -14,6 +14,8 @@ export interface ChatMessageActions {
   onDelete: (id: number) => Promise<void>;
   onOpenFile: (path: string) => void;
   onRevealFile: (path: string) => void;
+  /** 图片附件的全屏放大查看 */
+  onPreviewImage: (path: string, name?: string | null) => void;
 }
 
 interface MessageBubbleProps {
@@ -144,8 +146,9 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
                 <img
                   src={convertFileSrc(message.file_path!)}
                   alt={message.file_name ?? "图片"}
-                  onClick={() => actions.onOpenFile(message.file_path!)}
-                  className="max-h-56 w-auto max-w-full rounded-lg cursor-zoom-in object-contain bg-black/5"
+                  onClick={() => actions.onPreviewImage(message.file_path!, message.file_name)}
+                  title="点击放大查看"
+                  className="max-h-56 w-auto max-w-full rounded-lg cursor-zoom-in object-contain bg-black/5 transition-opacity hover:opacity-90"
                   loading="lazy"
                 />
               )}
@@ -218,6 +221,16 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
               onClick: () => setIsEditing(true),
             },
             { label: "复制文字", icon: <Copy size={14} />, onClick: () => void copyText() },
+            ...(hasFile && isImage
+              ? [
+                  {
+                    label: "放大查看",
+                    icon: <Maximize2 size={14} />,
+                    onClick: () => actions.onPreviewImage(message.file_path!, message.file_name),
+                  },
+                  { separator: true, label: "", onClick: () => {} },
+                ]
+              : []),
             ...(hasFile
               ? [
                   {

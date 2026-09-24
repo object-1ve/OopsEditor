@@ -7,7 +7,7 @@ import { ExternalLink, FileText, Image as ImageIcon, MessageSquare } from "lucid
 import { useEditorStore } from "@/store/editor";
 import { formatChatDateTime } from "@/utils/chatTime";
 import { chatDisplayName, formatChatSize, isImageFileName } from "@/components/chat/chatFormat";
-import { openChatFile, revealChatFile } from "@/components/chat/chatOpen";
+import { openChatFile, previewChatImage, revealChatFile } from "@/components/chat/chatOpen";
 
 export default function ChatInfoPanel() {
   const sessions = useEditorStore((s) => s.chatSessions);
@@ -117,7 +117,12 @@ export default function ChatInfoPanel() {
                   <FileText size={12} className="text-text-muted shrink-0" />
                 )}
                 <button
-                  onClick={() => void openChatFile(message.file_path!, showNotification)}
+                  onClick={() =>
+                    isImageFileName(message.file_name)
+                      ? previewChatImage(message.file_path!, message.file_name ?? undefined)
+                      : void openChatFile(message.file_path!, showNotification)
+                  }
+                  title={isImageFileName(message.file_name) ? "点击放大查看" : "在编辑器中打开"}
                   className="flex-1 min-w-0 text-left cursor-pointer"
                 >
                   <span className="block truncate text-[11px] text-text-secondary">
