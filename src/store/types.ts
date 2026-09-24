@@ -1,4 +1,5 @@
 import type { FileTab } from "../types";
+import type { ChatAttachment, ChatMessage, ChatSession } from "../services/chat";
 
 export interface TerminalInstance {
   id: string;
@@ -76,12 +77,20 @@ export interface EditorState {
   captureProtection: boolean;
   sidebarSortField: "name" | "modified";
   sidebarSortOrder: "asc" | "desc";
+  /** 当前视图：文件（左栏文件树 + 主区编辑器）/ 会话（左栏会话列表 + 主区对话） */
+  activeView: "files" | "chat";
   rootPathOrder: string[];
   defaultSavePath: string;
   recentFolders: string[];
   maxRecentFolders: number;
   recentFiles: string[];
   maxRecentFiles: number;
+  /** 会话面板数据（侧边栏标签与主区视图共享） */
+  chatSessions: ChatSession[];
+  chatActiveSessionId: number | null;
+  chatMessages: ChatMessage[];
+  chatIsLoading: boolean;
+  chatIsSending: boolean;
   isSplit: boolean;
   secondaryTabs: FileTab[];
   secondaryActiveTabId: string | null;
@@ -163,6 +172,20 @@ export interface EditorState {
   setRightSidebarIconOrder: (order: string[]) => void;
   setSidebarSortField: (field: "name" | "modified") => void;
   setSidebarSortOrder: (order: "asc" | "desc") => void;
+  setActiveView: (view: "files" | "chat") => void;
+  loadChatSessions: () => Promise<ChatSession[]>;
+  selectChatSession: (sessionId: number) => Promise<void>;
+  createChatSession: () => Promise<ChatSession | null>;
+  renameChatSession: (id: number, title: string) => Promise<void>;
+  deleteChatSession: (id: number) => Promise<void>;
+  sendChatText: (text: string) => Promise<void>;
+  sendChatAttachment: (
+    attachment: ChatAttachment,
+    kind: "file" | "image",
+    caption: string,
+  ) => Promise<void>;
+  editChatMessage: (id: number, content: string) => Promise<void>;
+  deleteChatMessage: (id: number) => Promise<void>;
   setDefaultSavePath: (path: string) => void;
   setRecentFolders: (folders: string[]) => void;
   loadRecentFolders: () => Promise<void>;

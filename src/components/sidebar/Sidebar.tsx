@@ -6,7 +6,7 @@ import {
   Folder, FolderOpen, Plus, Search, X, Edit2, Trash2,
   ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin,
   ChevronsUp, RotateCw, ArrowDownAZ, ArrowUpAZ, Clock, FileClock, History,
-  SortAsc, SortDesc, Scissors, ClipboardPaste, Eraser,
+  SortAsc, SortDesc, Scissors, ClipboardPaste, Eraser, FolderTree, MessagesSquare,
 } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
@@ -41,6 +41,7 @@ import RecentFilesDropdown from "./sections/RecentFilesDropdown";
 import ContentSearchDialog from "./sections/ContentSearchDialog";
 import PinnedSection from "./sections/PinnedSection";
 import EmptyFolderState from "./sections/EmptyFolderState";
+import ConversationList from "@/components/chat/ConversationList";
 
 /** 定位请求的轮询参数：目录子级是异步加载的，需要等待目标行渲染完成 */
 const REVEAL_POLL_INTERVAL_MS = 50;
@@ -99,6 +100,8 @@ export default function Sidebar() {
   const sidebarSortOrder = useEditorStore((s) => s.sidebarSortOrder);
   const setSidebarSortField = useEditorStore((s) => s.setSidebarSortField);
   const setSidebarSortOrder = useEditorStore((s) => s.setSidebarSortOrder);
+  const activeView = useEditorStore((s) => s.activeView);
+  const setActiveView = useEditorStore((s) => s.setActiveView);
   const rootPathOrder = useEditorStore((s) => s.rootPathOrder);
   const setRootPathOrder = useEditorStore((s) => s.setRootPathOrder);
   const recentFolders = useEditorStore((s) => s.recentFolders);
@@ -1308,8 +1311,41 @@ export default function Sidebar() {
         <div className="absolute -left-1 -right-1 inset-y-0 hover:bg-accent/10 active:bg-accent/20 transition-colors rounded-sm" />
       </div>
 
+      {/* ── 标签栏：文件树 / 会话 ── */}
+      <div
+        role="tablist"
+        className="h-7 flex items-stretch border-b border-border shrink-0 select-none no-drag"
+      >
+        {([
+          { id: "files" as const, label: "文件", icon: <FolderTree size={11} /> },
+          { id: "chat" as const, label: "会话", icon: <MessagesSquare size={11} /> },
+        ]).map((tab) => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={activeView === tab.id}
+            onClick={() => setActiveView(tab.id)}
+            className={`relative flex-1 flex items-center justify-center gap-1 text-[11px] transition-colors cursor-pointer ${
+              activeView === tab.id
+                ? "text-text-primary font-medium bg-primary"
+                : "text-text-muted hover:text-text-secondary hover:bg-surface/40"
+            }`}
+          >
+            {tab.icon}
+            <span>{tab.label}</span>
+            {activeView === tab.id && (
+              <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-accent rounded-full" />
+            )}
+          </button>
+        ))}
+      </div>
+
       {/* ── Header with action buttons ── */}
-      <div className="h-10 flex items-center justify-between px-3 border-b border-border shrink-0 select-none">
+      <div
+        className={`h-10 items-center justify-between px-3 border-b border-border shrink-0 select-none ${
+          activeView === "files" ? "flex" : "hidden"
+        }`}
+      >
         <div className="flex items-center gap-0.5 no-drag">
           <div className="relative">
             <button
@@ -1431,7 +1467,7 @@ export default function Sidebar() {
       )}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-auto"
+        className={activeView === "files" ? "flex-1 overflow-auto" : "hidden"}
         onContextMenu={handleEmptyAreaContextMenu}
         onDragOver={handleEmptyDragOver}
         onDrop={handleEmptyDrop}
@@ -1483,6 +1519,9 @@ export default function Sidebar() {
           <EmptyFolderState onOpenFolder={handleOpenFolder} />
         )}
       </div>
+
+      {/* ── 会话列表（左侧边栏）── */}
+      {activeView === "chat" && <ConversationList />}
 
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenuItems} onClose={() => setContextMenu(null)} />}
       {emptyAreaContextMenu && <ContextMenu x={emptyAreaContextMenu.x} y={emptyAreaContextMenu.y} items={emptyAreaMenuItems} onClose={() => setEmptyAreaContextMenu(null)} />}

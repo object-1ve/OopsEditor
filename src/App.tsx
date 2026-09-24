@@ -21,6 +21,8 @@ import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 import { saveSetting, loadSettings } from "@/utils/settings";
 import { monacoReady } from "@/monaco";
 import { dispatchFileDrop, isMarkdownEditable } from "@/utils/editorInsert";
+import ChatView from "@/components/chat/ChatView";
+import { dispatchPathsToChat, isPointInsideChatDropZone, notifyChatDragOver } from "@/components/chat/dropTarget";
 import { version as APP_VERSION } from "../package.json";
 import { DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_POSITION, isValidRestoredWindowSize, isValidRestoredWindowPosition } from "@/hooks/useAppInit";
 import { handleDroppedPath } from "@/hooks/useDragDrop";
@@ -57,6 +59,7 @@ function App() {
   const activeTabId = useEditorStore(s => s.activeTabId);
   const secondaryTabs = useEditorStore(s => s.secondaryTabs);
   const isFloatingImageOpen = useEditorStore(s => s.isFloatingImageOpen);
+  const activeView = useEditorStore(s => s.activeView);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isDraggingOverTerminal, setIsDraggingOverTerminal] = useState(false);
@@ -446,6 +449,7 @@ function App() {
             setEditorDragState(false);
           } else if (event.payload.type === "over") {
             const overTerminal = isPointInsideTerminal(event.payload.position);
+            const overChat = isPointInsideChatDropZone(event.payload.position);
             const dropState = useEditorStore.getState();
             const focusedTabId = dropState.isSplit && dropState.focusedPane === 'secondary'
               ? dropState.secondaryActiveTabId
@@ -454,12 +458,14 @@ function App() {
             const allTabs = dropState.isSplit
               ? [...dropState.tabs, ...dropState.secondaryTabs]
               : dropState.tabs;
-            const overEditor = !overTerminal && isPointInsideEditor(event.payload.position) && isMarkdownEditable(allTabs, focusedTabId);
+            const overEditor = !overTerminal && !overChat && isPointInsideEditor(event.payload.position) && isMarkdownEditable(allTabs, focusedTabId);
             setTerminalDragState(overTerminal);
             setEditorDragState(overEditor);
+            notifyChatDragOver(overChat);
           } else if (event.payload.type === "drop") {
             // 在 drop 时重新判定一次落点，确保准确性
             const droppedInTerminal = isPointInsideTerminal(event.payload.position);
+            const droppedInChat = isPointInsideChatDropZone(event.payload.position);
             const dropState = useEditorStore.getState();
             const focusedTabId = dropState.isSplit && dropState.focusedPane === 'secondary'
               ? dropState.secondaryActiveTabId
@@ -467,15 +473,21 @@ function App() {
             const allTabs = dropState.isSplit
               ? [...dropState.tabs, ...dropState.secondaryTabs]
               : dropState.tabs;
-            const droppedInEditor = !droppedInTerminal && isPointInsideEditor(event.payload.position) && isMarkdownEditable(allTabs, focusedTabId);
+            const droppedInEditor = !droppedInTerminal && !droppedInChat && isPointInsideEditor(event.payload.position) && isMarkdownEditable(allTabs, focusedTabId);
             
             setIsDragging(false);
             setTerminalDragState(false);
             setEditorDragState(false);
+            notifyChatDragOver(false);
             
             const paths = event.payload.paths;
             if (droppedInTerminal) {
               void insertPathsIntoTerminal(paths);
+              return;
+            }
+
+            // 拖到会话输入区：作为聊天附件发送
+            if (droppedInChat && dispatchPathsToChat(paths)) {
               return;
             }
 
@@ -493,6 +505,7 @@ function App() {
             setIsDragging(false);
             setTerminalDragState(false);
             setEditorDragState(false);
+            notifyChatDragOver(false);
           }
         });
 
@@ -636,7 +649,9 @@ function App() {
         {/* Center Main Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
           <div ref={editorWorkspaceRef} className="flex-1 overflow-hidden relative z-0 flex flex-col">
-            {isSplit ? (
+            {activeView === "chat" ? (
+              <ChatView />
+            ) : isSplit ? (
               <div ref={splitWorkspaceRef} className="flex-1 flex overflow-hidden">
                 {/* Primary Pane */}
                 <div

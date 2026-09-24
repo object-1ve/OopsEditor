@@ -20,7 +20,7 @@ fn get_db_path(app: &AppHandle) -> PathBuf {
 
 static DB: Lazy<Mutex<Option<Connection>>> = Lazy::new(|| Mutex::new(None));
 
-fn with_db<F, T>(f: F) -> Result<T, String>
+pub(crate) fn with_db<F, T>(f: F) -> Result<T, String>
 where
     F: FnOnce(&Connection) -> SqlResult<T>,
 {
@@ -232,6 +232,9 @@ pub fn init_project_database(app: AppHandle) -> Result<(), String> {
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pinned_files_sort ON pinned_files(sort_order)", [])
         .map_err(|e| format!("创建 pinned_files.sort_order 索引失败: {}", e))?;
+
+    // 会话面板表（chat_sessions / chat_messages）
+    crate::chat::init_chat_schema(&conn).map_err(|e| format!("创建会话表失败: {}", e))?;
 
     let mut guard = DB.lock();
     *guard = Some(conn);

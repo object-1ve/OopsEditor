@@ -13,6 +13,7 @@ import { createTabsSlice } from "@/store/slices/tabsSlice";
 import { createTerminalsSlice } from "@/store/slices/terminalsSlice";
 import { createSidebarSlice } from "@/store/slices/sidebarSlice";
 import { createUiSlice } from "@/store/slices/uiSlice";
+import { createChatSlice } from "@/store/slices/chatSlice";
 import { createSplitSlice } from "@/store/slices/splitSlice";
 import { enforceTabLimit, formatAutoClosedTabsMessage } from "@/store/services/tabEnforcer";
 import type { EditorState, DefaultFolder, EditorPane } from "@/store/types";
@@ -27,6 +28,7 @@ const useEditorStore = create<EditorState>()((...a) => {
     ...createTerminalsSlice(...a),
     ...createSidebarSlice(...a),
     ...createUiSlice(...a),
+    ...createChatSlice(...a),
     ...createSplitSlice(...a),
 
     // ── Override toggleSplit to avoid circular ref ──
@@ -92,6 +94,7 @@ const useEditorStore = create<EditorState>()((...a) => {
         rightSidebarIconOrder,
         sidebarSortField: settings.sidebarSortField,
         sidebarSortOrder: settings.sidebarSortOrder,
+        activeView: settings.activeView,
         defaultSavePath: settings.defaultSavePath,
         captureProtection: settings.captureProtection,
         maxRecentFolders: settings.maxRecentFolders,
