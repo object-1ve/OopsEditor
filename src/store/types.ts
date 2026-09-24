@@ -1,5 +1,5 @@
 import type { FileTab } from "../types";
-import type { ChatAttachment, ChatMessage, ChatSession } from "../services/chat";
+import type { ChatMessage, ChatSession } from "../services/chat";
 
 export interface TerminalInstance {
   id: string;
@@ -189,11 +189,12 @@ export interface EditorState {
   renameChatSession: (id: number, title: string) => Promise<void>;
   deleteChatSession: (id: number) => Promise<void>;
   sendChatText: (text: string) => Promise<void>;
-  sendChatAttachment: (
-    attachment: ChatAttachment,
-    kind: "file" | "image",
-    caption: string,
-  ) => Promise<void>;
+  /** 发送文件（只记录路径） */
+  sendChatFiles: (paths: string[], caption: string) => Promise<void>;
+  /** 发送图片（缓存副本） */
+  sendChatImages: (paths: string[], caption: string) => Promise<void>;
+  /** 发送剪贴板图片 */
+  sendChatClipboardImage: (base64: string, name: string, caption: string) => Promise<void>;
   editChatMessage: (id: number, content: string) => Promise<void>;
   deleteChatMessage: (id: number) => Promise<void>;
   setDefaultSavePath: (path: string) => void;

@@ -12,7 +12,7 @@ import { chatDisplayName, formatChatSize, isImageFileName } from "./chatFormat";
 export interface ChatMessageActions {
   onEdit: (id: number, content: string) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, displayName?: string | null) => void;
   onRevealFile: (path: string) => void;
   /** 图片附件的全屏放大查看 */
   onPreviewImage: (path: string, name?: string | null) => void;
@@ -57,6 +57,8 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
   const isMine = message.role === "me";
   const hasFile = !!message.file_path;
   const isImage = message.kind === "image" || isImageFileName(message.file_name);
+  // 图片副本名带内容哈希（存储去重用），展示时摘掉；文件消息本身就是原始名
+  const displayName = isImage ? chatDisplayName(message.file_name) : message.file_name ?? "附件";
 
   const copyText = useCallback(async () => {
     // 文件消息没有正文时复制文件名，比复制空串更有用
@@ -155,15 +157,15 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
 
               {hasFile && !isImage && (
                 <button
-                  onClick={() => actions.onOpenFile(message.file_path!)}
+                  onClick={() => actions.onOpenFile(message.file_path!, displayName)}
                   className="flex items-center gap-2 w-full text-left cursor-pointer group/file"
-                  title="在编辑器中打开"
+                  title={`在编辑器中打开原文件\n${message.file_path}`}
                 >
                   <span className="w-8 h-8 shrink-0 rounded-lg bg-black/10 flex items-center justify-center">
                     <Download size={14} />
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate font-medium">{chatDisplayName(message.file_name)}</span>
+                    <span className="block truncate font-medium">{displayName}</span>
                     <span className={`block text-[10px] ${isMine ? "text-white/80" : "text-text-muted"}`}>
                       {formatChatSize(message.file_size)}
                     </span>
@@ -197,6 +199,11 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
             <BubbleAction title={isCopied ? "已复制" : "复制文字"} onClick={() => void copyText()}>
               {isCopied ? <Check size={11} /> : <Copy size={11} />}
             </BubbleAction>
+            {hasFile && !isImage && (
+              <BubbleAction title="在编辑器中打开原文件" onClick={() => actions.onOpenFile(message.file_path!, displayName)}>
+                <ExternalLink size={11} />
+              </BubbleAction>
+            )}
             {hasFile && (
               <BubbleAction title="在资源管理器中显示" onClick={() => actions.onRevealFile(message.file_path!)}>
                 <ExternalLink size={11} />
@@ -236,7 +243,7 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
                   {
                     label: "在编辑器中打开",
                     icon: <ExternalLink size={14} />,
-                    onClick: () => actions.onOpenFile(message.file_path!),
+                    onClick: () => actions.onOpenFile(message.file_path!, displayName),
                   },
                   {
                     label: "在资源管理器中显示",

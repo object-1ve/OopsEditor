@@ -24,7 +24,9 @@ export default function ChatView() {
   const selectChatSession = useEditorStore((s) => s.selectChatSession);
   const createChatSession = useEditorStore((s) => s.createChatSession);
   const sendChatText = useEditorStore((s) => s.sendChatText);
-  const sendChatAttachment = useEditorStore((s) => s.sendChatAttachment);
+  const sendChatFiles = useEditorStore((s) => s.sendChatFiles);
+  const sendChatImages = useEditorStore((s) => s.sendChatImages);
+  const sendChatClipboardImage = useEditorStore((s) => s.sendChatClipboardImage);
   const editChatMessage = useEditorStore((s) => s.editChatMessage);
   const deleteChatMessage = useEditorStore((s) => s.deleteChatMessage);
   const deleteChatSession = useEditorStore((s) => s.deleteChatSession);
@@ -63,7 +65,7 @@ export default function ChatView() {
     () => ({
       onEdit: (id, content) => editChatMessage(id, content),
       onDelete: (id) => deleteChatMessage(id),
-      onOpenFile: (path) => void openChatFile(path, showNotification),
+      onOpenFile: (path, displayName) => void openChatFile(path, showNotification, displayName),
       onRevealFile: (path) => revealChatFile(path, showNotification),
       onPreviewImage: (path, name) => previewChatImage(path, name ?? undefined),
     }),
@@ -178,7 +180,9 @@ export default function ChatView() {
         disabled={false}
         isSending={isSending}
         onSendText={sendChatText}
-        onSendAttachment={sendChatAttachment}
+        onSendFiles={sendChatFiles}
+        onSendImages={sendChatImages}
+        onSendClipboardImage={sendChatClipboardImage}
         onError={(message) => showNotification(message, "error")}
       />
     </div>

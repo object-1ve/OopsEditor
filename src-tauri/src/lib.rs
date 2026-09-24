@@ -212,9 +212,9 @@ use attachment::{import_image_base64, import_image_file};
 
 mod chat;
 use chat::{
-    add_chat_message, add_chat_session, delete_chat_message, delete_chat_session,
-    get_chat_messages, get_chat_sessions, rename_chat_session, store_chat_base64, store_chat_file,
-    update_chat_message,
+    add_chat_file_message, add_chat_image_message, add_chat_image_message_base64, add_chat_message,
+    add_chat_session, delete_chat_message, delete_chat_session, get_chat_messages,
+    get_chat_sessions, rename_chat_session, update_chat_message,
 };
 
 // ── 原有命令 ──
@@ -881,8 +881,10 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         add_chat_message,
         update_chat_message,
         delete_chat_message,
-        store_chat_file,
-        store_chat_base64,
+        // 发送文件（只记录路径）/ 发送图片（缓存副本）
+        add_chat_file_message,
+        add_chat_image_message,
+        add_chat_image_message_base64,
         // SQLite 查看器命令
         get_sqlite_tables,
         get_sqlite_table_data,

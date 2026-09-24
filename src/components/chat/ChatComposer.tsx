@@ -1,12 +1,16 @@
 /**
  * 会话输入区：文字发送、选择文件、选择图片、剪贴板粘贴图片、拖放附件。
+ *
+ * 发送语义：
+ * - 文件只把**本地路径**记进消息（后端仅做一次 stat 校验），发送瞬时完成、原文件更新即刻可见；
+ * - 图片会缓存一份副本，因为缩略图要走 asset 协议渲染，需要稳定路径。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ImagePlus, Paperclip, SendHorizontal, X } from "lucide-react";
+import { FileText, ImagePlus, Paperclip, SendHorizontal, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { storeChatBase64, storeChatFile, type ChatAttachment } from "@/services/chat";
-import { chatDisplayName, formatChatSize, isImageFileName } from "./chatFormat";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { isImagePath } from "@/services/chat";
+import { chatDisplayName } from "./chatFormat";
 import { registerChatDropZone, subscribeChatDragOver } from "./dropTarget";
 
 interface ChatComposerProps {
@@ -14,7 +18,9 @@ interface ChatComposerProps {
   disabled: boolean;
   isSending: boolean;
   onSendText: (text: string) => Promise<void>;
-  onSendAttachment: (attachment: ChatAttachment, kind: "file" | "image", caption: string) => Promise<void>;
+  onSendFiles: (paths: string[], caption: string) => Promise<void>;
+  onSendImages: (paths: string[], caption: string) => Promise<void>;
+  onSendClipboardImage: (base64: string, name: string, caption: string) => Promise<void>;
   onError: (message: string) => void;
 }
 
@@ -23,30 +29,47 @@ const IMAGE_FILTER = {
   extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "tiff", "avif"],
 };
 
+/** 待发送项：文件只存路径，图片额外存 asset URL 用于缩略图 */
+interface PendingItem {
+  path: string;
+  name: string;
+  size: number;
+  isImage: boolean;
+}
+
 export default function ChatComposer({
   disabled,
   isSending,
   onSendText,
-  onSendAttachment,
+  onSendFiles,
+  onSendImages,
+  onSendClipboardImage,
   onError,
 }: ChatComposerProps) {
   const [text, setText] = useState("");
-  const [pending, setPending] = useState<{ attachment: ChatAttachment; kind: "file" | "image" }[]>([]);
+  const [pending, setPending] = useState<PendingItem[]>([]);
+  const [pastedImages, setPastedImages] = useState<Record<string, { base64: string; name: string }>>({});
   const [isDragOver, setIsDragOver] = useState(false);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
-  /** 文件只入库一次：先落盘拿到哈希路径，再随消息一起提交 */
+  /**
+   * 加入待发送列表：只登记路径，不再预读/复制文件。
+   * 大小按需从后端取，避免为了显示体积而读整个文件。
+   */
   const ingestPaths = useCallback(
     async (paths: string[]) => {
-      const added: { attachment: ChatAttachment; kind: "file" | "image" }[] = [];
+      const added: PendingItem[] = [];
       for (const path of paths) {
+        const name = path.split(/[/\\]/).pop() || path;
+        let size = 0;
         try {
-          const attachment = await storeChatFile(path);
-          const name = attachment.name || path.split(/[/\\]/).pop() || path;
-          added.push({ attachment, kind: isImageFileName(name) ? "image" : "file" });
-        } catch (err) {
-          onError(`添加附件失败: ${String(err)}`);
+          const info = await invoke<{ size: number }>("get_file_info", { path });
+          size = info.size;
+        } catch {
+          onError(`无法访问文件: ${name}`);
+          continue;
         }
+        added.push({ path, name, size, isImage: isImagePath(path) });
       }
       if (added.length > 0) setPending((prev) => [...prev, ...added]);
     },
@@ -61,7 +84,7 @@ export default function ChatComposer({
 
   useEffect(() => subscribeChatDragOver(setIsDragOver), []);
 
-  // 剪贴板图片：直接落盘为附件，和拖图片进输入区等价
+  // 剪贴板图片：浏览器里拿不到路径，先留在内存，发送时再交给后端落盘
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
       if (disabled) return;
@@ -74,14 +97,15 @@ export default function ChatComposer({
         if (!file) continue;
         event.preventDefault();
         const reader = new FileReader();
-        reader.onload = async () => {
-          try {
-            const base64 = String(reader.result).split(",")[1] ?? "";
-            const attachment = await storeChatBase64(base64, file.name || "clipboard.png");
-            setPending((prev) => [...prev, { attachment, kind: "image" }]);
-          } catch (err) {
-            onError(`添加剪贴板图片失败: ${String(err)}`);
-          }
+        reader.onload = () => {
+          const base64 = String(reader.result).split(",")[1] ?? "";
+          const name = file.name || "clipboard.png";
+          // 用内存中的 data URL 直接预览，无需先落盘
+          setPastedImages((prev) => ({ ...prev, [name]: { base64, name } }));
+          setPending((prev) => [
+            ...prev,
+            { path: name, name, size: file.size, isImage: true },
+          ]);
         };
         reader.onerror = () => onError("读取剪贴板图片失败");
         reader.readAsDataURL(file);
@@ -119,20 +143,31 @@ export default function ChatComposer({
 
     try {
       if (pending.length > 0) {
-        for (let i = 0; i < pending.length; i += 1) {
-          // 说明文字附在最后一条附件消息上，符合聊天软件习惯
-          const isLast = i === pending.length - 1;
-          await onSendAttachment(pending[i].attachment, pending[i].kind, isLast ? caption : "");
+        const filePaths = pending.filter((item) => !item.isImage).map((item) => item.path);
+        const imagePaths = pending.filter((item) => item.isImage && !pastedImages[item.path]).map((item) => item.path);
+
+        // 说明文字附在最后发出的那条消息上，符合聊天软件习惯
+        if (filePaths.length > 0) await onSendFiles(filePaths, imagePaths.length === 0 ? caption : "");
+        for (let i = 0; i < imagePaths.length; i += 1) {
+          const isLastImage = i === imagePaths.length - 1;
+          await onSendImages([imagePaths[i]], isLastImage ? caption : "");
+        }
+        for (const item of pending) {
+          const pasted = pastedImages[item.path];
+          if (!pasted) continue;
+          const isLast = item === pending[pending.length - 1];
+          await onSendClipboardImage(pasted.base64, pasted.name, isLast ? caption : "");
         }
       } else {
         await onSendText(caption);
       }
       setText("");
       setPending([]);
+      setPastedImages({});
     } catch (err) {
       onError(`发送失败: ${String(err)}`);
     }
-  }, [disabled, isSending, onError, onSendAttachment, onSendText, pending, text]);
+  }, [disabled, isSending, onError, onSendClipboardImage, onSendFiles, onSendImages, onSendText, pastedImages, pending, text]);
 
   const hasDraft = pending.length > 0 || text.trim().length > 0;
 
@@ -141,40 +176,48 @@ export default function ChatComposer({
       {/* 待发送附件预览 */}
       {pending.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-2 pt-2">
-          {pending.map((item, index) => (
-            <div
-              key={`${item.attachment.path}-${index}`}
-              className="group/att relative flex items-center gap-1.5 pl-1.5 pr-5 py-1 rounded-lg bg-surface border border-border max-w-full"
-            >
-              {item.kind === "image" ? (
-                <img
-                  src={convertFileSrc(item.attachment.path)}
-                  alt={item.attachment.name}
-                  className="w-6 h-6 rounded object-cover shrink-0 bg-black/5"
-                />
-              ) : (
-                <span className="w-6 h-6 rounded bg-black/5 flex items-center justify-center shrink-0">
-                  <Paperclip size={11} className="text-text-muted" />
-                </span>
-              )}
-              <span className="min-w-0">
-                <span className="block text-[11px] text-text-secondary truncate max-w-32">
-                  {chatDisplayName(item.attachment.name)}
-                </span>
-                <span className="block text-[9px] text-text-muted/85">{formatChatSize(item.attachment.size)}</span>
-              </span>
-              <button
-                onClick={() => setPending((prev) => prev.filter((_, i) => i !== index))}
-                title="移除附件"
-                className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-muted hover:text-error hover:bg-error/10 transition-colors cursor-pointer"
+          {pending.map((item, index) => {
+            const pasted = pastedImages[item.path];
+            return (
+              <div
+                key={`${item.path}-${index}`}
+                className="group/att relative flex items-center gap-1.5 pl-1.5 pr-5 py-1 rounded-lg bg-surface border border-border max-w-full"
               >
-                <X size={10} />
-              </button>
-            </div>
-          ))}
+                {item.isImage ? (
+                  <img
+                    src={pasted ? `data:image/png;base64,${pasted.base64}` : convertFileSrc(item.path)}
+                    alt={item.name}
+                    className="w-6 h-6 rounded object-cover shrink-0 bg-black/5"
+                  />
+                ) : (
+                  <span className="w-6 h-6 rounded bg-black/5 flex items-center justify-center shrink-0">
+                    <FileText size={11} className="text-text-muted" />
+                  </span>
+                )}
+                <span className="min-w-0">
+                  <span className="block text-[11px] text-text-secondary truncate max-w-32">
+                    {item.name}
+                  </span>
+                  <span className="block text-[9px] text-text-muted/85">
+                    {formatSize(item.size)}
+                  </span>
+                </span>
+                <button
+                  onClick={() => setPending((prev) => prev.filter((_, i) => i !== index))}
+                  title="移除附件"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-muted hover:text-error hover:bg-error/10 transition-colors cursor-pointer"
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            );
+          })}
           {pending.length > 1 && (
             <button
-              onClick={() => setPending([])}
+              onClick={() => {
+                setPending([]);
+                setPastedImages({});
+              }}
               className="self-center px-2 py-1 text-[10px] text-text-muted hover:text-error transition-colors cursor-pointer"
             >
               清空附件
@@ -216,7 +259,7 @@ export default function ChatComposer({
               <button
                 onClick={() => void handlePickFiles()}
                 disabled={disabled}
-                title="发送文件"
+                title="发送文件（仅记录路径）"
                 className="p-1.5 rounded-lg text-text-muted hover:text-accent hover:bg-surface transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 <Paperclip size={14} />
@@ -249,4 +292,16 @@ export default function ChatComposer({
       </div>
     </div>
   );
+}
+
+function formatSize(bytes: number): string {
+  if (!bytes || bytes <= 0) return "未知大小";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }

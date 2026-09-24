@@ -14,8 +14,10 @@ import {
   getChatMessages,
   getChatSessions,
   renameChatSession,
+  sendChatFileMessage,
+  sendChatImageMessage,
+  sendChatImageMessageBase64,
   sendChatMessage,
-  type ChatAttachment,
   type ChatMessage,
   type ChatSession,
 } from "@/services/chat";
@@ -37,7 +39,9 @@ export const createChatSlice: StateCreator<
     | "renameChatSession"
     | "deleteChatSession"
     | "sendChatText"
-    | "sendChatAttachment"
+    | "sendChatFiles"
+    | "sendChatImages"
+    | "sendChatClipboardImage"
     | "editChatMessage"
     | "deleteChatMessage"
   >
@@ -137,27 +141,54 @@ export const createChatSlice: StateCreator<
     }
   },
 
-  sendChatAttachment: async (
-    attachment: ChatAttachment,
-    kind: "file" | "image",
-    caption: string,
-  ) => {
+  /** 发送文件：后端只记录路径（不复制），说明文字附在最后一条 */
+  sendChatFiles: async (paths: string[], caption: string) => {
+    const sessionId = get().chatActiveSessionId;
+    if (sessionId === null || paths.length === 0) return;
+    set({ chatIsSending: true });
+    try {
+      for (let i = 0; i < paths.length; i += 1) {
+        const isLast = i === paths.length - 1;
+        await sendChatFileMessage(sessionId, paths[i], isLast ? caption : "");
+      }
+      await get().selectChatSession(sessionId);
+    } catch (err) {
+      get().showNotification(`发送文件失败: ${String(err)}`, "error");
+      throw err;
+    } finally {
+      set({ chatIsSending: false });
+    }
+  },
+
+  /** 发送图片：缓存副本后入库（缩略图需要稳定路径） */
+  sendChatImages: async (paths: string[], caption: string) => {
+    const sessionId = get().chatActiveSessionId;
+    if (sessionId === null || paths.length === 0) return;
+    set({ chatIsSending: true });
+    try {
+      for (let i = 0; i < paths.length; i += 1) {
+        const isLast = i === paths.length - 1;
+        await sendChatImageMessage(sessionId, paths[i], isLast ? caption : "");
+      }
+      await get().selectChatSession(sessionId);
+    } catch (err) {
+      get().showNotification(`发送图片失败: ${String(err)}`, "error");
+      throw err;
+    } finally {
+      set({ chatIsSending: false });
+    }
+  },
+
+  /** 发送剪贴板里的图片（base64） */
+  sendChatClipboardImage: async (base64: string, name: string, caption: string) => {
     const sessionId = get().chatActiveSessionId;
     if (sessionId === null) return;
     set({ chatIsSending: true });
     try {
-      await sendChatMessage({
-        session_id: sessionId,
-        role: "me",
-        kind,
-        content: caption,
-        file_name: attachment.name,
-        file_path: attachment.path,
-        file_size: attachment.size,
-      });
+      await sendChatImageMessageBase64(sessionId, base64, name, caption);
       await get().selectChatSession(sessionId);
     } catch (err) {
-      get().showNotification(`发送附件失败: ${String(err)}`, "error");
+      get().showNotification(`发送图片失败: ${String(err)}`, "error");
       throw err;
     } finally {
       set({ chatIsSending: false });

@@ -45,6 +45,50 @@ export interface ChatAttachment {
   size: number;
 }
 
+/** 发送文件：只记录本地路径，不复制（后端只做一次 stat 校验） */
+export function sendChatFileMessage(
+  sessionId: number,
+  sourcePath: string,
+  content = "",
+): Promise<ChatMessage> {
+  return invoke("add_chat_file_message", { sourcePath, sessionId, role: "me", content });
+}
+
+/** 发送图片：缓存一份副本后写入 image 消息 */
+export function sendChatImageMessage(
+  sessionId: number,
+  sourcePath: string,
+  content = "",
+): Promise<ChatMessage> {
+  return invoke("add_chat_image_message", { sourcePath, sessionId, role: "me", content });
+}
+
+/** 发送剪贴板图片（base64）：缓存副本后写入 image 消息 */
+export function sendChatImageMessageBase64(
+  sessionId: number,
+  data: string,
+  name?: string,
+  content = "",
+): Promise<ChatMessage> {
+  return invoke("add_chat_image_message_base64", {
+    data,
+    sessionId,
+    name: name ?? null,
+    role: "me",
+    content,
+  });
+}
+
+/** 判断路径是否为图片文件（按扩展名） */
+export function isImagePath(path: string): boolean {
+  const ext = path.split(".").pop()?.toLowerCase();
+  return !!ext && IMAGE_EXTENSIONS.has(ext);
+}
+
+const IMAGE_EXTENSIONS = new Set([
+  "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tiff", "tif", "avif",
+]);
+
 export function getChatSessions(): Promise<ChatSession[]> {
   return invoke("get_chat_sessions");
 }
@@ -77,12 +121,3 @@ export function deleteChatMessage(id: number): Promise<void> {
   return invoke("delete_chat_message", { id });
 }
 
-/** 把磁盘文件复制进会话附件目录；同内容复用已有副本 */
-export function storeChatFile(sourcePath: string, name?: string): Promise<ChatAttachment> {
-  return invoke("store_chat_file", { sourcePath, name: name ?? null });
-}
-
-/** 把 base64 内容（剪贴板图片等）写入会话附件目录 */
-export function storeChatBase64(data: string, name?: string): Promise<ChatAttachment> {
-  return invoke("store_chat_base64", { data, name: name ?? null });
-}

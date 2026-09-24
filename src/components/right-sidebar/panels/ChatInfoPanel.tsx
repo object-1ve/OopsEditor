@@ -120,13 +120,21 @@ export default function ChatInfoPanel() {
                   onClick={() =>
                     isImageFileName(message.file_name)
                       ? previewChatImage(message.file_path!, message.file_name ?? undefined)
-                      : void openChatFile(message.file_path!, showNotification)
+                      : void openChatFile(
+                          message.file_path!,
+                          showNotification,
+                          isImageFileName(message.file_name)
+                            ? chatDisplayName(message.file_name)
+                            : message.file_name,
+                        )
                   }
-                  title={isImageFileName(message.file_name) ? "点击放大查看" : "在编辑器中打开"}
+                  title={isImageFileName(message.file_name) ? "点击放大查看" : `在编辑器中打开原文件\n${message.file_path}`}
                   className="flex-1 min-w-0 text-left cursor-pointer"
                 >
                   <span className="block truncate text-[11px] text-text-secondary">
-                    {chatDisplayName(message.file_name)}
+                    {isImageFileName(message.file_name)
+                      ? chatDisplayName(message.file_name)
+                      : message.file_name}
                   </span>
                   <span className="block text-[9px] text-text-muted/85 tabular-nums">
                     {formatChatSize(message.file_size)} · {formatChatDateTime(message.created_at)}

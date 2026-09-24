@@ -1,9 +1,10 @@
-//! 会话面板数据层：会话 / 消息 CRUD 与聊天附件落盘。
+//! 会话面板数据层：会话 / 消息 CRUD 与聊天图片附件落盘。
 //!
 //! - 会话按「最近编辑时间」(updated_at) 倒序展示，消息按写入顺序正序展示；
 //! - 消息文本可编辑，编辑后 `edited = 1` 且 `updated_at` 前进，`created_at` 保持不变；
-//! - 附件按内容哈希命名落在应用数据目录的 `chat-attachments/`，同内容只保留一份
-//!   （与 markdown Attachment 目录的去重策略一致，见 `attachment.rs`）。
+//! - 发送的**文件**只记录其本地路径（不复制、不读内容），始终指回原文件；
+//!   只有**图片**需要落盘一份副本——webview 要通过 asset 协议渲染缩略图，
+//!   而原始文件可能随时被移动/删除，缓存一份才能保证历史消息里的图仍在。
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
@@ -17,14 +18,16 @@ use tauri::{AppHandle, Manager};
 
 use crate::db::with_db;
 
-/// 聊天附件目录名（位于应用数据目录下）
+/// 聊天图片目录名（位于应用数据目录下）
 const CHAT_ATTACHMENT_DIR: &str = "chat-attachments";
 /// 文件名中保留的哈希字符数（与 attachment.rs 对齐）
 const HASH_LEN: usize = 16;
 /// 可读词干保留的最大字符数，避免超长路径
 const MAX_STEM_LEN: usize = 48;
-const FALLBACK_STEM: &str = "file";
-const FALLBACK_EXT: &str = "bin";
+const FALLBACK_STEM: &str = "image";
+const FALLBACK_EXT: &str = "png";
+/// 图片大小上限：避免把超大文件整块读进内存
+const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 // ── 类型 ───────────────────────────────────────────────────────
 
@@ -53,6 +56,7 @@ pub struct ChatMessage {
     /// 文字内容；文件/图片消息里是可选说明文字
     pub content: String,
     pub file_name: Option<String>,
+    /// `file` 消息是原始本地路径；`image` 消息是落盘副本路径
     pub file_path: Option<String>,
     pub file_size: i64,
     pub created_at: String,
@@ -73,7 +77,7 @@ pub struct NewChatMessage {
     pub file_size: Option<i64>,
 }
 
-/// 已落盘的聊天附件
+/// 已落盘的聊天图片
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ChatAttachment {
     /// 存储文件名（`<词干>-<哈希>.<扩展名>`）
@@ -151,7 +155,6 @@ fn normalized_role(raw: Option<&str>) -> String {
         _ => "me".to_string(),
     }
 }
-
 // ── 会话 CRUD ──────────────────────────────────────────────────
 
 /// 会话列表查询：附带消息条数与最近一条消息预览
@@ -326,7 +329,7 @@ fn remove_message(conn: &Connection, id: i64) -> SqlResult<bool> {
     Ok(true)
 }
 
-// ── 附件落盘 ───────────────────────────────────────────────────
+// ── 图片落盘 ───────────────────────────────────────────────────
 
 fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
@@ -346,7 +349,7 @@ fn file_stem_of(raw_name: &str) -> &str {
     }
 }
 
-/// 摘掉 `report-3f9ac2b1c2d3e4f5` 这类本模块生成的尾部哈希，避免重复发送时哈希层层叠加
+/// 摘掉 `image-3f9ac2b1c2d3e4f5` 这类本模块生成的尾部哈希，避免重复发送时哈希层层叠加
 fn strip_hash_suffix(stem: &str) -> &str {
     match stem.rsplit_once('-') {
         Some((head, tail))
@@ -378,7 +381,7 @@ fn normalized_stem(raw_name: &str) -> String {
     }
 }
 
-/// 扩展名统一小写；非法或缺失时回退为 bin
+/// 扩展名统一小写；非法或缺失时回退为 png
 fn normalized_ext(raw_name: &str) -> String {
     let name = raw_name.rsplit(['/', '\\']).next().unwrap_or(raw_name);
     let ext = match name.rfind('.') {
@@ -392,25 +395,25 @@ fn normalized_ext(raw_name: &str) -> String {
     }
 }
 
-/// 附件目录：应用数据目录下的 `chat-attachments/`
+/// 图片目录：应用数据目录下的 `chat-attachments/`
 fn attachment_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let app_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("无法获取应用数据目录: {}", e))?;
     let dir = app_dir.join(CHAT_ATTACHMENT_DIR);
-    fs::create_dir_all(&dir).map_err(|e| format!("创建会话附件目录失败: {}", e))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("创建聊天图片目录失败: {}", e))?;
     Ok(dir)
 }
 
-/// 按内容哈希落盘：同内容文件复用已有副本，只返回其路径
-fn store_attachment_bytes(
+/// 按内容哈希落盘一张图片：同内容复用已有副本，只返回其路径
+fn store_image_bytes(
     dir: &Path,
     bytes: &[u8],
     raw_name: &str,
 ) -> Result<ChatAttachment, String> {
     if bytes.is_empty() {
-        return Err("附件内容为空".to_string());
+        return Err("图片内容为空".to_string());
     }
 
     let hash = sha256_hex(bytes);
@@ -438,22 +441,14 @@ fn store_attachment_bytes(
         }
     }
 
-    let mut path = dir.join(format!(
-        "{}-{}.{}",
-        normalized_stem(raw_name),
-        &hash[..HASH_LEN],
-        normalized_ext(raw_name)
-    ));
+    let stem = normalized_stem(raw_name);
+    let ext = normalized_ext(raw_name);
+    let mut path = dir.join(format!("{}-{}.{}", stem, &hash[..HASH_LEN], ext));
     if path.exists() {
         // 同名但内容不同（用户手工替换过或哈希前缀撞车），不覆盖，改用完整哈希
-        path = dir.join(format!(
-            "{}-{}.{}",
-            normalized_stem(raw_name),
-            hash,
-            normalized_ext(raw_name)
-        ));
+        path = dir.join(format!("{}-{}.{}", stem, hash, ext));
     }
-    fs::write(&path, bytes).map_err(|e| format!("保存附件失败: {}", e))?;
+    fs::write(&path, bytes).map_err(|e| format!("保存图片失败: {}", e))?;
 
     Ok(ChatAttachment {
         name: path
@@ -520,40 +515,124 @@ pub fn delete_chat_message(id: i64) -> Result<(), String> {
     }
 }
 
-/// 把磁盘上的文件复制进会话附件目录（同内容复用已有副本）
+/// 发送文件：只做一次 stat 校验并**记录其本地路径**，不复制内容。
+///
+/// 复制一份既慢又占空间，且会让「发送后原文件更新」看起来没生效；
+/// 打开时直接用原路径（见前端 openChatFile），所以这里只保证路径当下存在。
 #[tauri::command]
-pub fn store_chat_file(
-    app: AppHandle,
+pub fn add_chat_file_message(
     source_path: String,
-    name: Option<String>,
-) -> Result<ChatAttachment, String> {
-    let bytes = fs::read(&source_path).map_err(|e| format!("读取附件失败: {}", e))?;
-    let raw_name = name
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| {
-            Path::new(&source_path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default()
-        });
-    store_attachment_bytes(&attachment_dir(&app)?, &bytes, &raw_name)
+    session_id: i64,
+    role: Option<String>,
+    content: Option<String>,
+) -> Result<ChatMessage, String> {
+    let path = Path::new(&source_path);
+    let metadata = fs::metadata(path).map_err(|e| format!("文件不存在或不可访问: {}", e))?;
+    if metadata.is_dir() {
+        return Err("暂不支持发送文件夹，请选择文件".to_string());
+    }
+
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| to_slash(path));
+
+    with_db(|conn| {
+        insert_message(
+            conn,
+            NewChatMessage {
+                session_id,
+                role,
+                kind: Some("file".to_string()),
+                content,
+                file_name: Some(file_name),
+                file_path: Some(to_slash(path)),
+                file_size: Some(metadata.len() as i64),
+            },
+        )
+    })?
+    .ok_or_else(|| "会话不存在，无法发送文件".to_string())
 }
 
-/// 把 base64 内容（剪贴板粘贴的图片等）写入会话附件目录
+/// 发送图片：把图片缓存一份到应用数据目录（asset 协议渲染缩略图需要稳定路径），
+/// 再作为 `image` 消息写入。
 #[tauri::command]
-pub fn store_chat_base64(
+pub fn add_chat_image_message(
+    app: AppHandle,
+    source_path: String,
+    session_id: i64,
+    role: Option<String>,
+    content: Option<String>,
+) -> Result<ChatMessage, String> {
+    let metadata =
+        fs::metadata(&source_path).map_err(|e| format!("图片不存在或不可访问: {}", e))?;
+    if metadata.len() > MAX_IMAGE_BYTES {
+        return Err(format!(
+            "图片过大（{} MB），上限 {} MB",
+            metadata.len() / 1024 / 1024,
+            MAX_IMAGE_BYTES / 1024 / 1024
+        ));
+    }
+
+    let raw_name = Path::new(&source_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let bytes = fs::read(&source_path).map_err(|e| format!("读取图片失败: {}", e))?;
+    let stored = store_image_bytes(&attachment_dir(&app)?, &bytes, &raw_name)?;
+
+    with_db(|conn| {
+        insert_message(
+            conn,
+            NewChatMessage {
+                session_id,
+                role,
+                kind: Some("image".to_string()),
+                content,
+                file_name: Some(stored.name),
+                file_path: Some(stored.path),
+                file_size: Some(stored.size),
+            },
+        )
+    })?
+    .ok_or_else(|| "会话不存在，无法发送图片".to_string())
+}
+
+/// 发送剪贴板里的图片（base64）：直接缓存到应用数据目录并写入 `image` 消息
+#[tauri::command]
+pub fn add_chat_image_message_base64(
     app: AppHandle,
     data: String,
+    session_id: i64,
     name: Option<String>,
-) -> Result<ChatAttachment, String> {
+    role: Option<String>,
+    content: Option<String>,
+) -> Result<ChatMessage, String> {
     let compact: String = data.chars().filter(|c| !c.is_whitespace()).collect();
     let bytes = STANDARD
         .decode(compact.as_bytes())
-        .map_err(|e| format!("解析附件数据失败: {}", e))?;
+        .map_err(|e| format!("解析图片数据失败: {}", e))?;
     let raw_name = name
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("{}.{}", FALLBACK_STEM, FALLBACK_EXT));
-    store_attachment_bytes(&attachment_dir(&app)?, &bytes, &raw_name)
+    let stored = store_image_bytes(&attachment_dir(&app)?, &bytes, &raw_name)?;
+
+    with_db(|conn| {
+        insert_message(
+            conn,
+            NewChatMessage {
+                session_id,
+                role,
+                kind: Some("image".to_string()),
+                content,
+                file_name: Some(stored.name),
+                file_path: Some(stored.path),
+                file_size: Some(stored.size),
+            },
+        )
+    })?
+    .ok_or_else(|| "会话不存在，无法发送图片".to_string())
 }
 
 #[cfg(test)]
@@ -788,31 +867,30 @@ mod tests {
         );
     }
 
+    /// 图片：同内容只缓存一份，路径为正斜杠，可被 asset 协议使用
     #[test]
-    fn attachment_same_content_is_stored_once() {
+    fn image_same_content_is_stored_once() {
         let dir = temp_dir();
 
-        let first = store_attachment_bytes(&dir, b"PNG-BYTES", "shot.png").unwrap();
-        let second = store_attachment_bytes(&dir, b"PNG-BYTES", "shot.png").unwrap();
+        let first = store_image_bytes(&dir, b"PNG-BYTES", "shot.png").unwrap();
+        let second = store_image_bytes(&dir, b"PNG-BYTES", "shot.png").unwrap();
 
         assert_eq!(first.name, second.name);
         assert_eq!(first.path, second.path);
-        // 目录里只有一份文件
-        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "重复内容不应产生第二个文件");
         assert!(first.name.starts_with("shot-"), "name: {}", first.name);
         assert!(first.name.ends_with(".png"), "name: {}", first.name);
         assert_eq!(first.size, 9);
-        // 路径用正斜杠，便于前端 convertFileSrc
         assert!(!first.path.contains('\\'), "path: {}", first.path);
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn attachment_different_content_creates_second_file() {
+    fn image_different_content_creates_second_file() {
         let dir = temp_dir();
-        let a = store_attachment_bytes(&dir, b"AAA", "image.png").unwrap();
-        let b = store_attachment_bytes(&dir, b"BBB", "image.png").unwrap();
+        let a = store_image_bytes(&dir, b"AAA", "image.png").unwrap();
+        let b = store_image_bytes(&dir, b"BBB", "image.png").unwrap();
 
         assert_ne!(a.name, b.name);
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 2);
@@ -821,40 +899,36 @@ mod tests {
     }
 
     #[test]
-    fn attachment_keeps_readable_name_for_chinese_and_rejects_empty() {
+    fn image_keeps_readable_name_for_chinese_and_rejects_empty() {
         let dir = temp_dir();
-        let stored = store_attachment_bytes(&dir, b"X", "会议纪要.pdf").unwrap();
+        let stored = store_image_bytes(&dir, b"X", "会议纪要.png").unwrap();
         assert!(stored.name.starts_with("会议纪要-"), "name: {}", stored.name);
-        assert!(stored.name.ends_with(".pdf"), "name: {}", stored.name);
+        assert!(stored.name.ends_with(".png"), "name: {}", stored.name);
 
-        // 无扩展名 / 空内容
-        let plain = store_attachment_bytes(&dir, b"Y", "README").unwrap();
-        assert!(plain.name.ends_with(".bin"), "name: {}", plain.name);
-        assert!(store_attachment_bytes(&dir, b"", "empty.txt").is_err());
+        // 无扩展名时回退 png；空内容被拒绝
+        let plain = store_image_bytes(&dir, b"Y", "截图").unwrap();
+        assert!(plain.name.ends_with(".png"), "name: {}", plain.name);
+        assert!(store_image_bytes(&dir, b"", "empty.png").is_err());
 
-        // 重复发送同一份已落盘附件时文件名保持稳定（不叠加哈希）
-        let again = store_attachment_bytes(
-            &dir,
-            b"X",
-            &Path::new(&stored.path).to_string_lossy(),
-        )
-        .unwrap();
+        // 重复发送同一份已落盘图片时文件名保持稳定（不叠加哈希）
+        let again =
+            store_image_bytes(&dir, b"X", &Path::new(&stored.path).to_string_lossy()).unwrap();
         assert_eq!(again.name, stored.name);
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn tampered_attachment_is_not_treated_as_same_content() {
+    fn tampered_image_is_not_treated_as_same_content() {
         let dir = temp_dir();
-        let original = store_attachment_bytes(&dir, b"ORIGINAL", "doc.pdf").unwrap();
+        let original = store_image_bytes(&dir, b"ORIGINAL", "shot.png").unwrap();
         fs::write(
             dir.join(&original.name),
             b"EDITED-BY-USER-LONGER-THAN-BEFORE",
         )
         .unwrap();
 
-        let again = store_attachment_bytes(&dir, b"ORIGINAL", "doc.pdf").unwrap();
+        let again = store_image_bytes(&dir, b"ORIGINAL", "shot.png").unwrap();
 
         assert_ne!(again.name, original.name, "被改过的文件不应复用");
         assert_eq!(
@@ -862,6 +936,83 @@ mod tests {
             b"EDITED-BY-USER-LONGER-THAN-BEFORE",
             "用户改过的文件保持原样"
         );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 发送文件：只记录路径，不复制内容、不读入内存，且大小来自 stat
+    #[test]
+    fn file_message_records_source_path_without_copying() {
+        let dir = temp_dir();
+        let source = dir.join("季度报告.txt");
+        // 故意造一个大文件：若实现仍整块读入内存，这个用例会明显变慢而非失败
+        let payload = vec![b'x'; 8 * 1024 * 1024];
+        fs::write(&source, &payload).unwrap();
+        let before = fs::read_dir(&dir).unwrap().count();
+
+        let conn = db();
+        let session = insert_session(&conn, "会话").unwrap();
+        let source_slash = to_slash(&source);
+
+        // 走与命令相同的落库逻辑（命令层只多一次 stat 校验）
+        let metadata = fs::metadata(&source).unwrap();
+        let message = insert_message(
+            &conn,
+            NewChatMessage {
+                session_id: session.id,
+                role: None,
+                kind: Some("file".to_string()),
+                content: None,
+                file_name: Some("季度报告.txt".to_string()),
+                file_path: Some(source_slash.clone()),
+                file_size: Some(metadata.len() as i64),
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(message.kind, "file");
+        assert_eq!(message.file_path.as_deref(), Some(source_slash.as_str()));
+        assert_eq!(message.file_name.as_deref(), Some("季度报告.txt"));
+        assert_eq!(message.file_size, payload.len() as i64);
+        // 原文件未被改动，目录里也没多出副本
+        assert_eq!(fs::read(&source).unwrap().len(), payload.len());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), before, "不应复制出副本");
+        // 会话预览显示文件名而非路径
+        assert_eq!(list_sessions(&conn).unwrap()[0].last_message, "季度报告.txt");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 发送的文件被移动/删除后，记录仍在（打开时会由前端提示），不静默改数据
+    #[test]
+    fn file_message_survives_source_removal() {
+        let dir = temp_dir();
+        let source = dir.join("临时.txt");
+        fs::write(&source, b"data").unwrap();
+        let conn = db();
+        let session = insert_session(&conn, "会话").unwrap();
+
+        let message = insert_message(
+            &conn,
+            NewChatMessage {
+                session_id: session.id,
+                role: None,
+                kind: Some("file".to_string()),
+                content: None,
+                file_name: Some("临时.txt".to_string()),
+                file_path: Some(to_slash(&source)),
+                file_size: Some(4),
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+        fs::remove_file(&source).unwrap();
+
+        let reloaded = read_message(&conn, message.id).unwrap().unwrap();
+        assert_eq!(reloaded.file_path, message.file_path, "路径记录保持不变");
+        assert_eq!(reloaded.kind, "file");
 
         fs::remove_dir_all(&dir).unwrap();
     }
