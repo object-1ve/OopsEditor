@@ -899,6 +899,7 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         git_pull,
         git_remote_add,
         git_remote_get,
+        git_get_user,
         // 防截屏
         set_capture_protection,
         // 应用内更新完成后退出，由安装器接管
