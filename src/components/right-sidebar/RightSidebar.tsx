@@ -1,15 +1,27 @@
 /**
- * RightSidebar - Info, Outline panels with icon tabs
+ * RightSidebar - 图标轨 + 面板（文件视图：文件信息/目录；会话视图：会话信息）
+ *
+ * 面板与视图绑定：每个视图各自记住上次打开的面板，切换视图时图标轨与面板一起换组。
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Info, HelpCircle, ListTree } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Info, HelpCircle, ListTree, MessagesSquare } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import InfoPanel from "./panels/InfoPanel";
 import OutlinePanel from "./panels/OutlinePanel";
+import ChatInfoPanel from "./panels/ChatInfoPanel";
 
 const COLLAPSED_WIDTH = 40;
 const DEFAULT_OUTLINE_WIDTH = 280;
 const DEFAULT_INFO_WIDTH = 280;
+
+type PanelId = "chat" | "outline" | "info";
+
+/** 面板可见性依赖当前视图：文件视图给 info/outline，会话视图给 chat */
+const PANEL_VIEW: Record<PanelId, "files" | "chat"> = {
+  chat: "chat",
+  info: "files",
+  outline: "files",
+};
 
 export default function RightSidebar() {
   const tabs = useEditorStore(s => s.tabs);
@@ -18,25 +30,33 @@ export default function RightSidebar() {
   const setRightSidebarWidth = useEditorStore(s => s.setRightSidebarWidth);
   const rightSidebarIconOrder = useEditorStore(s => s.rightSidebarIconOrder);
   const setRightSidebarIconOrder = useEditorStore(s => s.setRightSidebarIconOrder);
+  const activeView = useEditorStore(s => s.activeView);
   const isResizing = useRef(false);
-  const [activePanel, setActivePanel] = useState<"outline" | "info" | null>(null);
+  // 每个视图各自记住上次打开的面板，切换视图后回来仍停在原来那一页
+  const [panelByView, setPanelByView] = useState<Record<"files" | "chat", PanelId | null>>({
+    files: null,
+    chat: null,
+  });
   const [draggedIcon, setDraggedIcon] = useState<string | null>(null);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
   const isMarkdownTab = activeTab?.language === "markdown";
 
+  const activePanel = panelByView[activeView];
   const isPanelOpen = activePanel !== null;
   const isOutlineOpen = isMarkdownTab && activePanel === "outline";
   const isInfoOpen = activePanel === "info";
+  const isChatInfoOpen = activePanel === "chat";
 
   const displayWidth = isPanelOpen
     ? Math.max(rightSidebarWidth, activePanel === "outline" ? DEFAULT_OUTLINE_WIDTH : DEFAULT_INFO_WIDTH)
     : COLLAPSED_WIDTH;
 
+  // 非 markdown 文件没有目录可显示，收起目录面板（只影响文件视图那一页）
   useEffect(() => {
-    if (!isMarkdownTab && activePanel === "outline") {
-      setActivePanel(null);
+    if (!isMarkdownTab && panelByView.files === "outline") {
+      setPanelByView((prev) => ({ ...prev, files: null }));
     }
-  }, [isMarkdownTab, activePanel]);
+  }, [isMarkdownTab, panelByView.files]);
 
   const startResizing = useCallback((e: React.MouseEvent) => {
     if (!isPanelOpen) return;
@@ -62,14 +82,16 @@ export default function RightSidebar() {
     document.body.style.cursor = "default";
   }, [handleMouseMove]);
 
-  const togglePanel = useCallback((panel: "outline" | "info") => {
-    setActivePanel((current) => {
+  const togglePanel = useCallback((panel: PanelId) => {
+    // 面板只在自己所属的视图里生效，避免在会话视图里打开文件信息
+    const targetView = PANEL_VIEW[panel];
+    setPanelByView((prev) => {
+      const current = prev[targetView];
       const nextPanel = current === panel ? null : panel;
-      const defaultWidth = panel === "outline" ? DEFAULT_OUTLINE_WIDTH : DEFAULT_INFO_WIDTH;
-      if (nextPanel === panel && rightSidebarWidth < defaultWidth) {
-        setRightSidebarWidth(defaultWidth);
+      if (nextPanel === panel && rightSidebarWidth < DEFAULT_INFO_WIDTH) {
+        setRightSidebarWidth(DEFAULT_INFO_WIDTH);
       }
-      return nextPanel;
+      return { ...prev, [targetView]: nextPanel };
     });
   }, [rightSidebarWidth, setRightSidebarWidth]);
 
@@ -106,7 +128,26 @@ export default function RightSidebar() {
   };
 
   const renderIcon = (id: string) => {
+    // 图标只在自己所属的视图出现（help 常驻，由下方单独渲染）
+    if (id !== "help" && PANEL_VIEW[id as PanelId] && PANEL_VIEW[id as PanelId] !== activeView) {
+      return null;
+    }
     switch (id) {
+      case "chat":
+        return (
+          <SidebarIcon
+            key="chat"
+            icon={<MessagesSquare size={18} />}
+            title={isChatInfoOpen ? "收起会话信息" : "会话信息"}
+            isActive={isChatInfoOpen}
+            onClick={() => togglePanel("chat")}
+            onDragStart={(e) => handleDragStart(e, "chat")}
+            onDragEnter={(e) => handleDragEnter(e, "chat")}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+            isDragging={draggedIcon === "chat"}
+          />
+        );
       case "info":
         return (
           <SidebarIcon
@@ -194,6 +235,17 @@ export default function RightSidebar() {
           </div>
           <div className="flex-1 overflow-y-auto">
             <InfoPanel filePath={activeTab?.path} />
+          </div>
+        </div>
+      )}
+
+      {isChatInfoOpen && (
+        <div className="flex-1 min-w-0 flex flex-col">
+          <div className="h-10 px-4 border-b border-border flex items-center">
+            <span className="text-sm font-medium text-text-primary">会话信息</span>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <ChatInfoPanel />
           </div>
         </div>
       )}

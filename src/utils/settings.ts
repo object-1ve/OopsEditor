@@ -78,7 +78,8 @@ export interface AppSettings {
   maxRecentFiles: number;
 }
 
-const DEFAULT_RIGHT_SIDEBAR_ICON_ORDER = ["info", "outline", "help"] as const;
+// chat = 会话信息（仅会话视图显示），info/outline = 文件信息与目录（仅文件视图显示）
+const DEFAULT_RIGHT_SIDEBAR_ICON_ORDER = ["chat", "info", "outline", "help"] as const;
 
 function sanitizeRightSidebarIconOrder(order?: string[]): string[] {
   if (!Array.isArray(order)) {

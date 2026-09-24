@@ -68,6 +68,7 @@ const useEditorStore = create<EditorState>()((...a) => {
       );
 
       const rightSidebarIconOrder = (settings.rightSidebarIconOrder || [
+        "chat",
         "info",
         "outline",
         "help",

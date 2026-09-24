@@ -70,7 +70,7 @@ export const createSidebarSlice: StateCreator<
   activeView: "files",
   rootPathOrder: [],
   recentFolders: [],
-  rightSidebarIconOrder: ["info", "outline", "help"],
+  rightSidebarIconOrder: ["chat", "info", "outline", "help"],
 
   setHoveredPath: (path: string | null) => set({ hoveredPath: path }),
 

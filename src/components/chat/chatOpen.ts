@@ -8,12 +8,15 @@ import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 import { useEditorStore } from "@/store/editor";
+import { chatDisplayName } from "./chatFormat";
 
 type Notify = (message: string, type?: "info" | "error" | "success") => void;
 
 export async function openChatFile(path: string, showNotification: Notify) {
-  const name = path.split(/[/\\]/).pop() ?? path;
-  const { language, unsupportedReason } = detectLanguage(name);
+  const storedName = path.split(/[/\\]/).pop() ?? path;
+  // 存储文件名带内容哈希（去重用），编辑器标签页显示去哈希后的名字
+  const name = chatDisplayName(storedName);
+  const { language, unsupportedReason } = detectLanguage(storedName);
 
   // 视频之类不能在编辑器里预览的类型，交给系统默认程序
   if (language === "unsupported") {
