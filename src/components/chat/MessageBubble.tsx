@@ -99,7 +99,9 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
             e.stopPropagation();
             setMenu({ x: e.clientX, y: e.clientY });
           }}
-          className={`relative rounded-2xl px-3 py-2 text-[12px] leading-relaxed break-words whitespace-pre-wrap shadow-sm ${
+          className={`chat-bubble ${
+            isMine ? "chat-bubble-mine" : "chat-bubble-received"
+          } relative rounded-2xl px-3 py-2 text-[12px] leading-relaxed break-words whitespace-pre-wrap shadow-sm ${
             isMine
               ? "bg-accent text-white rounded-br-md"
               : "bg-surface text-text-primary rounded-bl-md border border-border"
@@ -121,7 +123,8 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
                     void saveEdit();
                   }
                 }}
-                className="w-full resize-none rounded-lg bg-white/90 px-2 py-1 text-[12px] text-text-primary outline-none focus:ring-1 focus:ring-accent/60"
+                className="w-full resize-none rounded-lg bg-white/90 px-2 py-1 text-[12px] text-text-primary focus:ring-2 focus:ring-accent/60"
+                style={{ outline: "none" }}
                 rows={Math.min(6, Math.max(2, draft.split("\n").length))}
               />
               <div className="flex items-center justify-end gap-1">

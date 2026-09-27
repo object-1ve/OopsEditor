@@ -107,10 +107,26 @@ body {
 }
 
 ::selection {
-  background: rgba(200, 106, 78, 0.2);
+  background: rgba(200, 106, 78, 0.32);
   color: var(--text-primary);
 }
 
+/* ── 会话消息气泡 ──
+   气泡本身就带圆角与色块，全局 ::selection 的 32% 橙落在 accent 底（自己的气泡）上会被底色吃掉，
+   所以按气泡底色分别给出可辨识的选中背景；只调背景、不动文字色，避免破坏原有对比度。 */
+.chat-bubble-mine ::selection {
+  background: rgba(255, 255, 255, 0.42);
+  color: #ffffff;
+}
+
+.chat-bubble-received ::selection {
+  background: rgba(200, 106, 78, 0.34);
+  color: var(--text-primary);
+}
+
+/* 默认焦点描边。写在无层级里，会压过 Tailwind @layer utilities 里的 .outline-none，
+   因此需要「用容器圆角外框」的输入框要在元素上内联 outline: none 显式盖掉（见 ChatComposer /
+   ContentSearchDialog），否则会额外画出一条不带弧度的直角描边。 */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
