@@ -1,8 +1,8 @@
 /**
- * 会话视图：占据原本的文件编辑区（消息流 + 输入区）。
+ * 会话视图：作为顶部标签页之一渲染，占据编辑区（消息流 + 输入区）。
  *
- * 会话列表在左侧边栏的「会话」标签里，这里只渲染当前会话的消息流，
- * 与微信的两栏布局一致：左栏会话列表、右栏对话内容。
+ * 展示的会话由**活动标签**决定（标签 path 形如 `chat:<sessionId>`），
+ * 不再依赖全局视图开关；消息在标签激活时按需加载。
  */
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Copy, MessagesSquare, Trash2, X } from "lucide-react";
@@ -13,11 +13,14 @@ import ChatComposer from "./ChatComposer";
 import MessageBubble from "./MessageBubble";
 import type { ChatMessageActions } from "./MessageBubble";
 import { openChatFile, previewChatImage, revealChatFile } from "./chatOpen";
+import { chatTabId, sessionIdFromChatTabPath } from "./chatTab";
 
 export default function ChatView() {
   const sessions = useEditorStore((s) => s.chatSessions);
-  const activeSessionId = useEditorStore((s) => s.chatActiveSessionId);
-  const messages = useEditorStore((s) => s.chatMessages);
+  const chatActiveSessionId = useEditorStore((s) => s.chatActiveSessionId);
+  const tabs = useEditorStore((s) => s.tabs);
+  const activeTabId = useEditorStore((s) => s.activeTabId);
+  const allMessages = useEditorStore((s) => s.chatMessages);
   const isSending = useEditorStore((s) => s.chatIsSending);
   const isLoading = useEditorStore((s) => s.chatIsLoading);
   const loadChatSessions = useEditorStore((s) => s.loadChatSessions);
@@ -31,29 +34,29 @@ export default function ChatView() {
   const deleteChatMessage = useEditorStore((s) => s.deleteChatMessage);
   const deleteChatSession = useEditorStore((s) => s.deleteChatSession);
   const showNotification = useEditorStore((s) => s.showNotification);
-  const setActiveView = useEditorStore((s) => s.setActiveView);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const activeChatTab = tabs.find((t) => t.id === activeTabId);
+  const tabSessionId = activeChatTab ? sessionIdFromChatTabPath(activeChatTab.path) : null;
+  // 当前展示的会话：以活动标签为准，标签缺失时回退到 store 里选中的会话
+  const activeSessionId = tabSessionId ?? chatActiveSessionId;
+  const messages = tabSessionId === null || tabSessionId === chatActiveSessionId ? allMessages : [];
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [activeSessionId, sessions],
   );
 
-  // 首次进入：拉列表并自动选中第一个会话
+  // 首次进入：拉取会话列表。活动标签指定的会话若尚未加载（如重启后恢复的标签），按需拉取其消息
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const list = await loadChatSessions();
-      if (cancelled) return;
-      useEditorStore.setState({ chatIsLoading: false });
-      if (list.length > 0 && useEditorStore.getState().chatActiveSessionId === null) {
-        void selectChatSession(list[0].id);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadChatSessions, selectChatSession]);
+    void loadChatSessions();
+  }, [loadChatSessions]);
+
+  useEffect(() => {
+    if (tabSessionId === null) return;
+    if (useEditorStore.getState().chatActiveSessionId === tabSessionId) return;
+    void selectChatSession(tabSessionId);
+  }, [tabSessionId, selectChatSession]);
 
   // 新消息 / 切换会话后滚到底部
   useEffect(() => {
@@ -96,7 +99,7 @@ export default function ChatView() {
           <MessagesSquare size={22} />
         </div>
         <p className="text-sm text-text-secondary">
-          {isLoading ? "正在加载会话..." : "还没有会话"}
+          {isLoading ? "正在加载会话..." : "从左侧会话列表选择或新建会话"}
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -104,12 +107,6 @@ export default function ChatView() {
             className="px-3 py-1.5 rounded-lg bg-accent text-white text-[12px] hover:bg-accent-bright transition-colors cursor-pointer"
           >
             新建会话
-          </button>
-          <button
-            onClick={() => setActiveView("files")}
-            className="px-3 py-1.5 rounded-lg bg-surface text-text-secondary text-[12px] hover:bg-hover transition-colors cursor-pointer"
-          >
-            返回编辑器
           </button>
         </div>
       </div>
@@ -144,8 +141,8 @@ export default function ChatView() {
           <Trash2 size={13} />
         </button>
         <button
-          onClick={() => setActiveView("files")}
-          title="返回编辑器"
+          onClick={() => useEditorStore.getState().closeTab(chatTabId(activeSession.id))}
+          title="关闭会话标签页"
           className="p-1.5 rounded-lg text-text-muted hover:text-accent hover:bg-surface transition-colors cursor-pointer"
         >
           <X size={13} />

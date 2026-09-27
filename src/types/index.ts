@@ -1,3 +1,5 @@
+export type FileTabKind = "file" | "chat";
+
 export interface FileTab {
   id: string;
   name: string;
@@ -10,8 +12,17 @@ export interface FileTab {
   isLivePreviewMode?: boolean;
   viewMode?: "text" | "base64";
   isReadOnly?: boolean;
+  /**
+   * 标签种类：file = 本地文件；chat = 会话（path 为 `chat:<sessionId>` 伪路径，
+   * 不对应磁盘文件，主区渲染对话视图）。缺省按 file 处理。
+   */
+  kind?: FileTabKind;
   // 每次外部文件变更并重新加载时 +1，用于强制预览类模式（图片/PDF/Word/SQLite）重新加载
   revision?: number;
+}
+
+export function isChatTab(tab: Pick<FileTab, "kind" | "language"> | undefined | null): boolean {
+  return tab?.kind === "chat" || tab?.language === "chat";
 }
 
 export type SupportedLanguage = string;

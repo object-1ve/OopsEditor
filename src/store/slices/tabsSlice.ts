@@ -9,7 +9,8 @@ import { clearScrollMemory } from "@/utils/scrollMemory";
 import { fetchAndSetFileMtime } from "@/store/fileMtime";
 import { invoke } from "@tauri-apps/api/core";
 import { base64ToHexView } from "@/utils/hexView";
-import { isPreviewOnlyLanguage } from "@/types";
+import { isPreviewOnlyLanguage, isChatTab } from "@/types";
+import { CHAT_TAB_ID_PREFIX, chatTabId } from "@/components/chat/chatTab";
 import {
   persistActiveTabId,
   persistTabsState,
@@ -28,6 +29,7 @@ export const createTabsSlice: StateCreator<
     | "tabs"
     | "activeTabId"
     | "openFiles"
+    | "openChatSessionTab"
     | "openTab"
     | "closeTab"
     | "closeTabs"
@@ -61,7 +63,7 @@ export const createTabsSlice: StateCreator<
 
   openTab: (tab: FileTab) => {
     const state = get();
-    if (tab.path) {
+    if (tab.path && !isChatTab(tab)) {
       get().recordRecentFile(tab.path);
     }
     if (state.isSplit && state.focusedPane === "secondary") {
@@ -85,6 +87,38 @@ export const createTabsSlice: StateCreator<
           get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");
         });
       }
+      return {
+        tabs: limitedTabsState.tabs,
+        activeTabId: limitedTabsState.activeTabId,
+        openFiles: limitedTabsState.openFiles,
+      };
+    });
+  },
+
+  openChatSessionTab: (sessionId: number) => {
+    const title = get().chatSessions.find((s) => s.id === sessionId)?.title ?? "";
+    const tab: FileTab = {
+      id: chatTabId(sessionId),
+      name: title,
+      path: `${CHAT_TAB_ID_PREFIX}${sessionId}`,
+      language: "chat",
+      content: "",
+      isDirty: false,
+      isReadOnly: true,
+      kind: "chat",
+    };
+    set((state) => {
+      const existing = state.tabs.find((t) => t.id === tab.id);
+      if (existing) {
+        void persistActiveTabId(tab.id);
+        return { activeTabId: tab.id };
+      }
+      const limitedTabsState = enforceTabLimit(
+        [...state.tabs, tab],
+        tab.id,
+        state.maxOpenTabs,
+      );
+      persistTabsState(limitedTabsState.tabs, limitedTabsState.activeTabId);
       return {
         tabs: limitedTabsState.tabs,
         activeTabId: limitedTabsState.activeTabId,

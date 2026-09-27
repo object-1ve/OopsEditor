@@ -2,7 +2,9 @@
  * Composed Zustand store - combines all slices
  */
 import { create } from "zustand";
-import type { FileTab } from "@/types";
+import { type FileTab, isChatTab } from "@/types";
+import type { ChatSession } from "@/services/chat";
+import { sessionIdFromChatTabPath } from "@/components/chat/chatTab";
 import { invoke } from "@tauri-apps/api/core";
 import { loadSettings } from "@/utils/settings";
 import { persistTabsState } from "@/utils/workspaceSession";
@@ -47,6 +49,23 @@ const useEditorStore = create<EditorState>()((...a) => {
         return { ...tab, content: nextContent, isReadOnly: false };
       });
 
+      // 持久化的会话标签（chat:<sessionId>）只存了伪路径，标题从会话库回填，
+      // 会话已删除的标签直接丢弃
+      const chatSessions = await invoke<ChatSession[]>("get_chat_sessions").catch((err) => {
+        console.error("恢复会话标签失败:", err);
+        return [] as ChatSession[];
+      });
+      const sessionTitles = new Map(chatSessions.map((s) => [s.id, s.title]));
+      const rehydratedTabs = normalizedTabs.filter(
+        (tab) => !isChatTab(tab) || sessionTitles.has(sessionIdFromChatTabPath(tab.path) ?? NaN),
+      );
+      for (const tab of rehydratedTabs) {
+        if (!isChatTab(tab)) continue;
+        const sessionId = sessionIdFromChatTabPath(tab.path);
+        if (sessionId === null) continue;
+        tab.name = sessionTitles.get(sessionId) ?? tab.name;
+      }
+
       let defaultFolders = settings.defaultFolders;
       if (!defaultFolders || defaultFolders.length === 0) {
         try {
@@ -62,7 +81,7 @@ const useEditorStore = create<EditorState>()((...a) => {
       }
 
       const limitedTabsState = enforceTabLimit(
-        normalizedTabs,
+        rehydratedTabs,
         settings.activeTabId,
         settings.maxOpenTabs,
       );
@@ -95,7 +114,6 @@ const useEditorStore = create<EditorState>()((...a) => {
         rightSidebarIconOrder,
         sidebarSortField: settings.sidebarSortField,
         sidebarSortOrder: settings.sidebarSortOrder,
-        activeView: settings.activeView,
         defaultSavePath: settings.defaultSavePath,
         captureProtection: settings.captureProtection,
         maxRecentFolders: settings.maxRecentFolders,

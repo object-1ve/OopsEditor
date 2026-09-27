@@ -86,8 +86,6 @@ export interface EditorState {
   captureProtection: boolean;
   sidebarSortField: "name" | "modified";
   sidebarSortOrder: "asc" | "desc";
-  /** 当前视图：文件（左栏文件树 + 主区编辑器）/ 会话（左栏会话列表 + 主区对话） */
-  activeView: "files" | "chat";
   rootPathOrder: string[];
   defaultSavePath: string;
   recentFolders: string[];
@@ -114,6 +112,7 @@ export interface EditorState {
   reloadTabFromDisk: (id: string) => void;
   setHoveredPath: (path: string | null) => void;
   openTab: (tab: FileTab) => void;
+  openChatSessionTab: (sessionId: number) => void;
   closeTab: (id: string) => void;
   closeTabs: (ids: string[]) => void;
   closeOtherTabs: (id: string) => void;
@@ -182,7 +181,6 @@ export interface EditorState {
   setRightSidebarIconOrder: (order: string[]) => void;
   setSidebarSortField: (field: "name" | "modified") => void;
   setSidebarSortOrder: (order: "asc" | "desc") => void;
-  setActiveView: (view: "files" | "chat") => void;
   loadChatSessions: () => Promise<ChatSession[]>;
   selectChatSession: (sessionId: number) => Promise<void>;
   createChatSession: () => Promise<ChatSession | null>;

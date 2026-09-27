@@ -7,7 +7,8 @@ import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
 import WindowControls from "./WindowControls";
 import { saveTab } from "@/services/editorSave";
-import { detectLanguage } from "@/types";
+import { detectLanguage, isChatTab } from "@/types";
+import { MessagesSquare } from "lucide-react";
 
 const buildChildPath = (basePath: string, fileName: string) => {
   if (/[\\/]$/.test(basePath)) {
@@ -235,6 +236,16 @@ export default function TitleBar() {
     if (!contextMenu) return [];
     const tab = tabs.find(t => t.id === contextMenu.tabId);
     if (!tab) return [];
+    // 会话标签不是磁盘文件：只提供关闭动作
+    if (isChatTab(tab)) {
+      return [
+        {
+          label: "关闭标签页",
+          icon: <X size={14} />,
+          onClick: () => handleClose({ stopPropagation: () => {} } as any, tab),
+        },
+      ];
+    }
     const isPinnedToSidebar = pinnedFiles.some((item) => item.path === tab.path);
 
     const saveToDefaultFolderItems = !canSaveToDefaultFolder(tab.language)
@@ -393,18 +404,22 @@ export default function TitleBar() {
               onClick={() => setActive(tab.id)}
               onDoubleClick={handleTabDoubleClick}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
-              onMouseEnter={() => setHoveredPath(tab.path)}
+              onMouseEnter={() => !isChatTab(tab) && setHoveredPath(tab.path)}
               onMouseLeave={() => setHoveredPath(null)}
             >
               {tab.id === activeTabId && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-accent to-accent-bright rounded-full" />
               )}
 
-              <MaterialFileIcon
-                name={tab.name}
-                path={tab.path}
-                size={16}
-              />
+              {isChatTab(tab) ? (
+                <MessagesSquare size={15} className={tab.id === activeTabId ? "text-accent" : ""} />
+              ) : (
+                <MaterialFileIcon
+                  name={tab.name}
+                  path={tab.path}
+                  size={16}
+                />
+              )}
               <span className="tab-name truncate max-w-28">{tab.name}</span>
               {tab.isDirty && <span className="tab-dirty text-accent-warm text-xs shrink-0">&#9679;</span>}
               <button

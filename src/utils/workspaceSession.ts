@@ -87,7 +87,8 @@ function toDbTabPayload(tab: FileTab, sortOrder: number): DbTabPayload {
     name: tab.name,
     path: tab.path,
     language: tab.language,
-    content: tab.content,
+    // 会话标签不携带内容与编辑态，靠 language=chat 在恢复时识别
+    content: tab.kind === "chat" ? "" : tab.content,
     view_mode: tab.viewMode ?? "text",
     is_dirty: tab.isDirty,
     is_read_only: Boolean(tab.isReadOnly),

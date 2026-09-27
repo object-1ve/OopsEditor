@@ -52,7 +52,7 @@ export default function ConversationList() {
   );
 
   return (
-    <div className="flex-1 flex flex-col bg-deepest min-h-0 min-w-0">
+    <div className="flex flex-col bg-deepest min-h-0 min-w-0">
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border shrink-0">
         <div className="relative flex-1 min-w-0">
           <Search

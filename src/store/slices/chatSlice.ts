@@ -21,6 +21,7 @@ import {
   type ChatMessage,
   type ChatSession,
 } from "@/services/chat";
+import { chatTabId } from "@/components/chat/chatTab";
 
 export const createChatSlice: StateCreator<
   EditorState,
@@ -53,6 +54,7 @@ export const createChatSlice: StateCreator<
   chatIsSending: false,
 
   loadChatSessions: async () => {
+    set({ chatIsLoading: true });
     try {
       const sessions = await getChatSessions();
       set({ chatSessions: sessions });
@@ -60,11 +62,14 @@ export const createChatSlice: StateCreator<
     } catch (err) {
       get().showNotification(`加载会话失败: ${String(err)}`, "error");
       return [];
+    } finally {
+      set({ chatIsLoading: false });
     }
   },
 
-  /** 切换会话并拉取其消息；同时刷新列表上的最近编辑时间 */
+  /** 切换会话并拉取其消息；以顶部标签页形式打开，同时刷新列表上的最近编辑时间 */
   selectChatSession: async (sessionId: number) => {
+    get().openChatSessionTab(sessionId);
     set({ chatActiveSessionId: sessionId });
     try {
       const messages = await getChatMessages(sessionId);
@@ -85,7 +90,7 @@ export const createChatSlice: StateCreator<
         chatActiveSessionId: session.id,
         chatMessages: [],
       }));
-      get().setActiveView("chat");
+      get().openChatSessionTab(session.id);
       return session;
     } catch (err) {
       get().showNotification(`新建会话失败: ${String(err)}`, "error");
@@ -110,6 +115,8 @@ export const createChatSlice: StateCreator<
     const target = get().chatSessions.find((s) => s.id === id);
     try {
       await deleteChatSession(id);
+      // 会话没了，对应的顶部标签页一并关闭
+      get().closeTab(chatTabId(id));
       const remaining = get().chatSessions.filter((s) => s.id !== id);
       const wasActive = get().chatActiveSessionId === id;
       set({
@@ -117,9 +124,6 @@ export const createChatSlice: StateCreator<
         chatActiveSessionId: wasActive ? (remaining[0]?.id ?? null) : get().chatActiveSessionId,
         chatMessages: wasActive ? [] : get().chatMessages,
       });
-      if (wasActive && remaining[0]) {
-        await get().selectChatSession(remaining[0].id);
-      }
       get().showNotification(`已删除会话「${target?.title ?? id}」`, "success");
     } catch (err) {
       get().showNotification(`删除会话失败: ${String(err)}`, "error");

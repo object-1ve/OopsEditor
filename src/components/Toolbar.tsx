@@ -5,8 +5,9 @@ import { useState, useCallback, useMemo } from "react";
 import { useTabStripDensity } from "@/hooks/useTabStripDensity";
 import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
+import { MessagesSquare } from "lucide-react";
+import { detectLanguage, isChatTab } from "@/types";
 import { saveTab } from "@/services/editorSave";
-import { detectLanguage } from "@/types";
 
 const buildChildPath = (basePath: string, fileName: string) => {
   if (/[\\/]$/.test(basePath)) {
@@ -407,18 +408,22 @@ const tabs = useEditorStore(s => s.tabs);
               onClick={() => setActive(tab.id)}
               onDoubleClick={handleDoubleClick}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
-              onMouseEnter={() => setHoveredPath(tab.path)}
+              onMouseEnter={() => !isChatTab(tab) && setHoveredPath(tab.path)}
               onMouseLeave={() => setHoveredPath(null)}
             >
               {tab.id === paneActiveTabId && (
                 <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-accent to-accent-bright rounded-full" />
               )}
 
-              <MaterialFileIcon
-                name={tab.name}
-                path={tab.path}
-                size={16}
-              />
+              {isChatTab(tab) ? (
+                <MessagesSquare size={15} className={tab.id === paneActiveTabId ? "text-accent" : ""} />
+              ) : (
+                <MaterialFileIcon
+                  name={tab.name}
+                  path={tab.path}
+                  size={16}
+                />
+              )}
               <span className="tab-name truncate max-w-28">{tab.name}</span>
               {tab.isDirty && <span className="tab-dirty text-accent-warm text-xs shrink-0">&#9679;</span>}
               <button

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Info, HelpCircle, ListTree, MessagesSquare } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
+import { isChatTab } from "@/types";
 import InfoPanel from "./panels/InfoPanel";
 import OutlinePanel from "./panels/OutlinePanel";
 import ChatInfoPanel from "./panels/ChatInfoPanel";
@@ -16,11 +17,11 @@ const DEFAULT_INFO_WIDTH = 280;
 
 type PanelId = "chat" | "outline" | "info";
 
-/** 面板可见性依赖当前视图：文件视图给 info/outline，会话视图给 chat */
-const PANEL_VIEW: Record<PanelId, "files" | "chat"> = {
+/** 面板可见性依赖当前激活标签：会话标签给 chat，文件标签给 info/outline */
+const PANEL_VIEW: Record<PanelId, "file" | "chat"> = {
   chat: "chat",
-  info: "files",
-  outline: "files",
+  info: "file",
+  outline: "file",
 };
 
 export default function RightSidebar() {
@@ -30,18 +31,20 @@ export default function RightSidebar() {
   const setRightSidebarWidth = useEditorStore(s => s.setRightSidebarWidth);
   const rightSidebarIconOrder = useEditorStore(s => s.rightSidebarIconOrder);
   const setRightSidebarIconOrder = useEditorStore(s => s.setRightSidebarIconOrder);
-  const activeView = useEditorStore(s => s.activeView);
   const isResizing = useRef(false);
   // 每个视图各自记住上次打开的面板，切换视图后回来仍停在原来那一页
-  const [panelByView, setPanelByView] = useState<Record<"files" | "chat", PanelId | null>>({
-    files: null,
+  const activeTab = tabs.find((tab) => tab.id === activeTabId);
+  const isChatTabActive = isChatTab(activeTab);
+  const isMarkdownTab = activeTab?.language === "markdown";
+
+  const [panelByView, setPanelByView] = useState<Record<"file" | "chat", PanelId | null>>({
+    file: null,
     chat: null,
   });
   const [draggedIcon, setDraggedIcon] = useState<string | null>(null);
-  const activeTab = tabs.find((tab) => tab.id === activeTabId);
-  const isMarkdownTab = activeTab?.language === "markdown";
 
-  const activePanel = panelByView[activeView];
+  const currentView: "file" | "chat" = isChatTabActive ? "chat" : "file";
+  const activePanel = panelByView[currentView];
   const isPanelOpen = activePanel !== null;
   const isOutlineOpen = isMarkdownTab && activePanel === "outline";
   const isInfoOpen = activePanel === "info";
@@ -51,12 +54,12 @@ export default function RightSidebar() {
     ? Math.max(rightSidebarWidth, activePanel === "outline" ? DEFAULT_OUTLINE_WIDTH : DEFAULT_INFO_WIDTH)
     : COLLAPSED_WIDTH;
 
-  // 非 markdown 文件没有目录可显示，收起目录面板（只影响文件视图那一页）
+  // 非 markdown 文件没有目录可显示，收起目录面板（只影响文件标签那一页）
   useEffect(() => {
-    if (!isMarkdownTab && panelByView.files === "outline") {
-      setPanelByView((prev) => ({ ...prev, files: null }));
+    if (!isMarkdownTab && panelByView.file === "outline") {
+      setPanelByView((prev) => ({ ...prev, file: null }));
     }
-  }, [isMarkdownTab, panelByView.files]);
+  }, [isMarkdownTab, panelByView.file]);
 
   const startResizing = useCallback((e: React.MouseEvent) => {
     if (!isPanelOpen) return;
@@ -83,7 +86,7 @@ export default function RightSidebar() {
   }, [handleMouseMove]);
 
   const togglePanel = useCallback((panel: PanelId) => {
-    // 面板只在自己所属的视图里生效，避免在会话视图里打开文件信息
+    // 面板只在自己所属的标签类型里生效，避免在会话标签里打开文件信息
     const targetView = PANEL_VIEW[panel];
     setPanelByView((prev) => {
       const current = prev[targetView];
@@ -128,8 +131,8 @@ export default function RightSidebar() {
   };
 
   const renderIcon = (id: string) => {
-    // 图标只在自己所属的视图出现（help 常驻，由下方单独渲染）
-    if (id !== "help" && PANEL_VIEW[id as PanelId] && PANEL_VIEW[id as PanelId] !== activeView) {
+    // 图标只在自己所属的标签类型出现（help 常驻，由下方单独渲染）
+    if (id !== "help" && PANEL_VIEW[id as PanelId] && PANEL_VIEW[id as PanelId] !== currentView) {
       return null;
     }
     switch (id) {

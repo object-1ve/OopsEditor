@@ -49,8 +49,6 @@ export const createSidebarSlice: StateCreator<
     | "revealPathInSidebar"
     | "setSidebarSortField"
     | "setSidebarSortOrder"
-    | "activeView"
-    | "setActiveView"
     | "setRootPathOrder"
     | "setRightSidebarIconOrder"
     | "recentFolders"
@@ -67,7 +65,6 @@ export const createSidebarSlice: StateCreator<
   hoveredPath: null,
   sidebarSortField: "modified",
   sidebarSortOrder: "desc",
-  activeView: "files",
   rootPathOrder: [],
   recentFolders: [],
   rightSidebarIconOrder: ["chat", "info", "outline", "help"],
@@ -261,12 +258,6 @@ export const createSidebarSlice: StateCreator<
   setSidebarSortOrder: (order: "asc" | "desc") => {
     set({ sidebarSortOrder: order });
     void saveSetting("sidebarSortOrder", order);
-  },
-
-  /** 切换视图：文件（文件树 + 编辑器）/ 会话（会话列表 + 对话） */
-  setActiveView: (view: "files" | "chat") => {
-    set({ activeView: view });
-    void saveSetting("activeView", view);
   },
 
   setRootPathOrder: (order: string[]) => {

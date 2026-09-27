@@ -69,8 +69,6 @@ export interface AppSettings {
   maxOpenTabs: number;
   sidebarSortField: 'name' | 'modified';
   sidebarSortOrder: 'asc' | 'desc';
-  /** 当前视图：文件（文件树 + 编辑器）/ 会话（会话列表 + 对话） */
-  activeView: 'files' | 'chat';
   rootPathOrder?: string[];
   defaultSavePath: string;
   maxRecentFolders: number;
@@ -123,7 +121,6 @@ export const defaultSettings: AppSettings = {
   maxOpenTabs: DEFAULT_MAX_OPEN_TABS,
   sidebarSortField: 'modified',
   sidebarSortOrder: 'desc',
-  activeView: 'files',
   defaultSavePath: '',
   maxRecentFolders: 20,
   recentFiles: [],
@@ -201,11 +198,6 @@ export async function loadSettings(): Promise<AppSettings> {
     const savedSortOrder = get<'asc' | 'desc'>('sidebarSortOrder');
     if (savedSortOrder === 'asc' || savedSortOrder === 'desc') {
       settings.sidebarSortOrder = savedSortOrder;
-    }
-
-    const savedView = get<'files' | 'chat'>('activeView');
-    if (savedView === 'files' || savedView === 'chat') {
-      settings.activeView = savedView;
     }
 
     const savedDefaultSavePath = get<string>('defaultSavePath');

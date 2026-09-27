@@ -22,6 +22,7 @@ import { saveSetting, loadSettings } from "@/utils/settings";
 import { monacoReady } from "@/monaco";
 import { dispatchFileDrop, isMarkdownEditable } from "@/utils/editorInsert";
 import ChatView from "@/components/chat/ChatView";
+import { isChatTab } from "@/types";
 import ImageLightbox from "@/components/ImageLightbox";
 import { dispatchPathsToChat, isPointInsideChatDropZone, notifyChatDragOver } from "@/components/chat/dropTarget";
 import { version as APP_VERSION } from "../package.json";
@@ -59,8 +60,11 @@ function App() {
   const tabs = useEditorStore(s => s.tabs);
   const activeTabId = useEditorStore(s => s.activeTabId);
   const secondaryTabs = useEditorStore(s => s.secondaryTabs);
+  const activeTabIsChat = useEditorStore(s => {
+    const active = s.tabs.find(t => t.id === s.activeTabId);
+    return isChatTab(active);
+  });
   const imagePreview = useEditorStore(s => s.imagePreview);
-  const activeView = useEditorStore(s => s.activeView);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isDraggingOverTerminal, setIsDraggingOverTerminal] = useState(false);
@@ -650,7 +654,7 @@ function App() {
         {/* Center Main Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
           <div ref={editorWorkspaceRef} className="flex-1 overflow-hidden relative z-0 flex flex-col">
-            {activeView === "chat" ? (
+            {activeTabIsChat ? (
               <ChatView />
             ) : isSplit ? (
               <div ref={splitWorkspaceRef} className="flex-1 flex overflow-hidden">
@@ -851,7 +855,7 @@ function App() {
                   } else {
                     activeTab = tabs.find(t => t.id === activeTabId);
                   }
-                  displayPath = activeTab?.path ?? null;
+                  displayPath = activeTab && !isChatTab(activeTab) ? activeTab.path : null;
                 }
 
                 if (displayPath) {

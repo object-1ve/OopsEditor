@@ -5,8 +5,7 @@
  * - `file` 消息：记录的是**原始本地路径**，直接按扩展名分派打开；
  * - `image` 消息：记录的是应用数据目录里的副本路径（asset 协议渲染缩略图用）。
  *
- * 会话视图下主编辑区被对话占据，所以打开文件必须先切回编辑器视图，
- * 否则标签页建好了也看不见（用户表现为「点了打不开」）。
+ * 会话以顶部标签页形式打开；点附件会新开文件标签页并自动激活，无需再切视图。
  */
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
@@ -79,8 +78,6 @@ export async function openChatFile(
       isReadOnly: false,
     });
     useEditorStore.getState().recordRecentFile(path);
-    // 关键：会话视图下必须切回编辑器，否则标签页不可见
-    useEditorStore.getState().setActiveView("files");
   } catch (err) {
     showNotification(`无法打开文件: ${name} (${String(err)})`, "error");
   }
