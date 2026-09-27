@@ -20,6 +20,8 @@ use crate::db::with_db;
 
 /// 聊天图片目录名（位于应用数据目录下）
 const CHAT_ATTACHMENT_DIR: &str = "chat-attachments";
+/// 重命名时留空导致的兜底标题（新建会话走时间戳，见 `new_session_title`）
+const DEFAULT_SESSION_TITLE: &str = "新会话";
 /// 文件名中保留的哈希字符数（与 attachment.rs 对齐）
 const HASH_LEN: usize = 16;
 /// 可读词干保留的最大字符数，避免超长路径
@@ -129,13 +131,23 @@ fn to_slash(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// 会话标题：去空白；为空时回退为「新会话」
+/// 会话标题：去空白；为空时回退为「新会话」（重命名等场景，避免静默改成时间戳）
 fn normalized_title(raw: &str) -> String {
     let title = raw.trim();
     if title.is_empty() {
-        "新会话".to_string()
+        DEFAULT_SESSION_TITLE.to_string()
     } else {
         title.chars().take(60).collect()
+    }
+}
+
+/// 新建会话的标题：显式给出则去空白后使用，否则用 `2026-09-27_10-30-15` 形式的时间戳，
+/// 与前端「新建文件」的命名口径一致（本地时间、不含 `:`，两类默认名可一起排序）。
+fn new_session_title(raw: &str) -> String {
+    if raw.trim().is_empty() {
+        Local::now().format("%Y-%m-%d_%H-%M-%S").to_string()
+    } else {
+        normalized_title(raw)
     }
 }
 
@@ -194,7 +206,7 @@ fn read_session(conn: &Connection, id: i64) -> SqlResult<Option<ChatSession>> {
 }
 
 fn insert_session(conn: &Connection, title: &str) -> SqlResult<ChatSession> {
-    let title = normalized_title(title);
+    let title = new_session_title(title);
     let now = now();
     conn.execute(
         "INSERT INTO chat_sessions (title, created_at, updated_at) VALUES (?1, ?2, ?2)",
@@ -468,7 +480,7 @@ pub fn get_chat_sessions() -> Result<Vec<ChatSession>, String> {
     with_db(list_sessions)
 }
 
-/// 新建会话；标题缺省为「新会话」
+/// 新建会话；标题缺省为时间戳（与前端「新建文件」同名口径）
 #[tauri::command]
 pub fn add_chat_session(title: Option<String>) -> Result<ChatSession, String> {
     with_db(|conn| insert_session(conn, title.as_deref().unwrap_or("")))
@@ -854,13 +866,37 @@ mod tests {
     }
 
     #[test]
-    fn blank_title_falls_back_to_default() {
+    fn blank_title_on_create_falls_back_to_timestamp() {
         let conn = db();
-        assert_eq!(insert_session(&conn, "").unwrap().title, "新会话");
-        assert_eq!(insert_session(&conn, "   ").unwrap().title, "新会话");
+        // 新建：留空（含纯空白）→ 时间戳，形状为 YYYY-MM-DD_HH-MM-SS（不含冒号，可作文件名）
+        for raw in ["", "   "] {
+            let auto = insert_session(&conn, raw).unwrap().title;
+            assert!(
+                is_timestamp_title(&auto),
+                "留空新建的标题应为时间戳，实际: {auto}"
+            );
+        }
         assert_eq!(insert_session(&conn, "  真标题 ").unwrap().title, "真标题");
-        // 重命名同样收敛：空白标题回落默认值
+    }
+
+    /// 时间戳标题的严格形状：`2026-09-27_10-30-15`（分隔符必须落在固定位置，其余必须为数字）
+    fn is_timestamp_title(title: &str) -> bool {
+        let bytes = title.as_bytes();
+        if bytes.len() != 19 {
+            return false;
+        }
+        bytes.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 | 13 | 16 => *byte == b'-',
+            10 => *byte == b'_',
+            _ => byte.is_ascii_digit(),
+        })
+    }
+
+    #[test]
+    fn blank_title_on_rename_keeps_default_instead_of_timestamp() {
+        let conn = db();
         let session = insert_session(&conn, "会话").unwrap();
+        // 重命名留空不是「新建」，不该被静默改成时间戳
         assert_eq!(
             rename_session(&conn, session.id, "  ").unwrap().unwrap().title,
             "新会话"

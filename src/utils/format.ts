@@ -2,6 +2,18 @@
  * 格式化工具函数
  */
 
+/**
+ * 时间戳命名：`2026-09-27_10-30-15`。
+ * 新建文件与新建会话共用同一口径，保证同一天里两类默认名可读且可排序；
+ * 不用 `:` 是因为它不能出现在文件名里。
+ */
+export function formatTimestampName(date: Date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(
+    date.getHours(),
+  )}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
+}
+
 export function formatFileSize(bytes: number | undefined): string {
   if (bytes === undefined) return "未知";
   if (bytes === 0) return "0 B";

@@ -22,6 +22,7 @@ import {
   type ChatSession,
 } from "@/services/chat";
 import { chatTabId } from "@/components/chat/chatTab";
+import { formatTimestampName } from "@/utils/format";
 
 export const createChatSlice: StateCreator<
   EditorState,
@@ -84,7 +85,8 @@ export const createChatSlice: StateCreator<
 
   createChatSession: async () => {
     try {
-      const session = await createChatSession();
+      // 默认标题用时间戳（与「新建文件」同一口径）；用户可在列表里右键重命名
+      const session = await createChatSession(formatTimestampName());
       set((state) => ({
         chatSessions: [session, ...state.chatSessions],
         chatActiveSessionId: session.id,

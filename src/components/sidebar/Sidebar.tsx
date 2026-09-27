@@ -26,8 +26,8 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import ContextMenu from "../ContextMenu";
+import { formatTimestampName } from "@/utils/format";
 import {
-  createTimestampFileName,
   findWorkspaceRoot,
   isSamePath,
   normalizePath,
@@ -835,7 +835,7 @@ export default function Sidebar() {
       }
       const separator = baseDir.includes("\\") ? "\\" : "/";
       const isFolder = type === "folder";
-      const defaultName = isFolder ? "新建文件夹" : createTimestampFileName();
+      const defaultName = isFolder ? "新建文件夹" : `${formatTimestampName()}.md`;
       const newPath = `${baseDir}${separator}${defaultName}`;
       try {
         const resolvedPath = await resolveUniquePath(newPath);
@@ -982,7 +982,7 @@ export default function Sidebar() {
             const lastIdxNew = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
             const baseDir = is_dir ? path : path.substring(0, lastIdxNew);
             const separator = path.includes("\\") ? "\\" : "/";
-            const defaultName = isFolder ? "新建文件夹" : createTimestampFileName();
+            const defaultName = isFolder ? "新建文件夹" : `${formatTimestampName()}.md`;
             const newPath = `${baseDir}${separator}${defaultName}`;
             const resolvedPath = await resolveUniquePath(newPath);
             if (isFolder) {
