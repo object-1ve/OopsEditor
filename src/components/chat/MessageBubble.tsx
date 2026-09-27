@@ -2,9 +2,10 @@
  * 单条会话消息气泡：文字 / 文件 / 图片三种形态，右侧自己、左侧对方。
  */
 import { useCallback, useState } from "react";
-import { Check, Copy, Download, ExternalLink, Maximize2, PencilLine, Trash2, X } from "lucide-react";
+import { Check, Copy, ExternalLink, Maximize2, PencilLine, Trash2, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import ContextMenu from "@/components/ContextMenu";
+import MaterialFileIcon from "@/components/MaterialFileIcon";
 import type { ChatMessage } from "@/services/chat";
 import { formatChatDateTime } from "@/utils/chatTime";
 import { chatDisplayName, formatChatSize, isImageFileName } from "./chatFormat";
@@ -165,7 +166,7 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
                   title={`在编辑器中打开原文件\n${message.file_path}`}
                 >
                   <span className="w-8 h-8 shrink-0 rounded-lg bg-black/10 flex items-center justify-center">
-                    <Download size={14} />
+                    <MaterialFileIcon name={displayName} size={18} />
                   </span>
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{displayName}</span>

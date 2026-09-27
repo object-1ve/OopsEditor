@@ -5,6 +5,7 @@
  */
 import { ExternalLink, FileText, Image as ImageIcon, MessageSquare } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
+import MaterialFileIcon from "@/components/MaterialFileIcon";
 import { formatChatDateTime } from "@/utils/chatTime";
 import { chatDisplayName, formatChatSize, isImageFileName } from "@/components/chat/chatFormat";
 import { openChatFile, previewChatImage, revealChatFile } from "@/components/chat/chatOpen";
@@ -105,50 +106,45 @@ export default function ChatInfoPanel() {
           <p className="text-xs text-text-muted italic">暂无附件</p>
         ) : (
           <div className="space-y-0.5">
-            {[...attachments].reverse().map((message) => (
-              <div
-                key={message.id}
-                className="group/att flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-surface/50 transition-colors"
-                title={message.file_path ?? undefined}
-              >
-                {isImageFileName(message.file_name) ? (
-                  <ImageIcon size={12} className="text-accent shrink-0" />
-                ) : (
-                  <FileText size={12} className="text-text-muted shrink-0" />
-                )}
-                <button
-                  onClick={() =>
-                    isImageFileName(message.file_name)
-                      ? previewChatImage(message.file_path!, message.file_name ?? undefined)
-                      : void openChatFile(
-                          message.file_path!,
-                          showNotification,
-                          isImageFileName(message.file_name)
-                            ? chatDisplayName(message.file_name)
-                            : message.file_name,
-                        )
-                  }
-                  title={isImageFileName(message.file_name) ? "点击放大查看" : `在编辑器中打开原文件\n${message.file_path}`}
-                  className="flex-1 min-w-0 text-left cursor-pointer"
+            {[...attachments].reverse().map((message) => {
+              // 图片副本名带内容哈希，展示要摘掉；文件消息本身就是原始名
+              const isImage = isImageFileName(message.file_name);
+              const displayName = isImage
+                ? chatDisplayName(message.file_name)
+                : message.file_name ?? "附件";
+              return (
+                <div
+                  key={message.id}
+                  className="group/att flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-surface/50 transition-colors"
+                  title={message.file_path ?? undefined}
                 >
-                  <span className="block truncate text-[11px] text-text-secondary">
-                    {isImageFileName(message.file_name)
-                      ? chatDisplayName(message.file_name)
-                      : message.file_name}
-                  </span>
-                  <span className="block text-[9px] text-text-muted/85 tabular-nums">
-                    {formatChatSize(message.file_size)} · {formatChatDateTime(message.created_at)}
-                  </span>
-                </button>
-                <button
-                  onClick={() => revealChatFile(message.file_path!, showNotification)}
-                  title="在资源管理器中显示"
-                  className="p-1 rounded text-text-muted opacity-0 group-hover/att:opacity-100 hover:text-accent hover:bg-surface transition-all cursor-pointer shrink-0"
-                >
-                  <ExternalLink size={11} />
-                </button>
-              </div>
-            ))}
+                  <MaterialFileIcon name={displayName} size={14} />
+                  <button
+                    onClick={() =>
+                      isImage
+                        ? previewChatImage(message.file_path!, message.file_name ?? undefined)
+                        : void openChatFile(message.file_path!, showNotification, displayName)
+                    }
+                    title={isImage ? "点击放大查看" : `在编辑器中打开原文件\n${message.file_path}`}
+                    className="flex-1 min-w-0 text-left cursor-pointer"
+                  >
+                    <span className="block truncate text-[11px] text-text-secondary">
+                      {displayName}
+                    </span>
+                    <span className="block text-[9px] text-text-muted/85 tabular-nums">
+                      {formatChatSize(message.file_size)} · {formatChatDateTime(message.created_at)}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => revealChatFile(message.file_path!, showNotification)}
+                    title="在资源管理器中显示"
+                    className="p-1 rounded text-text-muted opacity-0 group-hover/att:opacity-100 hover:text-accent hover:bg-surface transition-all cursor-pointer shrink-0"
+                  >
+                    <ExternalLink size={11} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

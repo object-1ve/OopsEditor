@@ -6,9 +6,10 @@
  * - 图片会缓存一份副本，因为缩略图要走 asset 协议渲染，需要稳定路径。
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { FileText, ImagePlus, Paperclip, SendHorizontal, X } from "lucide-react";
+import { ImagePlus, Paperclip, SendHorizontal, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import MaterialFileIcon from "@/components/MaterialFileIcon";
 import { isImagePath } from "@/services/chat";
 import { chatDisplayName } from "./chatFormat";
 import { registerChatDropZone, subscribeChatDragOver } from "./dropTarget";
@@ -230,7 +231,7 @@ export default function ChatComposer({
                   />
                 ) : (
                   <span className="w-6 h-6 rounded bg-black/5 flex items-center justify-center shrink-0">
-                    <FileText size={11} className="text-text-muted" />
+                    <MaterialFileIcon name={item.name} size={14} />
                   </span>
                 )}
                 <span className="min-w-0">
