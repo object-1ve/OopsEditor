@@ -112,15 +112,11 @@ body {
 }
 
 /* ── 会话消息气泡 ──
-   气泡本身就带圆角与色块，全局 ::selection 的 32% 橙落在 accent 底（自己的气泡）上会被底色吃掉，
-   所以按气泡底色分别给出可辨识的选中背景；只调背景、不动文字色，避免破坏原有对比度。 */
-.chat-bubble-mine ::selection {
-  background: rgba(255, 255, 255, 0.42);
-  color: #ffffff;
-}
-
-.chat-bubble-received ::selection {
-  background: rgba(200, 106, 78, 0.34);
+   气泡是白底黑字，全局 ::selection 的 32% 橙叠在白底上偏淡，这里给气泡内更实一档的选中背景，
+   保证拖动选中时一眼可见；文字色不动，仍由全局的深色承担对比度。 */
+.chat-bubble::selection,
+.chat-bubble ::selection {
+  background: rgba(200, 106, 78, 0.38);
   color: var(--text-primary);
 }
 

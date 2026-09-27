@@ -100,12 +100,8 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
             e.stopPropagation();
             setMenu({ x: e.clientX, y: e.clientY });
           }}
-          className={`chat-bubble ${
-            isMine ? "chat-bubble-mine" : "chat-bubble-received"
-          } relative rounded-2xl px-3 py-2 text-[12px] leading-relaxed break-words whitespace-pre-wrap shadow-sm ${
-            isMine
-              ? "bg-accent text-white rounded-br-md"
-              : "bg-surface text-text-primary rounded-bl-md border border-border"
+          className={`chat-bubble relative rounded-2xl px-3 py-2 text-[12px] leading-relaxed break-words whitespace-pre-wrap shadow-sm bg-white text-text-primary ${
+            isMine ? "border border-accent/45 rounded-br-md" : "border border-border rounded-bl-md"
           }`}
         >
           {isEditing ? (
@@ -124,7 +120,7 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
                     void saveEdit();
                   }
                 }}
-                className="w-full resize-none rounded-lg bg-white/90 px-2 py-1 text-[12px] text-text-primary focus:ring-2 focus:ring-accent/60"
+                className="w-full resize-none rounded-lg bg-white border border-border px-2 py-1 text-[12px] text-text-primary focus:border-accent focus:ring-2 focus:ring-accent/40"
                 style={{ outline: "none" }}
                 rows={Math.min(6, Math.max(2, draft.split("\n").length))}
               />
@@ -170,7 +166,7 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
                   </span>
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{displayName}</span>
-                    <span className={`block text-[10px] ${isMine ? "text-white/80" : "text-text-muted"}`}>
+                    <span className="block text-[10px] text-text-muted">
                       {formatChatSize(message.file_size)}
                     </span>
                   </span>
