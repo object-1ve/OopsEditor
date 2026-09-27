@@ -63,7 +63,8 @@ export default function ConversationList() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索会话"
-            className="w-full pl-6 pr-2 py-1 rounded-lg bg-surface text-[11px] text-text-primary placeholder:text-text-muted/85 outline-none focus:ring-1 focus:ring-accent/50"
+            style={{ outline: "none" }}
+            className="w-full pl-6 pr-2 py-1 rounded-lg bg-surface text-[11px] text-text-primary placeholder:text-text-muted/85 focus:ring-2 focus:ring-accent/50"
           />
         </div>
         <button
@@ -136,7 +137,8 @@ export default function ConversationList() {
                           setEditing(null);
                         }
                       }}
-                      className="flex-1 min-w-0 px-1 py-0.5 rounded bg-primary text-[12px] text-text-primary outline-none ring-1 ring-accent/60"
+                      style={{ outline: "none" }}
+                      className="flex-1 min-w-0 px-1 py-0.5 rounded bg-primary text-[12px] text-text-primary ring-1 ring-accent/60"
                     />
                   ) : (
                     <span className="flex-1 min-w-0 truncate text-[12px] text-text-primary font-medium">

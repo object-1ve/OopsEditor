@@ -5,7 +5,7 @@
  * - 文件只把**本地路径**记进消息（后端仅做一次 stat 校验），发送瞬时完成、原文件更新即刻可见；
  * - 图片会缓存一份副本，因为缩略图要走 asset 协议渲染，需要稳定路径。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileText, ImagePlus, Paperclip, SendHorizontal, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -51,6 +51,8 @@ export default function ChatComposer({
   const [pastedImages, setPastedImages] = useState<Record<string, { base64: string; name: string }>>({});
   const [isDragOver, setIsDragOver] = useState(false);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   /**
    * 加入待发送列表：只登记路径，不再预读/复制文件。
@@ -83,6 +85,43 @@ export default function ChatComposer({
   }, [ingestPaths]);
 
   useEffect(() => subscribeChatDragOver(setIsDragOver), []);
+
+  /**
+   * 输入栏自增高：内容超过 rows={2} 的基线就往上涨，涨到 max-h-40 后由 max-height 钳住，
+   * 多出的部分交给 overflow-y-auto 内部滚动——上限用 CSS 表达，这里不做行高换算。
+   */
+  const resizeToContent = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    // 清空内联高度后浏览器按 rows 属性给出基线高度（textarea 自带内边距、无边框），
+    // 这样 scrollHeight 不会被上一次写死的高度截住，且少字时不会塌到 1 行。
+    // 期间元素会短暂收缩，光标可能被顶出可视区，所以记下「此前是否停在底部」再按需贴回。
+    const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
+    el.style.height = "";
+    el.style.height = `${el.scrollHeight}px`;
+    if (wasAtBottom) el.scrollTop = el.scrollHeight;
+  }, []);
+
+  // 文字变化会改变行数，容器宽度变化会改变折行结果，两者都要重新量
+  useLayoutEffect(() => {
+    resizeToContent();
+  }, [resizeToContent, text]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    // 观察外层容器而不是 textarea 自身：宽度变化（侧边栏折叠/拖宽、窗口缩放）会改折行结果。
+    // 容器高度会因为我们写 textarea 的 height 而变化，所以只在**宽度**真的变了时才重新测量，
+    // 否则会形成「量一次→改高度→再触发观察」的自激循环。
+    let lastWidth = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === lastWidth) return;
+      lastWidth = el.clientWidth;
+      resizeToContent();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [resizeToContent]);
 
   // 剪贴板图片：浏览器里拿不到路径，先留在内存，发送时再交给后端落盘
   useEffect(() => {
@@ -227,12 +266,19 @@ export default function ChatComposer({
       )}
 
       <div ref={dropZoneRef} className="p-2">
+        {/* 聚焦反馈落在整行容器上：圆角外框 + 跟随圆角的 ring（box-shadow 会贴合 border-radius）。
+            textarea 自身的 outline 必须内联盖掉——全局 :focus-visible 是无层级样式，优先级高于
+            Tailwind 的 .outline-none，会画出一条不带弧度的直角描边。 */}
         <div
-          className={`rounded-xl border transition-colors ${
-            isDragOver ? "border-accent bg-accent/5" : "border-border bg-primary"
+          ref={containerRef}
+          className={`rounded-2xl border transition-all duration-150 ${
+            isDragOver
+              ? "border-accent bg-accent/5 ring-2 ring-accent/25"
+              : "border-border bg-primary focus-within:border-accent/70 focus-within:ring-2 focus-within:ring-accent/20 focus-within:shadow-[0_2px_14px_rgba(200,106,78,0.12)]"
           }`}
         >
           <textarea
+            ref={textareaRef}
             value={text}
             disabled={disabled}
             onChange={(e) => setText(e.target.value)}
@@ -251,7 +297,8 @@ export default function ChatComposer({
                   ? "释放以添加为附件"
                   : "输入消息，Enter 发送 / Shift+Enter 换行；可直接粘贴或拖入文件"
             }
-            className="w-full resize-none bg-transparent px-3 pt-2 text-[12px] text-text-primary placeholder:text-text-muted/85 outline-none disabled:cursor-not-allowed"
+            style={{ outline: "none" }}
+            className="w-full resize-none bg-transparent px-3.5 pt-2.5 text-[12px] text-text-primary placeholder:text-text-muted/85 disabled:cursor-not-allowed max-h-40 overflow-y-auto"
           />
 
           <div className="flex items-center justify-between px-2 pb-1.5">
