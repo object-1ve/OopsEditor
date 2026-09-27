@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { Settings, X, FolderOpen } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { Settings, X, FolderOpen, Type } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import {
   MAX_OPEN_TABS_LIMIT,
@@ -7,6 +7,7 @@ import {
   MIN_OPEN_TABS_LIMIT,
   MIN_RECENT_FILES_LIMIT,
 } from "@/utils/settings";
+import { FONT_FILE_FILTER } from "@/services/customFont";
 import { open } from "@tauri-apps/plugin-dialog";
 import { checkForUpdates, useUpdaterDialog } from "@/hooks/useUpdater";
 import { version as APP_VERSION } from "../../package.json";
@@ -29,9 +30,28 @@ export default function SettingsModal() {
     setMaxRecentFolders,
     maxRecentFiles,
     setMaxRecentFiles,
+    customFontPath,
+    customFontApplyToUi,
+    setCustomFont,
+    setCustomFontApplyToUi,
   } = useEditorStore();
   const modalRef = useRef<HTMLDivElement>(null);
   const { checking } = useUpdaterDialog();
+  const [isFontBusy, setIsFontBusy] = useState(false);
+
+  /** 选字体：只挑文件、不做任何读取，实际加载交给 setCustomFont */
+  const handlePickFont = useCallback(async () => {
+    try {
+      const selected = await open({ multiple: false, filters: [FONT_FILE_FILTER] });
+      if (!selected || typeof selected !== "string") return;
+      setIsFontBusy(true);
+      await setCustomFont(selected);
+    } catch (err) {
+      console.error("Failed to select font file:", err);
+    } finally {
+      setIsFontBusy(false);
+    }
+  }, [setCustomFont]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -223,6 +243,67 @@ export default function SettingsModal() {
             {!defaultSavePath && (
               <div className="mt-2 rounded-md bg-deepest/60 px-3 py-2 text-xs font-mono text-text-muted/80 italic">
                 未设置，将使用默认文件夹路径
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border bg-primary/40 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1 flex-1 min-w-0">
+                <div className="text-sm font-medium text-text">自定义字体</div>
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  支持 {FONT_FILE_FILTER.extensions.join(" / ")}。只记录字体文件路径，不复制文件；
+                  默认只作用于编辑器与终端等代码区域。
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handlePickFont}
+                  disabled={isFontBusy}
+                  className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface/80 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  title="选择字体文件"
+                >
+                  <Type size={14} />
+                  <span>选择字体</span>
+                </button>
+                {customFontPath && (
+                  <button
+                    type="button"
+                    onClick={() => void setCustomFont("")}
+                    disabled={isFontBusy}
+                    className="rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface/80 hover:text-error disabled:cursor-not-allowed disabled:opacity-50"
+                    title="恢复内置字体"
+                  >
+                    恢复默认
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-2 rounded-md bg-deepest/60 px-3 py-2 text-xs font-mono truncate">
+              {customFontPath ? (
+                <span className="text-accent/70">{customFontPath}</span>
+              ) : (
+                <span className="text-text-muted/80 italic">未设置，使用内置字体栈</span>
+              )}
+            </div>
+
+            {customFontPath && (
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  id="custom-font-apply-ui"
+                  type="checkbox"
+                  checked={customFontApplyToUi}
+                  onChange={(event) => void setCustomFontApplyToUi(event.currentTarget.checked)}
+                  className="h-3.5 w-3.5 accent-[var(--accent)] cursor-pointer"
+                />
+                <label
+                  htmlFor="custom-font-apply-ui"
+                  className="text-xs text-text-secondary cursor-pointer select-none"
+                >
+                  同时应用到界面文字（关闭时仅编辑器 / 终端等代码区域）
+                </label>
               </div>
             )}
           </div>

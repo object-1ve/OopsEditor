@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "@/store/editor";
+import { resolveMonoFontFamily, subscribeFontChange } from "@/services/customFont";
 
 interface TerminalProps {
   id: string;
@@ -27,7 +28,7 @@ export default function Terminal({ id, path, isVisible, isExpanded }: TerminalPr
       cursorStyle: "bar",
       cursorWidth: 2,
       fontSize: 13,
-      fontFamily: "'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', 'Liberation Mono', Menlo, Courier, monospace",
+      fontFamily: resolveMonoFontFamily(),
       lineHeight: 1.28,
       letterSpacing: 0,
       fontWeight: "400",
@@ -127,6 +128,18 @@ export default function Terminal({ id, path, isVisible, isExpanded }: TerminalPr
       term.dispose();
     };
   }, []); // Only run once on mount
+
+  // 字体变化：更新 xterm 的 fontFamily（它会自行重新测量字符尺寸），并清掉字形图集缓存
+  useEffect(() => {
+    return subscribeFontChange(() => {
+      const term = xtermRef.current;
+      if (!term) return;
+      term.options.fontFamily = resolveMonoFontFamily();
+      // 图集里缓存的是旧字体的位图，不清理会继续用旧字形渲染
+      term.clearTextureAtlas();
+      fitAddonRef.current?.fit();
+    });
+  }, []);
 
   // Update terminal size when terminalHeight or visibility changes
   useEffect(() => {

@@ -20,6 +20,7 @@ import {
 import { enforceTabLimit, formatAutoClosedTabsMessage } from "@/store/services/tabEnforcer";
 import { persistTabsState } from "@/utils/workspaceSession";
 import { clearAutoSaveTimers, getAllAutoSaveKeys } from "@/store/services/autoSave";
+import { applyCustomFont, clearCustomFont } from "@/services/customFont";
 
 export const createUiSlice: StateCreator<
   EditorState,
@@ -40,6 +41,10 @@ export const createUiSlice: StateCreator<
     | "maxRecentFolders"
     | "recentFiles"
     | "maxRecentFiles"
+    | "customFontPath"
+    | "customFontApplyToUi"
+    | "setCustomFont"
+    | "setCustomFontApplyToUi"
     | "isSettingsOpen"
     | "modal"
     | "notification"
@@ -83,6 +88,8 @@ export const createUiSlice: StateCreator<
   maxRecentFolders: 20,
   recentFiles: [],
   maxRecentFiles: DEFAULT_MAX_RECENT_FILES,
+  customFontPath: '',
+  customFontApplyToUi: false,
   searchJumpTarget: null,
   isSettingsOpen: false,
   modal: null,
@@ -165,6 +172,42 @@ export const createUiSlice: StateCreator<
   setDefaultSavePath: (path: string) => {
     set({ defaultSavePath: path });
     saveSetting("defaultSavePath", path);
+  },
+
+  /**
+   * 应用自定义字体。传空路径表示恢复内置字体栈。
+   * 先确认加载成功、再落库：坏字体根本不会被持久化，重启后也不会带着它进不来。
+   */
+  setCustomFont: async (path, applyToUi) => {
+    const nextApplyToUi = applyToUi ?? get().customFontApplyToUi;
+
+    if (!path) {
+      clearCustomFont();
+      set({ customFontPath: "", customFontApplyToUi: nextApplyToUi });
+      void saveSetting("customFontPath", "");
+      void saveSetting("customFontApplyToUi", nextApplyToUi);
+      get().showNotification("已恢复默认字体", "success");
+      return;
+    }
+
+    const error = await applyCustomFont(path, nextApplyToUi);
+    if (error) {
+      get().showNotification(error, "error");
+      return;
+    }
+
+    set({ customFontPath: path, customFontApplyToUi: nextApplyToUi });
+    void saveSetting("customFontPath", path);
+    void saveSetting("customFontApplyToUi", nextApplyToUi);
+    get().showNotification(`已应用字体：${path.split(/[/\\]/).pop() ?? path}`, "success");
+  },
+
+  setCustomFontApplyToUi: async (applyToUi: boolean) => {
+    set({ customFontApplyToUi: applyToUi });
+    void saveSetting("customFontApplyToUi", applyToUi);
+    // 没有选中字体时只记偏好，等选了字体再一并生效
+    const { customFontPath } = get();
+    if (customFontPath) await get().setCustomFont(customFontPath, applyToUi);
   },
 
   setMaxRecentFolders: (value: number) => {

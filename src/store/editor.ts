@@ -10,6 +10,7 @@ import { loadSettings } from "@/utils/settings";
 import { persistTabsState } from "@/utils/workspaceSession";
 import { base64ToHexView, parseHexView } from "@/utils/hexView";
 import { appDataDir } from "@tauri-apps/api/path";
+import { applyCustomFont } from "@/services/customFont";
 import { normalizePinnedFiles, normalizeUniquePaths, normalizePath } from "@/utils/path";
 import { createTabsSlice } from "@/store/slices/tabsSlice";
 import { createTerminalsSlice } from "@/store/slices/terminalsSlice";
@@ -120,7 +121,14 @@ const useEditorStore = create<EditorState>()((...a) => {
         recentFiles: settings.recentFiles,
         maxRecentFiles: settings.maxRecentFiles,
         rootPathOrder: settings.rootPathOrder || settings.rootPaths || [],
+        customFontPath: settings.customFontPath,
+        customFontApplyToUi: settings.customFontApplyToUi,
       });
+
+      // 自定义字体是运行期加载的 FontFace，重启后进程内状态清空，必须重新应用一次（失败不阻塞启动）
+      if (settings.customFontPath) {
+        void applyCustomFont(settings.customFontPath, settings.customFontApplyToUi);
+      }
 
       // Record existing rootPaths to DB FIRST, then load recent folders
       const savedRootPaths = settings.rootPaths || [];

@@ -92,6 +92,10 @@ export interface EditorState {
   maxRecentFolders: number;
   recentFiles: string[];
   maxRecentFiles: number;
+  /** 自定义字体文件路径；空串表示使用内置字体栈 */
+  customFontPath: string;
+  /** 自定义字体是否同时作用于界面（否则只作用于编辑器/终端等代码区域） */
+  customFontApplyToUi: boolean;
   /** 会话面板数据（侧边栏标签与主区视图共享） */
   chatSessions: ChatSession[];
   chatActiveSessionId: number | null;
@@ -202,6 +206,8 @@ export interface EditorState {
   recordRecentFile: (path: string) => void;
   setRecentFiles: (files: string[]) => void;
   setMaxRecentFiles: (value: number) => void;
+  setCustomFont: (path: string, applyToUi?: boolean) => Promise<void>;
+  setCustomFontApplyToUi: (applyToUi: boolean) => Promise<void>;
   setRootPathOrder: (order: string[]) => void;
   toggleSplit: () => void;
   setSplit: (enabled: boolean) => void;

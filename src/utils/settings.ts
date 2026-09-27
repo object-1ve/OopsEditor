@@ -74,6 +74,10 @@ export interface AppSettings {
   maxRecentFolders: number;
   recentFiles: string[];
   maxRecentFiles: number;
+  /** 自定义字体文件路径；空串表示使用内置字体栈 */
+  customFontPath: string;
+  /** 自定义字体是否同时作用于界面（否则只作用于编辑器/终端等代码区域） */
+  customFontApplyToUi: boolean;
 }
 
 // chat = 会话信息（仅会话视图显示），info/outline = 文件信息与目录（仅文件视图显示）
@@ -125,6 +129,8 @@ export const defaultSettings: AppSettings = {
   maxRecentFolders: 20,
   recentFiles: [],
   maxRecentFiles: DEFAULT_MAX_RECENT_FILES,
+  customFontPath: '',
+  customFontApplyToUi: false,
 };
 
 // ── SQLite-backed save / load ─────────────────────────────────
@@ -217,6 +223,14 @@ export async function loadSettings(): Promise<AppSettings> {
 
     const savedRecentFiles = get<string[]>('recentFiles');
     settings.recentFiles = sanitizeRecentFiles(savedRecentFiles, settings.maxRecentFiles);
+
+    const savedCustomFontPath = get<string>('customFontPath');
+    if (typeof savedCustomFontPath === 'string') settings.customFontPath = savedCustomFontPath;
+
+    const savedCustomFontApplyToUi = get<boolean>('customFontApplyToUi');
+    if (typeof savedCustomFontApplyToUi === 'boolean') {
+      settings.customFontApplyToUi = savedCustomFontApplyToUi;
+    }
 
     const workspaceSession = await loadWorkspaceSession(get);
     settings.tabs = workspaceSession.tabs;
