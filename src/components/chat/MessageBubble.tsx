@@ -100,7 +100,7 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
             e.stopPropagation();
             setMenu({ x: e.clientX, y: e.clientY });
           }}
-          className={`chat-bubble relative rounded-2xl px-3 py-2 text-[12px] leading-relaxed break-words whitespace-pre-wrap shadow-sm bg-white text-text-primary ${
+          className={`chat-bubble relative rounded-2xl px-3 py-2 text-[12px] leading-relaxed wrap-anywhere whitespace-pre-wrap shadow-sm bg-white text-text-primary ${
             isMine ? "border border-accent/45 rounded-br-md" : "border border-border rounded-bl-md"
           }`}
         >
