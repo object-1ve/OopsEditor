@@ -51,7 +51,9 @@ const useEditorStore = create<EditorState>()((...a) => {
       });
 
       // 持久化的会话标签（chat:<sessionId>）只存了伪路径，标题从会话库回填，
-      // 会话已删除的标签直接丢弃
+      // 会话已删除的标签直接丢弃。
+      // 这份列表同时用于播种侧边栏会话列表：cold start 时活动标签可能是普通文件，
+      // ChatView 不会挂载，若不在此落库则 chatIsLoading 永远停在 true（表现为「正在加载会话...」）。
       const chatSessions = await invoke<ChatSession[]>("get_chat_sessions").catch((err) => {
         console.error("恢复会话标签失败:", err);
         return [] as ChatSession[];
@@ -117,6 +119,8 @@ const useEditorStore = create<EditorState>()((...a) => {
         sidebarSortOrder: settings.sidebarSortOrder,
         defaultSavePath: settings.defaultSavePath,
         captureProtection: settings.captureProtection,
+        chatSessions,
+        chatIsLoading: false,
         maxRecentFolders: settings.maxRecentFolders,
         recentFiles: settings.recentFiles,
         maxRecentFiles: settings.maxRecentFiles,

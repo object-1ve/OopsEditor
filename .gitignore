@@ -42,6 +42,7 @@ target/
 # Temporary / debug artifacts
 .tmp-*
 .ps-tmp/
+tests/
 
 # Examples
 example/
