@@ -59,10 +59,20 @@ export default function ChatView() {
     void selectChatSession(tabSessionId);
   }, [tabSessionId, selectChatSession]);
 
-  // 新消息 / 切换会话后滚到底部
+  // 滚到底部只发生在「切换会话」和「新增消息」两种情形。
+  // 编辑 / 收藏 / 删除后 store 会重新拉取消息（数组换了引用但条数不变），
+  // 无条件跟着 messages 滚会把正在回看历史的用户甩到最底部。
+  const lastScrollSessionRef = useRef<number | null>(null);
+  const lastMessageCountRef = useRef(0);
   useEffect(() => {
     const node = scrollRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
+    const sessionChanged = lastScrollSessionRef.current !== activeSessionId;
+    const grew = messages.length > lastMessageCountRef.current;
+    lastScrollSessionRef.current = activeSessionId;
+    // 换会话时把条数基线置为 -1：新会话的消息随后到达，仍算「增长」而滚到底部
+    lastMessageCountRef.current = sessionChanged ? -1 : messages.length;
+    if (!node || (!sessionChanged && !grew)) return;
+    node.scrollTop = node.scrollHeight;
   }, [messages, activeSessionId]);
 
   const messageActions: ChatMessageActions = useMemo(
