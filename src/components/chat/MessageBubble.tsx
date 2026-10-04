@@ -1,7 +1,7 @@
 /**
  * 单条会话消息气泡：文字 / 文件 / 图片三种形态，右侧自己、左侧对方。
  */
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Check, Copy, ExternalLink, Maximize2, PencilLine, Trash2, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import ContextMenu from "@/components/ContextMenu";
@@ -54,6 +54,10 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
   const [draft, setDraft] = useState(message.content);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [isCopied, setIsCopied] = useState(false);
+  // 编辑态锁住原气泡宽度：气泡本身是 shrink-to-fit，编辑时内容换成 textarea 会塌成按钮行宽度
+  const [editWidth, setEditWidth] = useState<number | null>(null);
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isMine = message.role === "me";
   const hasFile = !!message.file_path;
@@ -81,6 +85,24 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
     setIsEditing(false);
   }, [actions, draft, hasFile, message.id]);
 
+  /** 进入编辑：先量当前气泡宽度并按此宽度进入编辑态，避免气泡跳成固定窄条 */
+  const startEdit = useCallback(() => {
+    const el = bubbleRef.current;
+    // 最窄 13rem：纯文字极短的消息（如「ok」）原宽放不下输入框与按钮
+    if (el) setEditWidth(Math.max(el.getBoundingClientRect().width, 208));
+    setDraft(message.content);
+    setIsEditing(true);
+  }, [message.content]);
+
+  // 高度不设上限：宽度已锁定，textarea 的换行与原文一致，按内容整段撑开（不做 6 行滚动）
+  useLayoutEffect(() => {
+    const ta = textareaRef.current;
+    if (!isEditing || !ta) return;
+    ta.style.height = "auto";
+    // 加回边框高度，避免 border-box 下差 2px 出滚动条
+    ta.style.height = `${ta.scrollHeight + (ta.offsetHeight - ta.clientHeight)}px`;
+  }, [isEditing, draft]);
+
   return (
     <div className={`group/msg flex gap-2 px-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}>
       {/* 头像：自己/对方用不同色调区分 */}
@@ -95,18 +117,53 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
       <div className={`flex flex-col min-w-0 max-w-[85%] ${isMine ? "items-end" : "items-start"}`}>
         {/* 气泡本体 */}
         <div
+          ref={bubbleRef}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
             setMenu({ x: e.clientX, y: e.clientY });
           }}
+          style={isEditing && editWidth ? { width: editWidth, maxWidth: "100%" } : undefined}
           className={`chat-bubble relative rounded-2xl px-3 py-2 text-[12px] leading-relaxed wrap-anywhere whitespace-pre-wrap shadow-sm bg-white text-text-primary ${
-            isMine ? "border border-accent/45 rounded-br-md" : "border border-border rounded-bl-md"
-          }`}
+            isEditing
+              ? "border border-accent ring-2 ring-accent/30"
+              : isMine
+                ? "border border-accent/45 rounded-br-md"
+                : "border border-border rounded-bl-md"
+          } ${isMine ? "rounded-br-md" : "rounded-bl-md"}`}
         >
           {isEditing ? (
-            <div className="flex flex-col gap-1.5 min-w-40">
+            <div className="flex flex-col gap-1.5">
+              {/* 编辑只改文字说明，附件保留；这里把附件原样带出来，避免"编辑后图片不见了"的错觉 */}
+              {hasFile && isImage && (
+                <img
+                  src={convertFileSrc(message.file_path!)}
+                  alt={message.file_name ?? "图片"}
+                  onClick={() => actions.onPreviewImage(message.file_path!, message.file_name)}
+                  title="点击放大查看"
+                  className="self-start max-h-56 w-auto max-w-full rounded-lg cursor-zoom-in object-contain bg-black/5 transition-opacity hover:opacity-90"
+                />
+              )}
+
+              {hasFile && !isImage && (
+                <div
+                  className="flex items-center gap-2 min-w-0"
+                  title={`此附件保持不变\n${message.file_path}`}
+                >
+                  <span className="w-7 h-7 shrink-0 rounded-lg bg-black/10 flex items-center justify-center">
+                    <MaterialFileIcon name={displayName} size={16} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{displayName}</span>
+                    <span className="block text-[10px] text-text-muted">
+                      {formatChatSize(message.file_size)}
+                    </span>
+                  </span>
+                </div>
+              )}
+
               <textarea
+                ref={textareaRef}
                 autoFocus
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
@@ -120,26 +177,32 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
                     void saveEdit();
                   }
                 }}
-                className="w-full resize-none rounded-lg bg-white border border-border px-2 py-1 text-[12px] text-text-primary focus:border-accent focus:ring-2 focus:ring-accent/40"
+                placeholder={hasFile ? "输入附件说明…" : "输入消息内容…"}
+                className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[12px] leading-relaxed wrap-anywhere text-text-primary placeholder:text-text-muted/70"
                 style={{ outline: "none" }}
-                rows={Math.min(6, Math.max(2, draft.split("\n").length))}
+                rows={2}
               />
-              <div className="flex items-center justify-end gap-1">
-                <button
-                  onClick={() => {
-                    setDraft(message.content);
-                    setIsEditing(false);
-                  }}
-                  className="px-2 py-0.5 rounded text-[11px] bg-black/10 hover:bg-black/20 transition-colors cursor-pointer"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={() => void saveEdit()}
-                  className="px-2 py-0.5 rounded text-[11px] bg-black/20 hover:bg-black/30 transition-colors cursor-pointer"
-                >
-                  保存
-                </button>
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-[10px] text-text-muted/85">
+                  {hasFile ? (isImage ? "编辑仅修改文字说明，图片不变" : "编辑仅修改附件说明，文件不变") : ""}
+                </span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => {
+                      setDraft(message.content);
+                      setIsEditing(false);
+                    }}
+                    className="px-2 py-0.5 rounded text-[11px] bg-black/10 hover:bg-black/20 transition-colors cursor-pointer"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => void saveEdit()}
+                    className="px-2 py-0.5 rounded text-[11px] bg-black/20 hover:bg-black/30 transition-colors cursor-pointer"
+                  >
+                    保存
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -192,7 +255,7 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
             }`}
           >
             {!isEditing && (
-              <BubbleAction title={hasFile ? "编辑说明" : "编辑"} onClick={() => setIsEditing(true)}>
+              <BubbleAction title={hasFile ? "编辑说明" : "编辑"} onClick={startEdit}>
                 <PencilLine size={11} />
               </BubbleAction>
             )}
@@ -225,7 +288,7 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
             {
               label: hasFile ? "编辑说明" : "编辑",
               icon: <PencilLine size={14} />,
-              onClick: () => setIsEditing(true),
+              onClick: startEdit,
             },
             { label: "复制文字", icon: <Copy size={14} />, onClick: () => void copyText() },
             ...(hasFile && isImage
