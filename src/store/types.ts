@@ -199,6 +199,8 @@ export interface EditorState {
   sendChatClipboardImage: (base64: string, name: string, caption: string) => Promise<void>;
   editChatMessage: (id: number, content: string) => Promise<void>;
   deleteChatMessage: (id: number) => Promise<void>;
+  /** 收藏 / 取消收藏消息 */
+  setChatMessageFavorite: (id: number, favorited: boolean) => Promise<void>;
   setDefaultSavePath: (path: string) => void;
   setRecentFolders: (folders: string[]) => void;
   loadRecentFolders: () => Promise<void>;

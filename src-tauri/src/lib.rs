@@ -214,7 +214,7 @@ mod chat;
 use chat::{
     add_chat_file_message, add_chat_image_message, add_chat_image_message_base64, add_chat_message,
     add_chat_session, delete_chat_message, delete_chat_session, get_chat_messages,
-    get_chat_sessions, rename_chat_session, update_chat_message,
+    get_chat_sessions, rename_chat_session, set_chat_message_favorite, update_chat_message,
 };
 
 // ── 原有命令 ──
@@ -881,6 +881,8 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         add_chat_message,
         update_chat_message,
         delete_chat_message,
+        // 收藏标记（只改展示，不动编辑时间）
+        set_chat_message_favorite,
         // 发送文件（只记录路径）/ 发送图片（缓存副本）
         add_chat_file_message,
         add_chat_image_message,

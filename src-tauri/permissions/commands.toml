@@ -81,6 +81,7 @@ commands.allow = [
   "add_chat_message",
   "update_chat_message",
   "delete_chat_message",
+  "set_chat_message_favorite",
   "add_chat_file_message",
   "add_chat_image_message",
   "add_chat_image_message_base64",

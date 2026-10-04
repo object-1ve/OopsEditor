@@ -65,6 +65,8 @@ pub struct ChatMessage {
     pub updated_at: String,
     /// 文字是否被编辑过
     pub edited: bool,
+    /// 是否被收藏（收藏只影响展示：气泡外框高亮 + 星星标记）
+    pub favorited: bool,
 }
 
 /// 新增消息的入参（缺省字段由服务端补全）
@@ -114,11 +116,26 @@ pub fn init_chat_schema(conn: &Connection) -> SqlResult<()> {
             file_size   INTEGER NOT NULL DEFAULT 0,
             created_at  TEXT NOT NULL,
             updated_at  TEXT NOT NULL,
-            edited      INTEGER NOT NULL DEFAULT 0
+            edited      INTEGER NOT NULL DEFAULT 0,
+            favorited   INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, id);",
-    )
+    )?;
+
+    // 迁移：为旧版 chat_messages 补充 favorited 列（老库 CREATE TABLE IF NOT EXISTS 不会加列）
+    let columns = conn
+        .prepare("PRAGMA table_info(chat_messages)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<SqlResult<Vec<String>>>()?;
+    if !columns.iter().any(|col| col == "favorited") {
+        conn.execute(
+            "ALTER TABLE chat_messages ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+
+    Ok(())
 }
 
 // ── 工具 ───────────────────────────────────────────────────────
@@ -254,7 +271,7 @@ fn touch_session(conn: &Connection, id: i64) -> SqlResult<()> {
 // ── 消息 CRUD ──────────────────────────────────────────────────
 
 const MESSAGE_SELECT: &str = "SELECT id, session_id, role, kind, content, file_name, file_path, file_size,
-        created_at, updated_at, edited FROM chat_messages";
+        created_at, updated_at, edited, favorited FROM chat_messages";
 
 fn map_message(row: &rusqlite::Row<'_>) -> SqlResult<ChatMessage> {
     Ok(ChatMessage {
@@ -269,6 +286,7 @@ fn map_message(row: &rusqlite::Row<'_>) -> SqlResult<ChatMessage> {
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
         edited: row.get::<_, i64>(10)? != 0,
+        favorited: row.get::<_, i64>(11)? != 0,
     })
 }
 
@@ -339,6 +357,22 @@ fn remove_message(conn: &Connection, id: i64) -> SqlResult<bool> {
     conn.execute("DELETE FROM chat_messages WHERE id = ?1", params![id])?;
     touch_session(conn, existing.session_id)?;
     Ok(true)
+}
+
+/// 收藏 / 取消收藏消息；消息不存在时返回 None。
+///
+/// 只改展示标记：既不写 `updated_at`（否则会显示成"已编辑"），
+/// 也不推进会话的最近编辑时间（收藏不是内容变更，不该让会话在列表里往前走）。
+fn set_message_favorite(conn: &Connection, id: i64, favorited: bool) -> SqlResult<Option<ChatMessage>> {
+    if read_message(conn, id)?.is_none() {
+        return Ok(None);
+    }
+
+    conn.execute(
+        "UPDATE chat_messages SET favorited = ?1 WHERE id = ?2",
+        params![favorited as i64, id],
+    )?;
+    read_message(conn, id)
 }
 
 // ── 图片落盘 ───────────────────────────────────────────────────
@@ -525,6 +559,13 @@ pub fn delete_chat_message(id: i64) -> Result<(), String> {
     } else {
         Err(format!("消息不存在: {}", id))
     }
+}
+
+/// 收藏 / 取消收藏消息；返回收藏后的消息
+#[tauri::command]
+pub fn set_chat_message_favorite(id: i64, favorited: bool) -> Result<ChatMessage, String> {
+    with_db(|conn| set_message_favorite(conn, id, favorited))?
+        .ok_or_else(|| format!("消息不存在: {}", id))
 }
 
 /// 发送文件：只做一次 stat 校验并**记录其本地路径**，不复制内容。
@@ -799,6 +840,71 @@ mod tests {
         let session_after = read_session(&conn, session.id).unwrap().unwrap();
         assert!(session_after.updated_at > message.updated_at);
         assert_eq!(list_sessions(&conn).unwrap()[0].last_message, "改后");
+    }
+
+    #[test]
+    fn legacy_database_gains_favorited_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        // 旧库结构：chat_messages 没有 favorited 列（CREATE TABLE IF NOT EXISTS 不会补列）
+        conn.execute_batch(
+            "CREATE TABLE chat_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL,
+                role TEXT NOT NULL DEFAULT 'me', kind TEXT NOT NULL DEFAULT 'text',
+                content TEXT NOT NULL DEFAULT '', file_name TEXT, file_path TEXT,
+                file_size INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL, edited INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO chat_sessions (id, title, created_at, updated_at) VALUES (1, '旧会话', 't', 't')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO chat_messages (session_id, role, kind, content, created_at, updated_at, edited)
+             VALUES (1, 'me', 'text', '旧消息', 't', 't', 0)",
+            [],
+        )
+        .unwrap();
+
+        init_chat_schema(&conn).unwrap();
+
+        let messages = list_messages(&conn, 1).unwrap();
+        assert_eq!(messages.len(), 1, "迁移不应丢旧数据");
+        assert!(!messages[0].favorited, "旧消息补列后默认未收藏");
+        assert!(set_message_favorite(&conn, messages[0].id, true).unwrap().unwrap().favorited);
+    }
+
+    #[test]
+    fn favoriting_message_only_changes_the_flag() {
+        let conn = db();
+        let session = insert_session(&conn, "会话").unwrap();
+        let message = insert_message(&conn, text_message(session.id, "原文")).unwrap().unwrap();
+        // 基线取「插入消息之后」的会话状态：insert_message 本身会推进会话的最近编辑时间
+        let session_after_insert = read_session(&conn, session.id).unwrap().unwrap();
+        assert!(!message.favorited, "新消息默认未收藏");
+
+        let starred = set_message_favorite(&conn, message.id, true).unwrap().unwrap();
+
+        assert!(starred.favorited, "收藏后标记应为真");
+        assert_eq!(starred.updated_at, message.updated_at, "收藏不写编辑时间");
+        assert!(!starred.edited, "收藏不算已编辑");
+        assert_eq!(
+            read_session(&conn, session.id).unwrap().unwrap().updated_at,
+            session_after_insert.updated_at,
+            "收藏不推进会话的最近编辑时间"
+        );
+        let listed = list_messages(&conn, session.id).unwrap();
+        assert!(listed[0].favorited, "重新查询仍是收藏态");
+
+        let unstarred = set_message_favorite(&conn, message.id, false).unwrap().unwrap();
+        assert!(!unstarred.favorited, "取消收藏后标记应为假");
+        assert!(set_message_favorite(&conn, 9999, true).unwrap().is_none(), "消息不存在时返回 None");
     }
 
     #[test]

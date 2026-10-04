@@ -32,6 +32,7 @@ export default function ChatView() {
   const sendChatClipboardImage = useEditorStore((s) => s.sendChatClipboardImage);
   const editChatMessage = useEditorStore((s) => s.editChatMessage);
   const deleteChatMessage = useEditorStore((s) => s.deleteChatMessage);
+  const setChatMessageFavorite = useEditorStore((s) => s.setChatMessageFavorite);
   const deleteChatSession = useEditorStore((s) => s.deleteChatSession);
   const showNotification = useEditorStore((s) => s.showNotification);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -68,11 +69,12 @@ export default function ChatView() {
     () => ({
       onEdit: (id, content) => editChatMessage(id, content),
       onDelete: (id) => deleteChatMessage(id),
+      onToggleFavorite: (id, favorited) => setChatMessageFavorite(id, favorited),
       onOpenFile: (path, displayName) => void openChatFile(path, showNotification, displayName),
       onRevealFile: (path) => revealChatFile(path, showNotification),
       onPreviewImage: (path, name) => previewChatImage(path, name ?? undefined),
     }),
-    [deleteChatMessage, editChatMessage, showNotification],
+    [deleteChatMessage, editChatMessage, setChatMessageFavorite, showNotification],
   );
 
   /** 复制整个会话（含创建时间 / 最近编辑时间） */

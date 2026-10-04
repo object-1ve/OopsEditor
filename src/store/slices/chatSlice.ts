@@ -18,6 +18,7 @@ import {
   sendChatImageMessage,
   sendChatImageMessageBase64,
   sendChatMessage,
+  setChatMessageFavorite,
   type ChatMessage,
   type ChatSession,
 } from "@/services/chat";
@@ -46,6 +47,7 @@ export const createChatSlice: StateCreator<
     | "sendChatClipboardImage"
     | "editChatMessage"
     | "deleteChatMessage"
+    | "setChatMessageFavorite"
   >
 > = (set, get) => ({
   chatSessions: [],
@@ -218,6 +220,16 @@ export const createChatSlice: StateCreator<
       if (sessionId !== null) await get().selectChatSession(sessionId);
     } catch (err) {
       get().showNotification(`删除消息失败: ${String(err)}`, "error");
+    }
+  },
+
+  setChatMessageFavorite: async (id: number, favorited: boolean) => {
+    const sessionId = get().chatActiveSessionId;
+    try {
+      await setChatMessageFavorite(id, favorited);
+      if (sessionId !== null) await get().selectChatSession(sessionId);
+    } catch (err) {
+      get().showNotification(`收藏消息失败: ${String(err)}`, "error");
     }
   },
 });

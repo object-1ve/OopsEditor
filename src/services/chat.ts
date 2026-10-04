@@ -27,6 +27,8 @@ export interface ChatMessage {
   created_at: string;
   updated_at: string;
   edited: boolean;
+  /** 收藏标记（只影响展示：气泡外框高亮 + 星星） */
+  favorited: boolean;
 }
 
 export interface NewChatMessage {
@@ -119,5 +121,10 @@ export function editChatMessage(id: number, content: string): Promise<ChatMessag
 
 export function deleteChatMessage(id: number): Promise<void> {
   return invoke("delete_chat_message", { id });
+}
+
+/** 收藏 / 取消收藏消息（只改标记，不动编辑时间与会话排序） */
+export function setChatMessageFavorite(id: number, favorited: boolean): Promise<ChatMessage> {
+  return invoke("set_chat_message_favorite", { id, favorited });
 }
 

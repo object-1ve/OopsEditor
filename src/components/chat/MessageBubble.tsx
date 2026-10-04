@@ -2,7 +2,7 @@
  * 单条会话消息气泡：文字 / 文件 / 图片三种形态，右侧自己、左侧对方。
  */
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import { Check, Copy, ExternalLink, Maximize2, PencilLine, Trash2, X } from "lucide-react";
+import { Check, Copy, ExternalLink, Maximize2, PencilLine, Star, Trash2, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import ContextMenu from "@/components/ContextMenu";
 import MaterialFileIcon from "@/components/MaterialFileIcon";
@@ -13,6 +13,8 @@ import { chatDisplayName, formatChatSize, isImageFileName } from "./chatFormat";
 export interface ChatMessageActions {
   onEdit: (id: number, content: string) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
+  /** 收藏 / 取消收藏（favorited 是目标状态，不是取反） */
+  onToggleFavorite: (id: number, favorited: boolean) => Promise<void>;
   onOpenFile: (path: string, displayName?: string | null) => void;
   onRevealFile: (path: string) => void;
   /** 图片附件的全屏放大查看 */
@@ -60,6 +62,7 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isMine = message.role === "me";
+  const favorited = message.favorited;
   const hasFile = !!message.file_path;
   const isImage = message.kind === "image" || isImageFileName(message.file_name);
   // 图片副本名带内容哈希（存储去重用），展示时摘掉；文件消息本身就是原始名
@@ -124,12 +127,12 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
             setMenu({ x: e.clientX, y: e.clientY });
           }}
           style={isEditing && editWidth ? { width: editWidth, maxWidth: "100%" } : undefined}
-          className={`chat-bubble relative rounded-2xl px-3 py-2 text-[12px] leading-relaxed wrap-anywhere whitespace-pre-wrap shadow-sm bg-white text-text-primary ${
+          className={`chat-bubble relative rounded-2xl px-3 py-2 text-[12px] leading-relaxed wrap-anywhere whitespace-pre-wrap shadow-sm text-text-primary ${
             isEditing
-              ? "border border-accent ring-2 ring-accent/30"
-              : isMine
-                ? "border border-accent/45 rounded-br-md"
-                : "border border-border rounded-bl-md"
+              ? "border border-accent ring-2 ring-accent/30 bg-white"
+              : favorited
+                ? "border border-accent-warm ring-2 ring-accent-warm/35 bg-accent-warm/15"
+                : `border bg-white ${isMine ? "border-accent/45" : "border-border"}`
           } ${isMine ? "rounded-br-md" : "rounded-bl-md"}`}
         >
           {isEditing ? (
@@ -276,6 +279,19 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
               <Trash2 size={11} />
             </BubbleAction>
           </div>
+          {/* 收藏星标：已收藏时常显（不随 hover 隐藏），未收藏时与操作按钮同样只在 hover 时出现 */}
+          <button
+            onClick={() => void actions.onToggleFavorite(message.id, !favorited)}
+            title={favorited ? "取消收藏" : "收藏"}
+            aria-pressed={favorited}
+            className={`p-0.5 rounded transition-colors cursor-pointer ${
+              favorited
+                ? "text-accent-warm hover:bg-accent-warm/15"
+                : "opacity-0 group-hover/msg:opacity-100 text-text-muted/85 hover:text-accent-warm hover:bg-black/5"
+            }`}
+          >
+            <Star size={11} className={favorited ? "fill-accent-warm" : ""} />
+          </button>
         </div>
       </div>
 
@@ -291,6 +307,11 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
               onClick: startEdit,
             },
             { label: "复制文字", icon: <Copy size={14} />, onClick: () => void copyText() },
+            {
+              label: favorited ? "取消收藏" : "收藏",
+              icon: <Star size={14} className={favorited ? "fill-accent-warm text-accent-warm" : ""} />,
+              onClick: () => void actions.onToggleFavorite(message.id, !favorited),
+            },
             ...(hasFile && isImage
               ? [
                   {
