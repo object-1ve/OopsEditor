@@ -167,6 +167,9 @@ function TextModeView({
         contextmenu: false,
         tabSize: 2,
         wordWrap: editorWordWrap ? "on" : "off",
+        // 换行按真实字宽计算：默认的 simple 策略用等宽字符估算列数，遇到自定义字体
+        // （如 Maple Mono NF CN）或中英混排时会折得偏宽，行仍溢出 → 底部冒出横向滚动条。
+        wrappingStrategy: editorWordWrap ? "advanced" : "simple",
         readOnly: activeTab.isReadOnly ?? false,
         dropIntoEditor: { enabled: false },
         suggest: {
