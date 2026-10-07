@@ -214,7 +214,8 @@ mod chat;
 use chat::{
     add_chat_file_message, add_chat_image_message, add_chat_image_message_base64, add_chat_message,
     add_chat_session, delete_chat_message, delete_chat_session, get_chat_messages,
-    get_chat_sessions, rename_chat_session, set_chat_message_favorite, update_chat_message,
+    get_chat_sessions, rename_chat_session, search_chat_messages, set_chat_message_favorite,
+    update_chat_message,
 };
 
 // ── 原有命令 ──
@@ -566,8 +567,57 @@ struct ContentSearchResult {
     truncated: bool,
 }
 
+/// 内容搜索的过滤条件（前端点「搜索」时一次性提交）
+#[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SearchOptions {
+    /// 搜索根目录；文件夹筛选生效时只传选中的那个
+    roots: Vec<String>,
+    query: String,
+    #[serde(default)]
+    case_sensitive: bool,
+    /// 「仅固定文件」：只在这些文件里搜（固定文件可能在任意目录），非空时忽略 roots
+    #[serde(default)]
+    only_paths: Vec<String>,
+    /// 文件修改时间范围（Unix 毫秒，含端点）
+    #[serde(default)]
+    modified_after_ms: Option<i64>,
+    #[serde(default)]
+    modified_before_ms: Option<i64>,
+}
+
+/// 遍历过程中逐文件判定用的过滤条件
+#[derive(Clone, Copy, Debug)]
+struct ContentFilter {
+    case_sensitive: bool,
+    modified_after_ms: Option<i64>,
+    modified_before_ms: Option<i64>,
+}
+
 const SEARCH_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const SEARCH_MAX_MATCHES: usize = 300;
+
+/// 文件修改时间（Unix 毫秒）；1970 之前的文件取不到，返回 None
+fn file_mtime_ms(meta: &fs::Metadata) -> Option<i64> {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|elapsed| elapsed.as_millis() as i64)
+}
+
+/// 修改时间是否落在范围内：两端都可为空（不限）；时间取不到的按不命中处理
+fn in_modified_range(meta: &fs::Metadata, filter: &ContentFilter) -> bool {
+    if filter.modified_after_ms.is_none() && filter.modified_before_ms.is_none() {
+        return true;
+    }
+    match file_mtime_ms(meta) {
+        Some(ms) => {
+            filter.modified_after_ms.map_or(true, |after| ms >= after)
+                && filter.modified_before_ms.map_or(true, |before| ms <= before)
+        }
+        None => false,
+    }
+}
 
 fn search_should_skip_dir(name: &str) -> bool {
     // 隐藏目录 + 常见构建/依赖目录:内容搜索跳过,否则又慢又吵
@@ -580,9 +630,9 @@ fn search_should_skip_dir(name: &str) -> bool {
     )
 }
 
-fn search_file(path: &std::path::Path, needle: &str, case_sensitive: bool, out: &mut Vec<ContentMatch>) -> bool {
+fn search_file(path: &std::path::Path, needle: &str, filter: &ContentFilter, out: &mut Vec<ContentMatch>) -> bool {
     let Ok(meta) = fs::symlink_metadata(path) else { return false };
-    if !meta.is_file() || meta.len() > SEARCH_MAX_FILE_BYTES {
+    if !meta.is_file() || meta.len() > SEARCH_MAX_FILE_BYTES || !in_modified_range(&meta, filter) {
         return false;
     }
     let Ok(bytes) = fs::read(path) else { return false };
@@ -596,7 +646,7 @@ fn search_file(path: &std::path::Path, needle: &str, case_sensitive: bool, out: 
         if out.len() >= SEARCH_MAX_MATCHES {
             return true;
         }
-        let hit = if case_sensitive { line.contains(needle) } else { line.to_lowercase().contains(needle) };
+        let hit = if filter.case_sensitive { line.contains(needle) } else { line.to_lowercase().contains(needle) };
         if hit {
             let preview: String = line.trim().chars().take(120).collect();
             out.push(ContentMatch { path: display.clone(), line: idx + 1, preview });
@@ -605,7 +655,7 @@ fn search_file(path: &std::path::Path, needle: &str, case_sensitive: bool, out: 
     false
 }
 
-fn search_dir(dir: &std::path::Path, needle: &str, case_sensitive: bool, out: &mut Vec<ContentMatch>) -> bool {
+fn search_dir(dir: &std::path::Path, needle: &str, filter: &ContentFilter, out: &mut Vec<ContentMatch>) -> bool {
     let Ok(entries) = fs::read_dir(dir) else { return false };
     for entry in entries {
         if out.len() >= SEARCH_MAX_MATCHES {
@@ -619,25 +669,45 @@ fn search_dir(dir: &std::path::Path, needle: &str, case_sensitive: bool, out: &m
         }
         if meta.is_dir() {
             let skip = path.file_name().and_then(|n| n.to_str()).map(search_should_skip_dir).unwrap_or(false);
-            if !skip && search_dir(&path, needle, case_sensitive, out) {
+            if !skip && search_dir(&path, needle, filter, out) {
                 return true;
             }
-        } else if meta.is_file() && search_file(&path, needle, case_sensitive, out) {
+        } else if meta.is_file() && search_file(&path, needle, filter, out) {
             return true;
         }
     }
     false
 }
 
+/// 文件内容搜索：命中行 + 是否被截断。
+/// 「仅固定文件」时逐个文件搜（固定文件可能在任意目录）；否则按文件夹范围遍历。
 #[tauri::command]
-fn search_file_contents(roots: Vec<String>, query: String, case_sensitive: bool) -> Result<ContentSearchResult, String> {
+fn search_file_contents(options: SearchOptions) -> Result<ContentSearchResult, String> {
+    let query = options.query.trim();
     if query.is_empty() {
         return Ok(ContentSearchResult { matches: Vec::new(), truncated: false });
     }
-    let needle = if case_sensitive { query } else { query.to_lowercase() };
+    let filter = ContentFilter {
+        case_sensitive: options.case_sensitive,
+        modified_after_ms: options.modified_after_ms,
+        modified_before_ms: options.modified_before_ms,
+    };
+    let needle = if filter.case_sensitive { query.to_string() } else { query.to_lowercase() };
     let mut matches = Vec::new();
     let mut truncated = false;
-    for root in &roots {
+
+    if !options.only_paths.is_empty() {
+        for path in &options.only_paths {
+            if matches.len() >= SEARCH_MAX_MATCHES {
+                truncated = true;
+                break;
+            }
+            search_file(std::path::Path::new(path), &needle, &filter, &mut matches);
+        }
+        return Ok(ContentSearchResult { matches, truncated });
+    }
+
+    for root in &options.roots {
         if matches.len() >= SEARCH_MAX_MATCHES {
             truncated = true;
             break;
@@ -646,7 +716,7 @@ fn search_file_contents(roots: Vec<String>, query: String, case_sensitive: bool)
         if !root_path.is_dir() {
             continue;
         }
-        truncated = search_dir(root_path, &needle, case_sensitive, &mut matches);
+        truncated = search_dir(root_path, &needle, &filter, &mut matches);
         if truncated {
             break;
         }
@@ -883,6 +953,8 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         delete_chat_message,
         // 收藏标记（只改展示，不动编辑时间）
         set_chat_message_favorite,
+        // 会话消息搜索（正文 / 文件名 + 会话 + 时间范围）
+        search_chat_messages,
         // 发送文件（只记录路径）/ 发送图片（缓存副本）
         add_chat_file_message,
         add_chat_image_message,
@@ -996,10 +1068,29 @@ mod content_search_tests {
         vec![root.to_string_lossy().to_string()]
     }
 
+    /// 缺省过滤条件（不限时间、不限定文件）
+    fn options(roots: Vec<String>, query: &str, case_sensitive: bool) -> SearchOptions {
+        SearchOptions {
+            roots,
+            query: query.to_string(),
+            case_sensitive,
+            only_paths: Vec::new(),
+            modified_after_ms: None,
+            modified_before_ms: None,
+        }
+    }
+
+    fn now_ms() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+    }
+
     #[test]
     fn finds_matches_case_insensitive() {
         let root = fixture();
-        let result = search_file_contents(roots_of(&root), "hello".to_string(), false).unwrap();
+        let result = search_file_contents(options(roots_of(&root), "hello", false)).unwrap();
         assert!(!result.truncated);
         // a.txt:1, b.md:1;node_modules 与 d.bin 被跳过
         assert_eq!(result.matches.len(), 2, "matches: {:?}", result.matches);
@@ -1012,7 +1103,7 @@ mod content_search_tests {
     #[test]
     fn case_sensitive_filters() {
         let root = fixture();
-        let result = search_file_contents(roots_of(&root), "HELLO".to_string(), true).unwrap();
+        let result = search_file_contents(options(roots_of(&root), "HELLO", true)).unwrap();
         assert_eq!(result.matches.len(), 1, "matches: {:?}", result.matches);
         assert!(result.matches[0].path.ends_with("b.md"));
         fs::remove_dir_all(&root).unwrap();
@@ -1021,8 +1112,46 @@ mod content_search_tests {
     #[test]
     fn empty_query_returns_empty() {
         let root = fixture();
-        let result = search_file_contents(roots_of(&root), "".to_string(), false).unwrap();
+        let result = search_file_contents(options(roots_of(&root), "", false)).unwrap();
         assert!(result.matches.is_empty() && !result.truncated);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn only_paths_searches_pinned_files_and_ignores_roots() {
+        let root = fixture();
+        // 固定文件可能不在任何根目录下：只给文件路径、不给 roots 也应命中
+        let pinned = root.join("sub").join("b.md").to_string_lossy().to_string();
+        let mut opts = options(Vec::new(), "HELLO", true);
+        opts.only_paths = vec![pinned];
+        let result = search_file_contents(opts).unwrap();
+        assert_eq!(result.matches.len(), 1, "matches: {:?}", result.matches);
+        assert!(result.matches[0].path.ends_with("b.md"));
+
+        // 非固定文件里的命中不会出现
+        let mut opts = options(Vec::new(), "hello", false);
+        opts.only_paths = vec![root.join("sub").join("c.txt").to_string_lossy().to_string()];
+        assert!(search_file_contents(opts).unwrap().matches.is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn modified_time_range_filters_files() {
+        let root = fixture();
+        // fixture 刚创建：下界设在 1 分钟前 → 全部命中；上界设在 1 分钟前 → 全部排除
+        let mut opts = options(roots_of(&root), "hello", false);
+        opts.modified_after_ms = Some(now_ms() - 60_000);
+        assert_eq!(search_file_contents(opts).unwrap().matches.len(), 2);
+
+        let mut opts = options(roots_of(&root), "hello", false);
+        opts.modified_before_ms = Some(now_ms() - 60_000);
+        assert!(search_file_contents(opts).unwrap().matches.is_empty());
+
+        // 两端都落在同一分钟窗口内 → 仍命中（含端点）
+        let mut opts = options(roots_of(&root), "hello", false);
+        opts.modified_after_ms = Some(now_ms() - 60_000);
+        opts.modified_before_ms = Some(now_ms() + 60_000);
+        assert_eq!(search_file_contents(opts).unwrap().matches.len(), 2);
         fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -92,6 +92,7 @@ export default function Sidebar() {
   const collapseAllFolders = useEditorStore((s) => s.collapseAllFolders);
   const showModal = useEditorStore((s) => s.showModal);
   const navigateToSearchMatch = useEditorStore((s) => s.navigateToSearchMatch);
+  const selectChatSession = useEditorStore((s) => s.selectChatSession);
   const setHoveredPath = useEditorStore((s) => s.setHoveredPath);
   const hoveredPath = useEditorStore((s) => s.hoveredPath);
   const setFolderExpanded = useEditorStore((s) => s.setFolderExpanded);
@@ -1374,7 +1375,7 @@ export default function Sidebar() {
           <button
             onClick={() => setIsSearchOpen(true)}
             className="p-1 rounded hover:bg-surface transition-colors cursor-pointer text-text-muted hover:text-accent"
-            title="搜索文件内容"
+            title="搜索文件内容 / 会话消息"
           >
             <Search size={13} />
           </button>
@@ -1429,6 +1430,7 @@ export default function Sidebar() {
               }
             })();
           }}
+          onOpenSession={(sessionId) => void selectChatSession(sessionId)}
           onClose={() => setIsSearchOpen(false)}
         />
       )}

@@ -128,3 +128,33 @@ export function setChatMessageFavorite(id: number, favorited: boolean): Promise<
   return invoke("set_chat_message_favorite", { id, favorited });
 }
 
+/** 会话消息搜索命中（带会话标题，结果列表可直接跳转） */
+export interface ChatMessageMatch {
+  message_id: number;
+  session_id: number;
+  session_title: string;
+  role: ChatRole;
+  kind: ChatMessageKind;
+  /** 命中预览：文字消息取命中行，文件/图片消息取文件名 */
+  content: string;
+  created_at: string;
+}
+
+export interface ChatMessageSearchResult {
+  matches: ChatMessageMatch[];
+  truncated: boolean;
+}
+
+/**
+ * 搜索会话消息（正文或文件名）。
+ * 时间范围为 Unix 毫秒且含端点；传 null 表示该侧不限。
+ */
+export function searchChatMessages(
+  query: string,
+  sessionId: number | null,
+  createdAfterMs: number | null,
+  createdBeforeMs: number | null,
+): Promise<ChatMessageSearchResult> {
+  return invoke("search_chat_messages", { query, sessionId, createdAfterMs, createdBeforeMs });
+}
+

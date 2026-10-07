@@ -375,6 +375,125 @@ fn set_message_favorite(conn: &Connection, id: i64, favorited: bool) -> SqlResul
     read_message(conn, id)
 }
 
+// ── 搜索 ───────────────────────────────────────────────────────
+
+/// 搜索结果上限：超出即标记截断（前端提示缩小范围）
+const MESSAGE_SEARCH_MAX: usize = 200;
+
+/// 会话消息命中
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ChatMessageMatch {
+    pub message_id: i64,
+    pub session_id: i64,
+    pub session_title: String,
+    pub role: String,
+    pub kind: String,
+    /// 命中预览：文字消息取命中行，文件/图片消息取文件名
+    pub content: String,
+    pub created_at: String,
+}
+
+/// 消息搜索结果
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ChatMessageSearchResult {
+    pub matches: Vec<ChatMessageMatch>,
+    pub truncated: bool,
+}
+
+/// LIKE 通配符转义：用户输入里的 `%` `_` `\` 按字面匹配
+fn escape_like(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// RFC3339 时间转 Unix 毫秒；解析失败返回 None（按不命中处理）
+fn parse_ms(rfc3339: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(rfc3339)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
+}
+
+/// 命中行预览：与文件内容搜索同口径（取第一个命中行，最多 120 字符）
+fn match_preview(text: &str, query: &str) -> String {
+    let needle = query.to_lowercase();
+    let line = text
+        .lines()
+        .find(|line| line.to_lowercase().contains(&needle))
+        .or_else(|| text.lines().next())
+        .unwrap_or("")
+        .trim();
+    line.chars().take(120).collect()
+}
+
+/// 消息搜索：按关键词匹配正文或文件名，可按会话与创建时间范围收窄。
+///
+/// 关键词走 SQL（LIKE 对 ASCII 大小写不敏感，正文里的中文不受影响）；
+/// 时间范围在 Rust 侧比较 —— `created_at` 带本地时区偏移，字符串比较不可靠。
+fn search_messages(
+    conn: &Connection,
+    query: &str,
+    session_id: Option<i64>,
+    created_after_ms: Option<i64>,
+    created_before_ms: Option<i64>,
+) -> SqlResult<ChatMessageSearchResult> {
+    let pattern = format!("%{}%", escape_like(query));
+    let mut stmt = conn.prepare(
+        "SELECT m.id, m.session_id, s.title, m.role, m.kind,
+                CASE WHEN m.content <> '' THEN m.content ELSE COALESCE(m.file_name, '') END,
+                m.created_at
+         FROM chat_messages m
+         JOIN chat_sessions s ON s.id = m.session_id
+         WHERE (m.content LIKE ?1 ESCAPE '\\' OR COALESCE(m.file_name, '') LIKE ?1 ESCAPE '\\')
+           AND (?2 IS NULL OR m.session_id = ?2)
+         ORDER BY m.id DESC",
+    )?;
+
+    let rows = stmt.query_map(params![pattern, session_id], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, String>(6)?,
+        ))
+    })?;
+
+    let mut matches = Vec::new();
+    let mut truncated = false;
+    for row in rows {
+        let (id, sid, session_title, role, kind, content, created_at) = row?;
+        let Some(ms) = parse_ms(&created_at) else { continue };
+        if created_after_ms.map_or(false, |after| ms < after) {
+            continue;
+        }
+        if created_before_ms.map_or(false, |before| ms > before) {
+            continue;
+        }
+        if matches.len() >= MESSAGE_SEARCH_MAX {
+            truncated = true;
+            break;
+        }
+        matches.push(ChatMessageMatch {
+            message_id: id,
+            session_id: sid,
+            session_title,
+            role,
+            kind,
+            content: match_preview(&content, query),
+            created_at,
+        });
+    }
+    Ok(ChatMessageSearchResult { matches, truncated })
+}
+
 // ── 图片落盘 ───────────────────────────────────────────────────
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -566,6 +685,21 @@ pub fn delete_chat_message(id: i64) -> Result<(), String> {
 pub fn set_chat_message_favorite(id: i64, favorited: bool) -> Result<ChatMessage, String> {
     with_db(|conn| set_message_favorite(conn, id, favorited))?
         .ok_or_else(|| format!("消息不存在: {}", id))
+}
+
+/// 搜索会话消息（正文或文件名），可按会话与创建时间范围收窄（时间戳为 Unix 毫秒，含端点）
+#[tauri::command]
+pub fn search_chat_messages(
+    query: String,
+    session_id: Option<i64>,
+    created_after_ms: Option<i64>,
+    created_before_ms: Option<i64>,
+) -> Result<ChatMessageSearchResult, String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(ChatMessageSearchResult { matches: Vec::new(), truncated: false });
+    }
+    with_db(|conn| search_messages(conn, query, session_id, created_after_ms, created_before_ms))
 }
 
 /// 发送文件：只做一次 stat 校验并**记录其本地路径**，不复制内容。
@@ -969,6 +1103,116 @@ mod tests {
         assert_eq!(renamed.created_at, session.created_at);
         assert_eq!(renamed.updated_at, before.updated_at, "重命名不算编辑");
         assert_eq!(renamed.message_count, 1);
+    }
+
+    /// 消息搜索：正文与文件名都参与匹配，预览取命中行而不是消息首行
+    #[test]
+    fn message_search_matches_content_and_file_name() {
+        let conn = db();
+        let alpha = insert_session(&conn, "甲会话").unwrap();
+        let beta = insert_session(&conn, "乙会话").unwrap();
+        insert_message(&conn, text_message(alpha.id, "第一行\n这里提到 报表导出 功能")).unwrap();
+        insert_message(&conn, text_message(beta.id, "无关内容")).unwrap();
+        insert_message(
+            &conn,
+            NewChatMessage {
+                session_id: beta.id,
+                role: Some("other".to_string()),
+                kind: Some("file".to_string()),
+                content: None,
+                file_name: Some("报表导出说明.pdf".to_string()),
+                file_path: Some("/tmp/report.pdf".to_string()),
+                file_size: Some(12),
+            },
+        )
+        .unwrap();
+
+        let result = search_messages(&conn, "报表导出", None, None, None).unwrap();
+        assert!(!result.truncated);
+        assert_eq!(result.matches.len(), 2, "matches: {:?}", result.matches);
+        // 最新的排前面：文件消息后插入，排第一
+        assert_eq!(result.matches[0].session_title, "乙会话");
+        assert_eq!(result.matches[0].kind, "file");
+        assert_eq!(result.matches[0].content, "报表导出说明.pdf");
+        assert_eq!(result.matches[1].session_id, alpha.id);
+        assert_eq!(result.matches[1].content, "这里提到 报表导出 功能", "应取命中行");
+        assert_eq!(result.matches[1].role, "me");
+    }
+
+    /// 消息搜索可按会话与创建时间范围收窄（毫秒时间戳，含端点）
+    #[test]
+    fn message_search_scopes_session_and_time() {
+        let conn = db();
+        let first = insert_session(&conn, "甲").unwrap();
+        let second = insert_session(&conn, "乙").unwrap();
+        insert_message(&conn, text_message(first.id, "别的 A")).unwrap();
+        let old = insert_message(&conn, text_message(second.id, "关键词 B"))
+            .unwrap()
+            .unwrap();
+        insert_message(&conn, text_message(second.id, "关键词 C")).unwrap();
+
+        let scoped = search_messages(&conn, "关键词", Some(second.id), None, None).unwrap();
+        assert_eq!(scoped.matches.len(), 2, "matches: {:?}", scoped.matches);
+        assert!(scoped.matches.iter().all(|m| m.session_id == second.id));
+
+        // B 的创建时间挪到很久以前：按时间下界应把它过滤掉
+        conn.execute(
+            "UPDATE chat_messages SET created_at = ?1 WHERE id = ?2",
+            params!["2001-01-01T00:00:00+08:00", old.id],
+        )
+        .unwrap();
+        let cut = parse_ms("2002-01-01T00:00:00+08:00").unwrap();
+        let recent = search_messages(&conn, "关键词", None, Some(cut), None).unwrap();
+        assert_eq!(recent.matches.len(), 1, "matches: {:?}", recent.matches);
+        assert_eq!(recent.matches[0].content, "关键词 C");
+
+        let past = search_messages(&conn, "关键词", None, None, Some(cut)).unwrap();
+        assert_eq!(past.matches.len(), 1, "matches: {:?}", past.matches);
+        assert_eq!(past.matches[0].content, "关键词 B");
+    }
+
+    /// 关键词里的 LIKE 通配符按字面匹配（`%` / `_` 不会匹配一切）
+    #[test]
+    fn message_search_escapes_like_wildcards() {
+        let conn = db();
+        let session = insert_session(&conn, "会话").unwrap();
+        insert_message(&conn, text_message(session.id, "覆盖率 80%")).unwrap();
+        insert_message(&conn, text_message(session.id, "纯中文内容")).unwrap();
+
+        let percent = search_messages(&conn, "80%", None, None, None).unwrap();
+        assert_eq!(percent.matches.len(), 1, "matches: {:?}", percent.matches);
+        let underscore = search_messages(&conn, "覆_率", None, None, None).unwrap();
+        assert!(underscore.matches.is_empty(), "下划线应作为字面量: {:?}", underscore.matches);
+    }
+
+    /// 命中预览限长 120 字符
+    #[test]
+    fn message_search_preview_is_limited() {
+        let conn = db();
+        let session = insert_session(&conn, "长消息").unwrap();
+        insert_message(
+            &conn,
+            text_message(session.id, &format!("前缀 关键词 {}", "x".repeat(300))),
+        )
+        .unwrap();
+
+        let result = search_messages(&conn, "关键词", None, None, None).unwrap();
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].content.chars().count(), 120);
+    }
+
+    /// 命中超过上限时截断并置位 truncated
+    #[test]
+    fn message_search_truncates_beyond_limit() {
+        let conn = db();
+        let session = insert_session(&conn, "很多").unwrap();
+        for index in 0..MESSAGE_SEARCH_MAX + 5 {
+            insert_message(&conn, text_message(session.id, &format!("关键词 {index}"))).unwrap();
+        }
+
+        let result = search_messages(&conn, "关键词", None, None, None).unwrap();
+        assert!(result.truncated);
+        assert_eq!(result.matches.len(), MESSAGE_SEARCH_MAX);
     }
 
     #[test]
