@@ -4,11 +4,11 @@
  * 只在点「搜索」按钮或按 Enter 时执行 —— 输入与筛选条件变化都不自动触发（全量内容搜索代价高）。
  * 范围由 3 个 tab（固定文件 / 会话 / 文件夹）提供候选，点击候选即加入筛选条件、再点移出：
  * 文件与文件夹归文件域（两者并存时取并集，落在文件夹里的文件不再单列），会话归消息域；日期范围对两者都生效。
- * 空查询时展示最近打开（与 Launcher 一致）。
+ * 空查询时不做事（不再列「最近打开」，把高度留给 3 个 tab 的候选列表）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, FileText, History, Loader2, MessageSquare, Pin, Folder, X } from "lucide-react";
+import { Search, FileText, Loader2, MessageSquare, Pin, Folder, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEditorStore } from "@/store/editor";
@@ -73,7 +73,6 @@ export default function ContentSearchDialog({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const requestIdRef = useRef(0);
 
-  const recentFiles = useEditorStore((s) => s.recentFiles);
   const pinnedFiles = useEditorStore((s) => s.pinnedFiles);
   const chatSessions = useEditorStore((s) => s.chatSessions);
   const loadChatSessions = useEditorStore((s) => s.loadChatSessions);
@@ -127,10 +126,6 @@ export default function ContentSearchDialog({
     [fileMatches, messageMatches],
   );
 
-  // 空查询走最近打开(与 Launcher 一致)
-  const recentItems = recentFiles.slice(0, 15);
-  const showRecent = !hasQuery;
-
   const runSearch = useCallback(async () => {
     const keyword = query.trim();
     if (keyword.length < 2) return;
@@ -182,16 +177,9 @@ export default function ContentSearchDialog({
     }
   }, [query, signature, scopes, roots, dateFrom, dateTo]);
 
-  const listLength = showRecent ? recentItems.length : isFresh ? items.length : 0;
+  const listLength = isFresh ? items.length : 0;
 
   const openAt = (index: number) => {
-    if (showRecent) {
-      const path = recentItems[index];
-      if (!path) return;
-      onOpenFile({ path, line: 1, preview: "" }, "");
-      onClose();
-      return;
-    }
     const item = items[index];
     if (!item) return;
     if (item.kind === "file") {
@@ -339,7 +327,12 @@ export default function ContentSearchDialog({
             )}
           </div>
 
-          <div className="mt-2 flex flex-wrap gap-1.5 max-h-[96px] overflow-y-auto">
+          {/* 没有查询时结果区只剩提示，候选列表可以把这块空间铺满；有结果时收窄让位给结果 */}
+          <div
+            className={`mt-2 flex flex-wrap gap-1.5 overflow-y-auto ${
+              hasQuery ? "max-h-[180px]" : "max-h-[420px]"
+            }`}
+          >
             {candidates[activeKind].length === 0 ? (
               <span className="py-1 text-text-muted/85">{activeTabHint}</span>
             ) : (
@@ -420,36 +413,8 @@ export default function ContentSearchDialog({
         </div>
 
         {/* Results */}
-        <div className="max-h-[400px] overflow-y-auto p-1.5">
-          {showRecent ? (
-            <>
-              {recentItems.length > 0 ? (
-                <>
-                  <div className="px-3.5 pt-2 pb-1 text-xs font-semibold text-text-muted tracking-wide">
-                    最近打开
-                  </div>
-                  {recentItems.map((p, i) => (
-                    <button
-                      key={p}
-                      ref={i === selectedIndex ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
-                      onClick={() => openAt(i)}
-                      onMouseEnter={() => setSelectedIndex(i)}
-                      title={p}
-                      className={rowClass(i)}
-                    >
-                      <div className="flex items-center gap-2">
-                        <History size={14} className="shrink-0 text-text-muted" />
-                        <span className="truncate text-sm font-medium text-text">{scopeBaseName(p)}</span>
-                      </div>
-                      <div className="truncate pl-6 text-xs text-text-muted/70">{p}</div>
-                    </button>
-                  ))}
-                </>
-              ) : (
-                <div className="px-4 py-6 text-sm text-text-muted text-center">暂无最近打开的文件</div>
-              )}
-            </>
-          ) : isFresh ? (
+        <div className="max-h-[380px] overflow-y-auto p-1.5">
+          {isFresh ? (
             <>
               {items.length === 0 && (
                 <div className="px-4 py-6 text-sm text-text-muted text-center">未找到相关内容</div>
@@ -517,7 +482,7 @@ export default function ContentSearchDialog({
             <div className="px-4 py-8 text-sm text-text-muted text-center">搜索中...</div>
           ) : (
             <div className="px-4 py-8 text-sm text-text-muted text-center">
-              按 Enter 或点「搜索」开始搜索
+              先在 3 个标签里点选范围，再输入关键词按 Enter 或点「搜索」
             </div>
           )}
         </div>
