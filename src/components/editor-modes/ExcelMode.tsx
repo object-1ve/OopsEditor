@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileSpreadsheet, ImagePlus, Info, Loader2, Redo2, Save, Trash2, Undo2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
-import type { CellValue, Workbook, Worksheet } from "exceljs";
+import type { CellValue, Column, Workbook, Worksheet } from "exceljs";
 import { loadExcelDoc, type ExcelDoc } from "@/services/excelDocs";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import { useEditorStore } from "@/store/editor";
@@ -244,7 +244,10 @@ function columnWidthsPx(
   overrides: Record<number, number>,
 ): number[] {
   const widths = new Array<number>(columnCount).fill(DEFAULT_COLUMN_WIDTH);
-  for (const column of sheet.columns) {
+
+  // exceljs 的 columns 在“没有任何列定义”的工作表上是 null（构造初值），必须兜底
+  const columns: Partial<Column>[] | null = sheet.columns;
+  for (const column of columns ?? []) {
     const index = column.number;
     if (!index || index > columnCount) continue;
     if (typeof column.width === "number" && column.width > 0) {
