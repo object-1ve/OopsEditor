@@ -1278,6 +1278,14 @@ function ExcelModeView({
         <span className="shrink-0 text-[10px] text-text-muted">
           {layout.snapshot.rowCount} 行 × {layout.snapshot.columnCount} 列
         </span>
+        {doc.isBlank && (
+          <span
+            className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent"
+            title="原文件是空文件，按空白工作簿打开；保存后会写入有效的 xlsx 内容"
+          >
+            空白工作簿
+          </span>
+        )}
         <span className="mx-1 h-4 w-px shrink-0 bg-border" />
         <span className="shrink-0 rounded border border-border bg-deepest px-1.5 py-0.5 font-mono text-[11px] text-text-secondary">
           {columnLetter(selection.column)}

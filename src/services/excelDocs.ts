@@ -16,6 +16,8 @@ export interface ExcelDoc {
   revision: number;
   /** 加载时的文件路径，另存为后随之更新 */
   path: string;
+  /** 原文件是空文件（0 字节），按空白工作簿打开，保存后才成为有效 xlsx */
+  isBlank: boolean;
 }
 
 /** 按需加载的 exceljs 入口（体积大，只在真正打开表格时进入单独 chunk） */
@@ -49,13 +51,34 @@ export async function loadExcelDoc(
   }
 
   const ExcelJS = await loadExcelJS();
-  const bytes = await readFile(path);
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(
-    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
-  );
 
-  const doc: ExcelDoc = { workbook, revision, path };
+  let bytes: Uint8Array;
+  try {
+    bytes = await readFile(path);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`无法读取文件（${detail}）`);
+  }
+
+  const workbook = new ExcelJS.Workbook();
+  const isBlank = bytes.byteLength === 0;
+
+  if (isBlank) {
+    // 空文件（例如编辑器里新建的 .xlsx）按空白工作簿打开，
+    // 否则 exceljs 会把它当压缩包解析并抛出 “Corrupted zip” 之类的底层错误
+    workbook.addWorksheet("Sheet1");
+  } else {
+    try {
+      await workbook.xlsx.load(
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      );
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`不是有效的 Excel 工作簿（文件已损坏或格式不受支持）：${detail}`);
+    }
+  }
+
+  const doc: ExcelDoc = { workbook, revision, path, isBlank };
   docs.set(tabId, doc);
   return doc;
 }
@@ -79,6 +102,8 @@ export async function saveExcelDoc(tabId: string, targetPath?: string) {
     content: bufferToBase64(buffer),
   });
   doc.path = path;
+  // 写盘后文件已有内容，不再算空白工作簿
+  doc.isBlank = false;
 }
 
 function bufferToBase64(buffer: ArrayBuffer): string {
