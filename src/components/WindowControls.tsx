@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Pin, PinOff, Minus, Square, Copy, X } from "lucide-react";
+import { Pin, PinOff, Minus, Square, Copy, X, Search } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 
 export default function WindowControls() {
@@ -7,6 +7,9 @@ export default function WindowControls() {
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const tabs = useEditorStore(s => s.tabs);
   const showModal = useEditorStore(s => s.showModal);
+  const isLeftSidebarCollapsed = useEditorStore(s => s.isLeftSidebarCollapsed);
+  const toggleLeftSidebar = useEditorStore(s => s.toggleLeftSidebar);
+  const openSearch = useEditorStore(s => s.openSearch);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -33,6 +36,14 @@ export default function WindowControls() {
       if (unlisten) unlisten();
     };
   }, []);
+
+  /** 打开搜索面板：面板挂在左侧边栏里，侧边栏收起时先展开，否则点了看不到 */
+  const handleOpenSearch = () => {
+    if (isLeftSidebarCollapsed) {
+      toggleLeftSidebar();
+    }
+    openSearch();
+  };
 
   const handleToggleAlwaysOnTop = async () => {
     try {
@@ -95,6 +106,14 @@ export default function WindowControls() {
 
   return (
     <div className="flex items-center h-full no-drag" onDoubleClick={(e) => e.stopPropagation()}>
+
+      <button
+        onClick={handleOpenSearch}
+        className="p-1.5 rounded hover:bg-surface transition-colors cursor-pointer text-text-muted hover:text-accent"
+        title="搜索文件内容 / 会话消息"
+      >
+        <Search size={14} />
+      </button>
 
       <button
         onClick={handleToggleAlwaysOnTop}

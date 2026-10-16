@@ -3,7 +3,7 @@
  */
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import {
-  Folder, FolderOpen, Plus, Search, X, Edit2, Trash2,
+  Folder, FolderOpen, Plus, X, Edit2, Trash2,
   ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin,
   ChevronsUp, RotateCw, ArrowDownAZ, ArrowUpAZ, Clock, FileClock, History,
   SortAsc, SortDesc, Scissors, ClipboardPaste, Eraser,
@@ -108,7 +108,8 @@ export default function Sidebar() {
   const recentFolders = useEditorStore((s) => s.recentFolders);
   const loadRecentFolders = useEditorStore((s) => s.loadRecentFolders);
   const recentFiles = useEditorStore((s) => s.recentFiles);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const isSearchOpen = useEditorStore((s) => s.isSearchOpen);
+  const closeSearch = useEditorStore((s) => s.closeSearch);
   const [isPinnedExpanded, setIsPinnedExpanded] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DirEntry } | null>(null);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
@@ -1371,13 +1372,6 @@ export default function Sidebar() {
             />
           </div>
           <button
-            onClick={() => setIsSearchOpen(true)}
-            className="p-1 rounded hover:bg-surface transition-colors cursor-pointer text-text-muted hover:text-accent"
-            title="搜索文件内容 / 会话消息"
-          >
-            <Search size={13} />
-          </button>
-          <button
             onClick={() => handleToolbarCreate("file")}
             className="p-1 rounded hover:bg-surface text-text-muted hover:text-accent transition-colors cursor-pointer"
             title="新建文件"
@@ -1429,7 +1423,7 @@ export default function Sidebar() {
             })();
           }}
           onOpenSession={(sessionId) => void selectChatSession(sessionId)}
-          onClose={() => setIsSearchOpen(false)}
+          onClose={closeSearch}
         />
       )}
       <div

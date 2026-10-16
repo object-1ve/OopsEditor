@@ -66,6 +66,7 @@ export interface EditorState {
   autoSaveOnEdit: boolean;
   maxOpenTabs: number;
   isSettingsOpen: boolean;
+  isSearchOpen: boolean;
   terminals: TerminalInstance[];
   activeTerminalId: string | null;
   modal: {
@@ -154,6 +155,8 @@ export interface EditorState {
   setCaptureProtection: (enabled: boolean) => void;
   openSettings: () => void;
   closeSettings: () => void;
+  openSearch: () => void;
+  closeSearch: () => void;
   addTerminal: (path?: string | null) => void;
   removeTerminal: (id: string) => void;
   closeTerminals: (ids: string[]) => void;

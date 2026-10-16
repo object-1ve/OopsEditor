@@ -46,6 +46,7 @@ export const createUiSlice: StateCreator<
     | "setCustomFont"
     | "setCustomFontApplyToUi"
     | "isSettingsOpen"
+    | "isSearchOpen"
     | "modal"
     | "notification"
     | "markdownOutlineTarget"
@@ -71,6 +72,8 @@ export const createUiSlice: StateCreator<
     | "closeImagePreview"
     | "openSettings"
     | "closeSettings"
+    | "openSearch"
+    | "closeSearch"
     | "showModal"
     | "closeModal"
     | "showNotification"
@@ -92,6 +95,7 @@ export const createUiSlice: StateCreator<
   customFontApplyToUi: false,
   searchJumpTarget: null,
   isSettingsOpen: false,
+  isSearchOpen: false,
   modal: null,
   notification: null,
   markdownOutlineTarget: null,
@@ -239,6 +243,10 @@ export const createUiSlice: StateCreator<
 
   openSettings: () => set({ isSettingsOpen: true }),
   closeSettings: () => set({ isSettingsOpen: false }),
+
+  // 搜索面板（挂在左侧边栏内，触发按钮在窗口控制区）
+  openSearch: () => set({ isSearchOpen: true }),
+  closeSearch: () => set({ isSearchOpen: false }),
 
   showModal: (config) => set({ modal: config }),
   closeModal: () => set({ modal: null }),
