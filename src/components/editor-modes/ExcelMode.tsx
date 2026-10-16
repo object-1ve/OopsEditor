@@ -28,6 +28,7 @@ import {
   Save,
   Trash2,
   Undo2,
+  X,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
@@ -134,6 +135,11 @@ function parseNumericText(text: string): number | null {
   const value = Number(isPercent ? cleaned.slice(0, -1) : cleaned);
   if (!Number.isFinite(value)) return null;
   return isPercent ? value / 100 : value;
+}
+
+/** exceljs 的 autoFilter 可以置空来移除筛选，但类型声明不接受 null */
+function setAutoFilter(sheet: Worksheet, range: { from: string; to: string } | null) {
+  sheet.autoFilter = range as unknown as Worksheet["autoFilter"];
 }
 
 /** 解析地址框输入：B12 或 B2:D5（$ 与大小写都可） */
@@ -773,6 +779,9 @@ function ExcelModeView({
   const [formatMenu, setFormatMenu] = useState<{ x: number; y: number } | null>(null);
   const [palette, setPalette] = useState<{ x: number; y: number; target: "fill" | "font" } | null>(null);
   const [addressInput, setAddressInput] = useState<string | null>(null);
+  const [findPanel, setFindPanel] = useState(false);
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
   const [fillPreview, setFillPreview] = useState<{
     top: number;
     bottom: number;
@@ -1065,6 +1074,26 @@ function ExcelModeView({
     [activeTab.id, doc, markTabDirty],
   );
 
+  /** 批量写入单元格并记入撤销栈（单格编辑与多格粘贴共用） */
+  const applyChanges = useCallback(
+    (changes: CellChange[]) => {
+      if (!doc || changes.length === 0) return;
+
+      const snapshot = snapshotsRef.current.get(sheetIndex);
+      const sheet = doc.workbook.worksheets[sheetIndex];
+      if (snapshot && sheet) {
+        for (const change of changes) {
+          refreshSnapshotCell(snapshot, sheet, change.row, change.column);
+        }
+      }
+
+      pushHistory({ kind: "cells", sheetIndex, changes });
+      setLayoutVersion((version) => version + 1);
+      markTabDirty(activeTab.id);
+    },
+    [doc, markTabDirty, pushHistory, sheetIndex],
+  );
+
   /** 结构变化后作废该工作表的快照与图片缓存 */
   const invalidateSheetCaches = useCallback((index: number) => {
     snapshotsRef.current.delete(index);
@@ -1355,6 +1384,158 @@ function ExcelModeView({
     };
   }, [doc, layout, selection, sheetIndex]);
 
+  /** 按选区首列对选区内的行排序（值 + 样式一起搬，可撤销） */
+  const sortSelection = useCallback(
+    (ascending: boolean) => {
+      const sheet = doc?.workbook.worksheets[sheetIndex];
+      if (!sheet || !layout) return;
+
+      const bounds = selectionBounds(selection);
+      if (bounds.top === bounds.bottom) {
+        showNotification("请选择至少两行再排序", "info");
+        return;
+      }
+
+      const rows: {
+        keyText: string;
+        keyNumber: number | null;
+        cells: { value: CellValue; style: Partial<Style> }[];
+      }[] = [];
+      for (let row = bounds.top; row <= bounds.bottom; row += 1) {
+        const cells: { value: CellValue; style: Partial<Style> }[] = [];
+        for (let column = bounds.left; column <= bounds.right; column += 1) {
+          const cell = sheet.getCell(row, column);
+          cells.push({ value: cell.value, style: cell.style });
+        }
+        const keyText = layout.snapshot.cells.get(row)?.get(bounds.left)?.text ?? "";
+        rows.push({ keyText, keyNumber: parseNumericText(keyText), cells });
+      }
+
+      const ordered = [...rows].sort((a, b) => {
+        const comparison =
+          a.keyNumber !== null && b.keyNumber !== null
+            ? a.keyNumber - b.keyNumber
+            : a.keyText.localeCompare(b.keyText, "zh-Hans-CN");
+        return ascending ? comparison : -comparison;
+      });
+
+      const writeOrder = (source: typeof rows) => {
+        source.forEach((item, offset) => {
+          item.cells.forEach((cell, columnOffset) => {
+            const target = sheet.getCell(bounds.top + offset, bounds.left + columnOffset);
+            target.value = cell.value;
+            target.style = cell.style;
+          });
+        });
+      };
+
+      applyStructural(
+        ascending ? "升序排序" : "降序排序",
+        () => writeOrder(rows),
+        () => writeOrder(ordered),
+      );
+      showNotification(`已按 ${columnLetter(bounds.left)} 列${ascending ? "升序" : "降序"}排序`, "success");
+    },
+    [applyStructural, doc, layout, selection, sheetIndex, showNotification],
+  );
+
+  /** 自动筛选开关（作用于当前选区） */
+  const toggleAutoFilter = useCallback(() => {
+    const sheet = doc?.workbook.worksheets[sheetIndex];
+    if (!sheet || !layout) return;
+
+    const bounds = selectionBounds(selection);
+    const range = {
+      from: `${columnLetter(bounds.left)}${bounds.top}`,
+      to: `${columnLetter(bounds.right)}${bounds.bottom}`,
+    };
+    const enabled = Boolean(sheet.autoFilter);
+
+    if (enabled) {
+      applyStructural(
+        "关闭自动筛选",
+        () => setAutoFilter(sheet, range),
+        () => setAutoFilter(sheet, null),
+      );
+      showNotification("已关闭自动筛选", "success");
+      return;
+    }
+
+    applyStructural(
+      "启用自动筛选",
+      () => setAutoFilter(sheet, null),
+      () => setAutoFilter(sheet, range),
+    );
+    showNotification(`已启用自动筛选（${range.from}:${range.to}）`, "success");
+  }, [applyStructural, doc, layout, selection, sheetIndex, showNotification]);
+
+  /** 当前工作表的匹配单元格（查找面板用，按行列顺序） */
+  const findMatches = useMemo(() => {
+    if (!layout || !findText.trim()) return [];
+    const needle = findText.trim().toLowerCase();
+    const matches: { row: number; column: number }[] = [];
+
+    for (const [row, rowCells] of layout.snapshot.cells) {
+      for (const [column, cell] of rowCells) {
+        if (cell.text.toLowerCase().includes(needle)) matches.push({ row, column });
+      }
+    }
+
+    return matches.sort((a, b) => (a.row - b.row) || (a.column - b.column));
+  }, [findText, layout]);
+
+  const gotoMatch = useCallback(
+    (direction: 1 | -1) => {
+      if (findMatches.length === 0) return;
+      const bounds = selectionBounds(selection);
+      const currentIndex = findMatches.findIndex(
+        (match) => match.row === bounds.top && match.column === bounds.left,
+      );
+      const nextIndex =
+        currentIndex === -1
+          ? 0
+          : (currentIndex + direction + findMatches.length) % findMatches.length;
+      const next = findMatches[nextIndex];
+      setSelection(cellSelection(next.row, next.column));
+    },
+    [findMatches, selection],
+  );
+
+  /** 替换当前匹配 / 全部匹配 */
+  const applyReplace = useCallback(
+    (all: boolean) => {
+      const sheet = doc?.workbook.worksheets[sheetIndex];
+      if (!sheet || !layout || findMatches.length === 0) return;
+
+      const bounds = selectionBounds(selection);
+      const targets = all
+        ? findMatches
+        : findMatches.filter((match) => match.row === bounds.top && match.column === bounds.left);
+      if (targets.length === 0) {
+        showNotification("当前单元格不是匹配项", "info");
+        return;
+      }
+
+      const changes: CellChange[] = [];
+      for (const target of targets) {
+        const cell = sheet.getCell(target.row, target.column);
+        const before = cell.value;
+        const nextValue =
+          typeof before === "string"
+            ? before.split(findText).join(replaceText)
+            : replaceText;
+        if (isSameCellValue(before, nextValue)) continue;
+        cell.value = nextValue;
+        changes.push({ row: target.row, column: target.column, before, after: nextValue });
+      }
+
+      if (changes.length === 0) return;
+      applyChanges(changes);
+      showNotification(`已替换 ${changes.length} 处`, "success");
+    },
+    [applyChanges, doc, findMatches, findText, layout, replaceText, selection, sheetIndex, showNotification],
+  );
+
   /** 格式菜单：颜色 / 对齐 / 数字格式 */
   const formatMenuItems = useMemo(() => {
     const separator = { label: "", separator: true, onClick: () => {} };
@@ -1396,28 +1577,28 @@ function ExcelModeView({
       { label: `删除所选 ${columns} 列`, danger: true, onClick: () => void deleteColumns(bounds.left, columns) },
       separator,
       { label: "自适应列宽", onClick: () => autoFitColumn(bounds.left) },
+      separator,
+      { label: `按 ${columnLetter(bounds.left)} 列升序`, onClick: () => sortSelection(true) },
+      { label: `按 ${columnLetter(bounds.left)} 列降序`, onClick: () => sortSelection(false) },
+      {
+        label: doc?.workbook.worksheets[sheetIndex]?.autoFilter ? "关闭自动筛选" : "启用自动筛选",
+        onClick: toggleAutoFilter,
+      },
+      separator,
+      { label: "查找替换…", onClick: () => setFindPanel(true) },
     ];
-  }, [autoFitColumn, deleteColumns, deleteRows, insertColumns, insertRows, selection]);
-
-  /** 批量写入单元格并记入撤销栈（单格编辑与多格粘贴共用） */
-  const applyChanges = useCallback(
-    (changes: CellChange[]) => {
-      if (!doc || changes.length === 0) return;
-
-      const snapshot = snapshotsRef.current.get(sheetIndex);
-      const sheet = doc.workbook.worksheets[sheetIndex];
-      if (snapshot && sheet) {
-        for (const change of changes) {
-          refreshSnapshotCell(snapshot, sheet, change.row, change.column);
-        }
-      }
-
-      pushHistory({ kind: "cells", sheetIndex, changes });
-      setLayoutVersion((version) => version + 1);
-      markTabDirty(activeTab.id);
-    },
-    [doc, markTabDirty, pushHistory, sheetIndex],
-  );
+  }, [
+    autoFitColumn,
+    deleteColumns,
+    deleteRows,
+    doc,
+    insertColumns,
+    insertRows,
+    selection,
+    sheetIndex,
+    sortSelection,
+    toggleAutoFilter,
+  ]);
 
   const moveSelection = useCallback(
     (rowDelta: number, columnDelta: number) => {
@@ -1789,6 +1970,9 @@ function ExcelModeView({
           if (shortcut) {
             applyNumberFormat(shortcut.format, shortcut.label);
           }
+        } else if (key === "f") {
+          event.preventDefault();
+          setFindPanel(true);
         } else if (event.key === "ArrowUp") {
           event.preventDefault();
           jumpToEdge(-1, 0);
@@ -2476,7 +2660,7 @@ function ExcelModeView({
           <button
             type="button"
             disabled={isReadOnly}
-            title="插入/删除行列、自适应列宽"
+            title="插入/删除行列、排序、筛选、查找替换"
             onClick={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
               setRowColumnMenu({ x: rect.left, y: rect.bottom + 2 });
@@ -2485,7 +2669,7 @@ function ExcelModeView({
           >
             <Rows3 size={13} />
             <Columns3 size={13} />
-            行列
+            表格
           </button>
           <button
             type="button"
@@ -2950,6 +3134,78 @@ function ExcelModeView({
           items={sheetMenuItems}
           onClose={() => setSheetMenu(null)}
         />
+      )}
+
+      {findPanel && (
+        <div className="fixed right-6 top-24 z-30 w-72 rounded-lg border border-border bg-surface p-3 shadow-xl">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-medium text-text-primary">查找替换（当前工作表）</span>
+            <button
+              type="button"
+              onClick={() => setFindPanel(false)}
+              className="text-text-muted transition-colors hover:text-accent"
+              title="关闭"
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <input
+            autoFocus
+            value={findText}
+            onChange={(event) => setFindText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                gotoMatch(1);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setFindPanel(false);
+                rootRef.current?.focus();
+              }
+            }}
+            placeholder="查找内容"
+            className="mb-2 w-full rounded border border-border bg-primary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
+          />
+          <input
+            value={replaceText}
+            onChange={(event) => setReplaceText(event.target.value)}
+            placeholder="替换为"
+            className="mb-2 w-full rounded border border-border bg-primary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
+          />
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => gotoMatch(-1)}
+              className="rounded border border-border px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:text-accent"
+            >
+              上一个
+            </button>
+            <button
+              type="button"
+              onClick={() => gotoMatch(1)}
+              className="rounded border border-border px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:text-accent"
+            >
+              下一个
+            </button>
+            <button
+              type="button"
+              onClick={() => applyReplace(false)}
+              className="rounded border border-border px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:text-accent"
+            >
+              替换
+            </button>
+            <button
+              type="button"
+              onClick={() => applyReplace(true)}
+              className="rounded border border-border px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:text-accent"
+            >
+              全部替换
+            </button>
+          </div>
+          <div className="mt-2 text-[10px] text-text-muted">
+            {findText.trim() ? `匹配 ${findMatches.length} 处` : "输入关键字后回车跳到下一个匹配"}
+          </div>
+        </div>
       )}
 
       {formatMenu && (
