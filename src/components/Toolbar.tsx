@@ -6,7 +6,7 @@ import { useTabStripDensity } from "@/hooks/useTabStripDensity";
 import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
 import { MessagesSquare } from "lucide-react";
-import { detectLanguage, isChatTab } from "@/types";
+import { detectLanguage, isChatTab, type FileTab } from "@/types";
 import { saveTab } from "@/services/editorSave";
 
 const buildChildPath = (basePath: string, fileName: string) => {
@@ -64,7 +64,7 @@ const tabs = useEditorStore(s => s.tabs);
     setActiveTabInPane(id, pane);
   }, [setActiveTabInPane, pane]);
 
-  const handleClose = useCallback((e: React.MouseEvent | { stopPropagation: () => void }, tab: any) => {
+  const handleClose = useCallback((e: React.MouseEvent | { stopPropagation: () => void }, tab: FileTab) => {
     e.stopPropagation();
     if (tab.isDirty) {
       showModal({
@@ -147,26 +147,6 @@ const tabs = useEditorStore(s => s.tabs);
       showModal({
         title: "确认关闭右侧文件",
         message: `右侧有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
-        kind: "warning",
-        onConfirm: () => closeTabsInPane(dirtyTabs.map((tab) => tab.id), pane),
-      });
-    }
-    setContextMenu(null);
-  }, [contextMenu, paneTabs, closeTabsInPane, showModal, pane]);
-
-  const handleCloseAll = useCallback(() => {
-    if (!contextMenu) return;
-    const cleanTabs = paneTabs.filter(t => !t.isDirty);
-    const dirtyTabs = paneTabs.filter(t => t.isDirty);
-
-    if (cleanTabs.length > 0) {
-      closeTabsInPane(cleanTabs.map((tab) => tab.id), pane);
-    }
-
-    if (dirtyTabs.length > 0) {
-      showModal({
-        title: "确认关闭所有标签页",
-        message: `有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
         kind: "warning",
         onConfirm: () => closeTabsInPane(dirtyTabs.map((tab) => tab.id), pane),
       });
@@ -316,11 +296,6 @@ const tabs = useEditorStore(s => s.tabs);
         icon: <RefreshCw size={14} />,
         onClick: () => reloadTabFromDisk(contextMenu.tabId),
       },
-      {
-        label: "关闭标签页",
-        icon: <X size={14} />,
-        onClick: () => handleClose({ stopPropagation: () => {} } as any, tab)
-      },
       { separator: true, label: "", onClick: () => {} },
       {
         label: "关闭其他标签页",
@@ -339,12 +314,12 @@ const tabs = useEditorStore(s => s.tabs);
       },
       { separator: true, label: "", onClick: () => {} },
       {
-        label: "关闭所有标签页",
-        icon: <CopyX size={14} />,
-        onClick: handleCloseAll
+        label: "关闭标签页",
+        icon: <X size={14} />,
+        onClick: () => handleClose({ stopPropagation: () => {} }, tab)
       },
     ];
-  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, isSecondary, revealPathInSidebar]);
+  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, isSecondary, revealPathInSidebar]);
   const handleDoubleClick = useCallback(async () => {
     const now = new Date();
     const year = now.getFullYear();

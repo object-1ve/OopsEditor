@@ -7,7 +7,7 @@ import ContextMenu from "./ContextMenu";
 import MaterialFileIcon from "./MaterialFileIcon";
 import WindowControls from "./WindowControls";
 import { saveTab } from "@/services/editorSave";
-import { detectLanguage, isChatTab } from "@/types";
+import { detectLanguage, isChatTab, type FileTab } from "@/types";
 import { MessagesSquare } from "lucide-react";
 
 const buildChildPath = (basePath: string, fileName: string) => {
@@ -58,7 +58,7 @@ export default function TitleBar() {
     setActiveTabInPane(id, pane);
   }, [setActiveTabInPane, pane]);
 
-  const handleClose = useCallback((e: React.MouseEvent | { stopPropagation: () => void }, tab: any) => {
+  const handleClose = useCallback((e: React.MouseEvent | { stopPropagation: () => void }, tab: FileTab) => {
     e.stopPropagation();
     if (tab.isDirty) {
       showModal({
@@ -145,25 +145,6 @@ export default function TitleBar() {
     setContextMenu(null);
   }, [contextMenu, tabs, closeTabsInPane, showModal, pane]);
 
-  const handleCloseAll = useCallback(() => {
-    if (!contextMenu) return;
-    const cleanTabs = tabs.filter(t => !t.isDirty);
-    const dirtyTabs = tabs.filter(t => t.isDirty);
-
-    if (cleanTabs.length > 0) {
-      closeTabsInPane(cleanTabs.map((tab) => tab.id), pane);
-    }
-    if (dirtyTabs.length > 0) {
-      showModal({
-        title: "确认关闭所有标签页",
-        message: `有 ${dirtyTabs.length} 个文件尚未保存，关闭将丢失更改。确定要全部关闭吗？`,
-        kind: "warning",
-        onConfirm: () => closeTabsInPane(dirtyTabs.map((tab) => tab.id), pane),
-      });
-    }
-    setContextMenu(null);
-  }, [contextMenu, tabs, closeTabsInPane, showModal, pane]);
-
   const handleTransferToOtherPane = useCallback(() => {
     if (!contextMenu || !isSplit) return;
     const tab = tabs.find(t => t.id === contextMenu.tabId);
@@ -242,7 +223,7 @@ export default function TitleBar() {
         {
           label: "关闭标签页",
           icon: <X size={14} />,
-          onClick: () => handleClose({ stopPropagation: () => {} } as any, tab),
+          onClick: () => handleClose({ stopPropagation: () => {} }, tab),
         },
       ];
     }
@@ -311,11 +292,6 @@ export default function TitleBar() {
         icon: <RefreshCw size={14} />,
         onClick: () => reloadTabFromDisk(contextMenu.tabId),
       },
-      {
-        label: "关闭标签页",
-        icon: <X size={14} />,
-        onClick: () => handleClose({ stopPropagation: () => {} } as any, tab)
-      },
       { separator: true, label: "", onClick: () => {} },
       {
         label: "关闭其他标签页",
@@ -334,12 +310,12 @@ export default function TitleBar() {
       },
       { separator: true, label: "", onClick: () => {} },
       {
-        label: "关闭所有标签页",
-        icon: <CopyX size={14} />,
-        onClick: handleCloseAll
+        label: "关闭标签页",
+        icon: <X size={14} />,
+        onClick: () => handleClose({ stopPropagation: () => {} }, tab)
       },
     ];
-  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleCloseAll, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, revealPathInSidebar]);
+  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, revealPathInSidebar]);
   const handleTabDoubleClick = useCallback(async () => {
     const now = new Date();
     const year = now.getFullYear();
