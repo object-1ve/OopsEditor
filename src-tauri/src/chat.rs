@@ -1150,7 +1150,7 @@ mod tests {
         let first = insert_session(&conn, "甲").unwrap();
         let second = insert_session(&conn, "乙").unwrap();
         let third = insert_session(&conn, "丙").unwrap();
-        insert_message(&conn, text_message(first.id, "别的 A")).unwrap();
+        insert_message(&conn, text_message(first.id, "关键词 A")).unwrap();
         let old = insert_message(&conn, text_message(second.id, "关键词 B"))
             .unwrap()
             .unwrap();
@@ -1161,9 +1161,11 @@ mod tests {
         assert_eq!(scoped.matches.len(), 2, "matches: {:?}", scoped.matches);
         assert!(scoped.matches.iter().all(|m| m.session_id == second.id));
 
-        // 多选会话：甲、乙都在范围内，丙被排除
+        // 多选会话：甲、乙都在范围内（各取自己的命中），丙被排除
         let multi = search_messages(&conn, "关键词", &[first.id, second.id], None, None).unwrap();
         assert_eq!(multi.matches.len(), 3, "matches: {:?}", multi.matches);
+        assert!(multi.matches.iter().any(|m| m.session_id == first.id), "matches: {:?}", multi.matches);
+        assert!(multi.matches.iter().any(|m| m.session_id == second.id), "matches: {:?}", multi.matches);
         assert!(multi.matches.iter().all(|m| m.session_id != third.id));
 
         // B 的创建时间挪到很久以前：按时间下界应把它过滤掉
@@ -1174,7 +1176,7 @@ mod tests {
         .unwrap();
         let cut = parse_ms("2002-01-01T00:00:00+08:00").unwrap();
         let recent = search_messages(&conn, "关键词", &[], Some(cut), None).unwrap();
-        assert_eq!(recent.matches.len(), 2, "matches: {:?}", recent.matches);
+        assert_eq!(recent.matches.len(), 3, "matches: {:?}", recent.matches);
         assert!(recent.matches.iter().all(|m| m.content != "关键词 B"));
 
         let past = search_messages(&conn, "关键词", &[], None, Some(cut)).unwrap();
