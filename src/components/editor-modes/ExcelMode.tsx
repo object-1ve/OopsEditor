@@ -22,12 +22,15 @@ import { copyTextToClipboard } from "@/utils/clipboard";
 import { useEditorStore } from "@/store/editor";
 import type { EditorModeContext, EditorModeAdapter } from "./types";
 
-const ROW_HEIGHT = 26;
+const DEFAULT_ROW_HEIGHT = 26;
+const MIN_ROW_HEIGHT = 20;
 const COLUMN_HEADER_HEIGHT = 26;
 const ROW_HEADER_WIDTH = 54;
 /** 未设置列宽时的默认像素宽 */
 const DEFAULT_COLUMN_WIDTH = 96;
-const MIN_COLUMN_WIDTH = 64;
+const MIN_COLUMN_WIDTH = 40;
+/** 行头/列头上用于拖动调整尺寸的手柄厚度 */
+const RESIZE_HANDLE_SIZE = 5;
 /** 渲染上限：超大表格只展示前若干行/列，避免一次性建出巨量 DOM */
 const MAX_RENDER_ROWS = 5000;
 const MAX_RENDER_COLUMNS = 512;
@@ -203,15 +206,55 @@ function buildMergeIndex(sheet: Worksheet): MergeIndex {
   return { spans, owners };
 }
 
+/** 列宽以字符为单位，与读取侧换算保持同一口径 */
+function columnWidthToPixels(chars: number): number {
+  return Math.max(MIN_COLUMN_WIDTH, Math.round(chars * 7.2) + 8);
+}
+
+function pixelsToColumnWidth(pixels: number): number {
+  return Math.max(1, (pixels - 8) / 7.2);
+}
+
+/** 行高在文件里以磅为单位（96dpi 下 1pt = 4/3 px） */
+function pointsToPixels(points: number): number {
+  return (points * 4) / 3;
+}
+
+function pixelsToPoints(pixels: number): number {
+  return Math.max(1, pixels * 0.75);
+}
+
+/** 已显式设置行高的行；`_rows` 是稀疏数组，按下标读不会像 getRow 那样创建空行 */
+function readRowHeights(sheet: Worksheet): Record<number, number> {
+  const rows = (sheet as unknown as { _rows?: ({ height?: number } | undefined)[] })._rows ?? [];
+  const heights: Record<number, number> = {};
+  rows.forEach((row, index) => {
+    const points = row?.height;
+    if (typeof points === "number" && points > 0) {
+      heights[index + 1] = Math.max(MIN_ROW_HEIGHT, Math.round(pointsToPixels(points)));
+    }
+  });
+  return heights;
+}
+
 /** 按工作表列宽定义换算像素宽；`sheet.columns` 是只读视图，不会写回文件 */
-function columnWidthsPx(sheet: Worksheet, columnCount: number): number[] {
+function columnWidthsPx(
+  sheet: Worksheet,
+  columnCount: number,
+  overrides: Record<number, number>,
+): number[] {
   const widths = new Array<number>(columnCount).fill(DEFAULT_COLUMN_WIDTH);
   for (const column of sheet.columns) {
     const index = column.number;
     if (!index || index > columnCount) continue;
     if (typeof column.width === "number" && column.width > 0) {
-      widths[index - 1] = Math.max(MIN_COLUMN_WIDTH, Math.round(column.width * 7.2) + 8);
+      widths[index - 1] = columnWidthToPixels(column.width);
     }
+  }
+  // 拖动调整过的列宽优先
+  for (const [key, pixels] of Object.entries(overrides)) {
+    const index = Number(key);
+    if (index >= 1 && index <= columnCount) widths[index - 1] = pixels;
   }
   return widths;
 }
@@ -416,12 +459,26 @@ function ExcelModeView({
   // 插入/删除图片后靠它重新收集当前工作表的图片
   const [imagesVersion, setImagesVersion] = useState(0);
   const [insertingImage, setInsertingImage] = useState(false);
+  // 拖动调整的行高/列宽（像素），拖动过程中即时生效，松开后写入工作簿
+  const [columnOverrides, setColumnOverrides] = useState<Record<number, number>>({});
+  const [rowOverrides, setRowOverrides] = useState<Record<number, number>>({});
+  const [resizing, setResizing] = useState<{ axis: "column" | "row"; index: number } | null>(null);
+  const [resizeSize, setResizeSize] = useState(0);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<{ entries: HistoryEntry[]; index: number }>({ entries: [], index: -1 });
   const snapshotsRef = useRef<Map<number, SheetSnapshot>>(new Map());
+  /** 文件里已定义的行高基线；只按 doc/sheet 变化重读，避免每次布局都遍历行 */
+  const storedRowHeightsRef = useRef<Record<number, number>>({});
+  const resizeRef = useRef<{
+    axis: "column" | "row";
+    index: number;
+    startPos: number;
+    startSize: number;
+    size: number;
+  } | null>(null);
 
   const revision = activeTab.revision ?? 0;
   const isReadOnly = Boolean(activeTab.isReadOnly);
@@ -475,6 +532,15 @@ function ExcelModeView({
     };
   }, [doc, sheetIndex, imagesVersion]);
 
+  // 换文件/换工作表：重读行高基线，并清掉上一张表的拖动结果
+  useEffect(() => {
+    const sheet = doc?.workbook.worksheets[sheetIndex];
+    storedRowHeightsRef.current = sheet ? readRowHeights(sheet) : {};
+    setColumnOverrides({});
+    setRowOverrides({});
+    setLayoutVersion((version) => version + 1);
+  }, [doc, sheetIndex]);
+
   useEffect(() => {
     const node = gridRef.current;
     if (!node) return;
@@ -512,12 +578,30 @@ function ExcelModeView({
       Math.max(snapshot.columnCount + 2, MIN_RENDER_COLUMNS),
       MAX_RENDER_COLUMNS,
     );
-    const widths = columnWidthsPx(sheet, columnCount);
-    const offsets: number[] = [];
-    let cursor = 0;
+
+    const widths = columnWidthsPx(sheet, columnCount, columnOverrides);
+    const columnOffsets: number[] = [];
+    let columnCursor = 0;
     for (let index = 0; index < columnCount; index += 1) {
-      offsets.push(cursor);
-      cursor += widths[index];
+      columnOffsets.push(columnCursor);
+      columnCursor += widths[index];
+    }
+
+    // 行高：文件里的定义 → 拖动调整值 → 默认值
+    const heights = new Array<number>(rowCount).fill(DEFAULT_ROW_HEIGHT);
+    for (const [key, pixels] of Object.entries(storedRowHeightsRef.current)) {
+      const index = Number(key);
+      if (index >= 1 && index <= rowCount) heights[index - 1] = pixels;
+    }
+    for (const [key, pixels] of Object.entries(rowOverrides)) {
+      const index = Number(key);
+      if (index >= 1 && index <= rowCount) heights[index - 1] = pixels;
+    }
+    const rowOffsets: number[] = [];
+    let rowCursor = 0;
+    for (let index = 0; index < rowCount; index += 1) {
+      rowOffsets.push(rowCursor);
+      rowCursor += heights[index];
     }
 
     return {
@@ -526,18 +610,36 @@ function ExcelModeView({
       rowCount,
       columnCount,
       widths,
-      offsets,
-      totalWidth: cursor,
-      totalHeight: rowCount * ROW_HEIGHT,
+      offsets: columnOffsets,
+      heights,
+      rowOffsets,
+      totalWidth: columnCursor,
+      totalHeight: rowCursor,
     };
-  }, [doc, sheetIndex, layoutVersion]);
+  }, [doc, sheetIndex, layoutVersion, columnOverrides, rowOverrides]);
 
   const visibleRows = useMemo(() => {
     if (!layout) return [];
-    const first = Math.max(1, Math.floor(scroll.top / ROW_HEIGHT));
-    const last = Math.min(layout.rowCount, Math.ceil((scroll.top + viewport.height) / ROW_HEIGHT) + 1);
+    const { rowCount, rowOffsets } = layout;
+
+    // 行高不等，二分找到首个可视行
+    let low = 0;
+    let high = rowCount - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (rowOffsets[middle] <= scroll.top) {
+        low = middle;
+      } else {
+        high = middle - 1;
+      }
+    }
+
+    const limit = scroll.top + viewport.height;
     const rows: number[] = [];
-    for (let row = first; row <= last; row += 1) rows.push(row);
+    for (let index = low; index < rowCount; index += 1) {
+      if (rowOffsets[index] > limit) break;
+      rows.push(index + 1);
+    }
     return rows;
   }, [layout, scroll.top, viewport.height]);
 
@@ -558,8 +660,8 @@ function ExcelModeView({
     const node = gridRef.current;
     if (!node || !layout) return;
 
-    const top = (selection.row - 1) * ROW_HEIGHT;
-    const bottom = top + ROW_HEIGHT;
+    const top = layout.rowOffsets[selection.row - 1] ?? 0;
+    const bottom = top + (layout.heights[selection.row - 1] ?? DEFAULT_ROW_HEIGHT);
     if (top < node.scrollTop) {
       node.scrollTop = top;
     } else if (bottom > node.scrollTop + node.clientHeight) {
@@ -867,7 +969,7 @@ function ExcelModeView({
       if (!layout) return null;
 
       const left = layout.offsets[image.startColumn - 1] ?? 0;
-      const top = (image.startRow - 1) * ROW_HEIGHT;
+      const top = layout.rowOffsets[image.startRow - 1] ?? 0;
 
       let width = image.width;
       let height = image.height;
@@ -876,10 +978,13 @@ function ExcelModeView({
         for (let column = image.startColumn; column <= image.endColumn; column += 1) {
           width += layout.widths[column - 1] ?? DEFAULT_COLUMN_WIDTH;
         }
-        height = (image.endRow - image.startRow + 1) * ROW_HEIGHT;
+        height = 0;
+        for (let row = image.startRow; row <= image.endRow; row += 1) {
+          height += layout.heights[row - 1] ?? DEFAULT_ROW_HEIGHT;
+        }
       }
       if (!width) width = layout.widths[image.startColumn - 1] ?? DEFAULT_COLUMN_WIDTH;
-      if (!height) height = ROW_HEIGHT;
+      if (!height) height = layout.heights[image.startRow - 1] ?? DEFAULT_ROW_HEIGHT;
 
       return {
         left,
@@ -917,8 +1022,9 @@ function ExcelModeView({
       const bytes = await readFile(picked);
       const size = await measureImageBytes(bytes);
       const cellWidth = layout.widths[selection.column - 1] ?? DEFAULT_COLUMN_WIDTH;
+      const cellHeight = layout.heights[selection.row - 1] ?? DEFAULT_ROW_HEIGHT;
       const scale = size.width && size.height
-        ? Math.min(cellWidth / size.width, ROW_HEIGHT / size.height, 1)
+        ? Math.min(cellWidth / size.width, cellHeight / size.height, 1)
         : 1;
 
       // exceljs 声明的 Buffer 只是 ArrayBuffer 的类型别名，这里传 Uint8Array，jszip 同样接受
@@ -930,7 +1036,7 @@ function ExcelModeView({
         tl: { col: selection.column - 1, row: selection.row - 1 },
         ext: {
           width: Math.max(1, Math.round((size.width || cellWidth) * scale)),
-          height: Math.max(1, Math.round((size.height || ROW_HEIGHT) * scale)),
+          height: Math.max(1, Math.round((size.height || cellHeight) * scale)),
         },
       });
 
@@ -982,6 +1088,89 @@ function ExcelModeView({
     },
     [activeTab.path, openImagePreview],
   );
+
+  /** 开始拖动列宽/行高：过程只改本地覆盖值，松手才写回工作簿 */
+  const beginResize = useCallback(
+    (axis: "column" | "row", index: number, event: React.MouseEvent) => {
+      if (!layout) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startSize = axis === "column"
+        ? layout.widths[index - 1] ?? DEFAULT_COLUMN_WIDTH
+        : layout.heights[index - 1] ?? DEFAULT_ROW_HEIGHT;
+
+      resizeRef.current = {
+        axis,
+        index,
+        startPos: axis === "column" ? event.clientX : event.clientY,
+        startSize,
+        size: startSize,
+      };
+      setResizing({ axis, index });
+      setResizeSize(startSize);
+    },
+    [layout],
+  );
+
+  useEffect(() => {
+    if (!resizing) return;
+
+    const handleMove = (event: MouseEvent) => {
+      const state = resizeRef.current;
+      if (!state) return;
+
+      const delta = (state.axis === "column" ? event.clientX : event.clientY) - state.startPos;
+      const minimum = state.axis === "column" ? MIN_COLUMN_WIDTH : MIN_ROW_HEIGHT;
+      const size = Math.max(minimum, Math.round(state.startSize + delta));
+      state.size = size;
+
+      setResizeSize(size);
+      if (state.axis === "column") {
+        setColumnOverrides((previous) => ({ ...previous, [state.index]: size }));
+      } else {
+        setRowOverrides((previous) => ({ ...previous, [state.index]: size }));
+      }
+    };
+
+    const handleUp = () => {
+      const state = resizeRef.current;
+      resizeRef.current = null;
+      setResizing(null);
+
+      const sheet = doc?.workbook.worksheets[sheetIndex];
+      if (!state || !sheet) return;
+      // 只是点了一下手柄、尺寸没变就不写回，避免无谓置脏
+      if (state.size === state.startSize) return;
+
+      if (state.axis === "column") {
+        sheet.getColumn(state.index).width = pixelsToColumnWidth(state.size);
+      } else {
+        sheet.getRow(state.index).height = pixelsToPoints(state.size);
+        // 同步基线，避免下一次布局又回退到文件里的旧值
+        storedRowHeightsRef.current[state.index] = state.size;
+      }
+      markTabDirty(activeTab.id);
+    };
+
+    // 拖动期间锁住光标与选区，拖到网格外也保持手感
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = resizing.axis === "column" ? "col-resize" : "row-resize";
+    document.body.style.userSelect = "none";
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    // 鼠标在窗口外松开时 mouseup 收不到，用 blur 兜底避免卡在拖拽态
+    window.addEventListener("blur", handleUp);
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      window.removeEventListener("blur", handleUp);
+    };
+  }, [activeTab.id, doc, markTabDirty, resizing, sheetIndex]);
 
   const handleSave = useCallback(() => {
     setSaving(true);
@@ -1128,19 +1317,30 @@ function ExcelModeView({
               {visibleRows.map((row) => (
                 <div
                   key={row}
-                  style={{ top: (row - 1) * ROW_HEIGHT, height: ROW_HEIGHT }}
-                  className={`absolute inset-x-0 flex items-center justify-center border-b border-border/60 text-[10px] ${
+                  style={{ top: layout.rowOffsets[row - 1], height: layout.heights[row - 1] }}
+                  className={`group absolute inset-x-0 flex items-center justify-center border-b border-border/60 text-[10px] ${
                     selection.row === row ? "bg-accent/10 font-medium text-accent" : "text-text-muted"
                   }`}
                 >
                   {row}
+                  <div
+                    onMouseDown={(event) => beginResize("row", row, event)}
+                    title="拖动调整行高"
+                    style={{ height: RESIZE_HANDLE_SIZE }}
+                    className="absolute inset-x-0 bottom-0 cursor-row-resize hover:bg-accent/50"
+                  />
                 </div>
               ))}
             </div>
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="relative flex min-w-0 flex-1 flex-col">
+          {resizing && (
+            <div className="pointer-events-none absolute left-3 top-1.5 z-30 rounded border border-border bg-surface/95 px-2 py-0.5 font-mono text-[11px] text-text-primary shadow-sm">
+              {resizing.axis === "column" ? `列宽 ${resizeSize}px` : `行高 ${resizeSize}px`}
+            </div>
+          )}
           <div
             style={{ height: COLUMN_HEADER_HEIGHT }}
             className="relative shrink-0 overflow-hidden border-b border-border bg-surface/40"
@@ -1153,13 +1353,19 @@ function ExcelModeView({
                 <div
                   key={index}
                   style={{ width: layout.widths[index] }}
-                  className={`flex h-full items-center justify-center border-r border-border/60 text-[10px] ${
+                  className={`relative flex h-full items-center justify-center border-r border-border/60 text-[10px] ${
                     selection.column === index + 1
                       ? "bg-accent/10 font-medium text-accent"
                       : "text-text-muted"
                   }`}
                 >
                   {columnLetter(index + 1)}
+                  <div
+                    onMouseDown={(event) => beginResize("column", index + 1, event)}
+                    title="拖动调整列宽"
+                    style={{ width: RESIZE_HANDLE_SIZE }}
+                    className="absolute inset-y-0 right-0 cursor-col-resize hover:bg-accent/50"
+                  />
                 </div>
               ))}
             </div>
@@ -1188,19 +1394,22 @@ function ExcelModeView({
                   const isSelected = selection.row === row && selection.column === column;
 
                   let width = layout.widths[column - 1];
-                  let height = ROW_HEIGHT;
+                  let height = layout.heights[row - 1];
                   if (span) {
                     for (let extra = 1; extra < span.columnSpan; extra += 1) {
                       width += layout.widths[column - 1 + extra] ?? 0;
                     }
-                    height = span.rowSpan * ROW_HEIGHT;
+                    height = 0;
+                    for (let extra = 0; extra < span.rowSpan; extra += 1) {
+                      height += layout.heights[row - 1 + extra] ?? DEFAULT_ROW_HEIGHT;
+                    }
                   }
 
                   return (
                     <div
                       key={key}
                       style={{
-                        top: (row - 1) * ROW_HEIGHT,
+                        top: layout.rowOffsets[row - 1],
                         left: layout.offsets[column - 1],
                         width,
                         height,
@@ -1262,10 +1471,10 @@ function ExcelModeView({
                   onKeyDown={handleEditKeyDown}
                   onBlur={(event) => commitEdit(event.currentTarget.value, 0, 0)}
                   style={{
-                    top: (editing.row - 1) * ROW_HEIGHT,
+                    top: layout.rowOffsets[editing.row - 1],
                     left: layout.offsets[editing.column - 1],
                     width: layout.widths[editing.column - 1],
-                    height: ROW_HEIGHT,
+                    height: layout.heights[editing.row - 1],
                   }}
                   className="absolute z-20 border border-accent bg-primary px-1.5 text-xs text-text-primary outline-none"
                 />
