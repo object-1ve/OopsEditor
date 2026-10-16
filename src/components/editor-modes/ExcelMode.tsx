@@ -780,6 +780,7 @@ function ExcelModeView({
   const [palette, setPalette] = useState<{ x: number; y: number; target: "fill" | "font" } | null>(null);
   const [addressInput, setAddressInput] = useState<string | null>(null);
   const [findPanel, setFindPanel] = useState(false);
+  const [cellMenu, setCellMenu] = useState<{ x: number; y: number } | null>(null);
   const [findText, setFindText] = useState("");
   const [replaceText, setReplaceText] = useState("");
   const [fillPreview, setFillPreview] = useState<{
@@ -2113,6 +2114,55 @@ function ExcelModeView({
     [activeTab.id, doc, layout, markTabDirty, selection, showNotification],
   );
 
+  /** 把 TSV 文本从活动单元格展开写入（粘贴事件与右键“粘贴”共用） */
+  const applyPastedText = useCallback(
+    (text: string) => {
+      if (!doc || !layout) return;
+
+      const matrix = text
+        .replace(/\r\n|\r/g, "\n")
+        .replace(/\n$/, "")
+        .split("\n")
+        .map((line) => line.split("\t"));
+
+      const changes: CellChange[] = [];
+      matrix.forEach((cells, rowOffset) => {
+        cells.forEach((raw, columnOffset) => {
+          const row = selection.row + rowOffset;
+          const column = selection.column + columnOffset;
+          if (row > layout.rowCount || column > layout.columnCount) return;
+
+          const cell = layout.sheet.getCell(row, column);
+          const before = cell.value;
+          const after = parseCellInput(raw);
+          if (isSameCellValue(before, after)) return;
+          cell.value = after;
+          changes.push({ row, column, before, after });
+        });
+      });
+
+      if (changes.length === 0) return;
+      applyChanges(changes);
+      showNotification(`已粘贴 ${matrix.length} 行 × ${matrix[0].length} 列`, "success");
+    },
+    [applyChanges, doc, layout, selection, showNotification],
+  );
+
+  /** 右键菜单里的粘贴：从系统剪贴板取文本再按 TSV 展开 */
+  const pasteFromClipboard = useCallback(async () => {
+    if (isReadOnly) return;
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        showNotification("剪贴板里没有文本内容", "info");
+        return;
+      }
+      applyPastedText(text);
+    } catch (err) {
+      showNotification(`读取剪贴板失败：${String(err)}`, "error");
+    }
+  }, [applyPastedText, isReadOnly, showNotification]);
+
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
       if (isReadOnly || !doc || !layout) return;
@@ -2147,42 +2197,16 @@ function ExcelModeView({
       const text = event.clipboardData.getData("text/plain");
       if (!text) return;
       event.preventDefault();
-
-      const matrix = text
-        .replace(/\r\n|\r/g, "\n")
-        .replace(/\n$/, "")
-        .split("\n")
-        .map((line) => line.split("\t"));
-
-      const changes: CellChange[] = [];
-      matrix.forEach((cells, rowOffset) => {
-        cells.forEach((raw, columnOffset) => {
-          const row = selection.row + rowOffset;
-          const column = selection.column + columnOffset;
-          if (row > layout.rowCount || column > layout.columnCount) return;
-
-          const cell = layout.sheet.getCell(row, column);
-          const before = cell.value;
-          const after = parseCellInput(raw);
-          if (isSameCellValue(before, after)) return;
-          cell.value = after;
-          changes.push({ row, column, before, after });
-        });
-      });
-
-      if (changes.length === 0) return;
-      applyChanges(changes);
-      showNotification(`已粘贴 ${matrix.length} 行 × ${matrix[0].length} 列`, "success");
+      applyPastedText(text);
     },
     [
-      applyChanges,
+      applyPastedText,
       commitEdit,
       doc,
       editing,
       insertImageAtSelection,
       isReadOnly,
       layout,
-      selection,
       showNotification,
     ],
   );
@@ -2497,6 +2521,56 @@ function ExcelModeView({
     [activeTab.id, doc, markTabDirty],
   );
 
+  /** 单元格/选区的右键菜单 */
+  const cellMenuItems = useMemo(() => {
+    const bounds = selectionBounds(selection);
+    const rows = bounds.bottom - bounds.top + 1;
+    const columns = bounds.right - bounds.left + 1;
+    const separator = { label: "", separator: true, onClick: () => {} };
+    const merged = layout?.snapshot.merges.spans.has(`${bounds.top}:${bounds.left}`) ?? false;
+
+    return [
+      { label: "剪切", onClick: cutSelection },
+      { label: "复制", onClick: copySelection },
+      { label: "粘贴", onClick: () => void pasteFromClipboard() },
+      { label: "清空内容", onClick: clearSelection },
+      separator,
+      { label: `在上方插入 ${rows} 行`, onClick: () => void insertRows(bounds.top, rows) },
+      { label: `在左侧插入 ${columns} 列`, onClick: () => void insertColumns(bounds.left, columns) },
+      { label: `删除所选 ${rows} 行`, danger: true, onClick: () => void deleteRows(bounds.top, rows) },
+      { label: `删除所选 ${columns} 列`, danger: true, onClick: () => void deleteColumns(bounds.left, columns) },
+      separator,
+      { label: merged ? "取消合并" : "合并单元格", onClick: toggleMerge },
+      { label: "插入图片…", onClick: () => void handleInsertImage() },
+      ...(imagesInSelection.length > 0
+        ? [
+            {
+              label: `删除图片（${imagesInSelection.length}）`,
+              danger: true,
+              onClick: handleDeleteImages,
+            },
+          ]
+        : []),
+      { label: "自适应列宽", onClick: () => autoFitColumn(bounds.left) },
+    ];
+  }, [
+    autoFitColumn,
+    clearSelection,
+    copySelection,
+    cutSelection,
+    deleteColumns,
+    deleteRows,
+    handleDeleteImages,
+    handleInsertImage,
+    imagesInSelection,
+    insertColumns,
+    insertRows,
+    layout,
+    pasteFromClipboard,
+    selection,
+    toggleMerge,
+  ]);
+
   /** 工作表标签的右键菜单 */
   const sheetMenuItems = useMemo(() => {
     if (!sheetMenu) return [];
@@ -2743,6 +2817,16 @@ function ExcelModeView({
                 <div
                   key={row}
                   style={{ top: layout.rowOffsets[row - 1], height: layout.heights[row - 1] }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setSelection({
+                      row,
+                      column: 1,
+                      endRow: row,
+                      endColumn: layout.columnCount,
+                    });
+                    setCellMenu({ x: event.clientX, y: event.clientY });
+                  }}
                   onMouseDown={(event) => {
                     event.preventDefault();
                     rootRef.current?.focus();
@@ -2800,6 +2884,16 @@ function ExcelModeView({
                 <div
                   key={index}
                   style={{ width: layout.widths[index] }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setSelection({
+                      row: 1,
+                      column: index + 1,
+                      endRow: layout.rowCount,
+                      endColumn: index + 1,
+                    });
+                    setCellMenu({ x: event.clientX, y: event.clientY });
+                  }}
                   onMouseDown={(event) => {
                     event.preventDefault();
                     rootRef.current?.focus();
@@ -2920,6 +3014,15 @@ function ExcelModeView({
                         }
                       }}
                       onDoubleClick={() => startEdit(row, column)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        rootRef.current?.focus();
+                        // Excel 习惯：右键落在选区外时先选中该格
+                        if (!isCellInSelection(selection, row, column)) {
+                          selectCell(row, column);
+                        }
+                        setCellMenu({ x: event.clientX, y: event.clientY });
+                      }}
                       title={text}
                       className={`absolute overflow-hidden whitespace-nowrap border-b border-r border-border/50 px-1.5 text-xs leading-[25px] text-text-primary ${
                         snapshotCell?.numeric ? "text-right" : "text-left"
@@ -3002,6 +3105,12 @@ function ExcelModeView({
                       event.stopPropagation();
                       rootRef.current?.focus();
                       selectCell(image.startRow, image.startColumn);
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      selectCell(image.startRow, image.startColumn);
+                      setCellMenu({ x: event.clientX, y: event.clientY });
                     }}
                     onClick={() => handlePreviewImage(image)}
                     title={`${image.name} · 点击预览`}
@@ -3124,6 +3233,15 @@ function ExcelModeView({
           y={rowColumnMenu.y}
           items={rowColumnMenuItems}
           onClose={() => setRowColumnMenu(null)}
+        />
+      )}
+
+      {cellMenu && (
+        <ContextMenu
+          x={cellMenu.x}
+          y={cellMenu.y}
+          items={cellMenuItems}
+          onClose={() => setCellMenu(null)}
         />
       )}
 
