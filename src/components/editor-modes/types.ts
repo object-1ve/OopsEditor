@@ -27,6 +27,8 @@ export interface EditorModeContext {
   markdownOutlineTarget: MarkdownOutlineTarget | null;
   clearMarkdownOutlineTarget: () => void;
   showNotification: (message: string, type?: "info" | "error" | "success") => void;
+  /** 统一的保存入口（写盘 + 标记为已保存），供不渲染 Monaco 的模式自行绑定快捷键 */
+  saveActiveTab: (id: string) => Promise<void>;
 }
 
 export interface EditorModeAdapter {

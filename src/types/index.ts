@@ -48,6 +48,23 @@ const SQLITE_EXTENSIONS = new Set([
   "db", "sqlite"
 ]);
 
+// Excel 工作簿（Open XML 格式）：可读写单元格，由 ExcelMode 负责解析与保存。
+// 旧版二进制 .xls 不在其中，仍按普通文本打开。
+// 用 `=== true` 判断，避免 `constructor` 之类的原型键被误判为命中。
+const EXCEL_EXTENSIONS: Record<string, true> = {
+  xlsx: true,
+  xlsm: true,
+  xltx: true,
+  xltm: true,
+  xlam: true,
+};
+
+// 旧版/二进制 Excel：exceljs 只支持 Open XML 工作簿，这类文件交给系统程序打开
+const LEGACY_EXCEL_EXTENSIONS: Record<string, true> = {
+  xls: true,
+  xlsb: true,
+};
+
 // 常见的后缀名到 Monaco 语言 ID 的映射，保证主流语言高亮正常
 const EXTENSION_TO_MONACO: Record<string, string> = {
   js: "javascript",
@@ -85,11 +102,25 @@ export function detectLanguage(filename: string): LanguageDetectionResult {
   if (ext === "pdf") return { language: "pdf" };
   if (WORD_EXTENSIONS.has(ext)) return { language: "word" };
   if (SQLITE_EXTENSIONS.has(ext)) return { language: "sqlite" };
+  if (EXCEL_EXTENSIONS[ext] === true) return { language: "excel" };
+  if (LEGACY_EXCEL_EXTENSIONS[ext] === true) {
+    return {
+      language: "unsupported",
+      unsupportedReason: `文件 "${filename}" 是旧版 Excel 格式 (.${ext})，编辑器只支持 .xlsx / .xlsm，请另存为新格式后再编辑。`
+    };
+  }
 
   // 3. 其他所有文件：优先匹配常见语言 ID，否则直接返回后缀名（Monaco 会尝试匹配或回退到纯文本）
   return { language: EXTENSION_TO_MONACO[ext] ?? ext };
 }
 
 export function isPreviewOnlyLanguage(language: string): boolean {
-  return language === "image" || language === "pdf" || language === "word" || language === "sqlite";
+  return (
+    language === "image" ||
+    language === "pdf" ||
+    language === "word" ||
+    language === "sqlite" ||
+    // Excel 的二进制内容由 ExcelMode 自行读盘解析，不预读成文本
+    language === "excel"
+  );
 }

@@ -11,6 +11,7 @@ import { imageMode } from "./ImageMode";
 import { pdfMode } from "./PdfMode";
 import { wordMode } from "./WordMode";
 import { sqliteMode } from "./SqliteMode";
+import { excelMode } from "./ExcelMode";
 import { markdownPreviewMode } from "./MarkdownMode";
 import { base64Mode } from "./Base64Mode";
 import { textMode } from "./TextMode";
@@ -25,6 +26,7 @@ export const editorModes: EditorModeAdapter[] = [
   pdfMode,
   wordMode,
   sqliteMode,
+  excelMode,
   markdownPreviewMode,
   base64Mode,
   textMode,

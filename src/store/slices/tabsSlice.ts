@@ -19,6 +19,19 @@ import {
 } from "@/utils/workspaceSession";
 import { scheduleAutoSave, clearAutoSaveTimer, clearAutoSaveTimers } from "@/store/services/autoSave";
 import { enforceTabLimit, formatAutoClosedTabsMessage } from "@/store/services/tabEnforcer";
+import { evictExcelDoc } from "@/services/excelDocs";
+
+/**
+ * 编辑后的统一收尾：开启“编辑时自动保存”时安排一次延迟落盘。
+ * 文本标签与 Excel 这类自行管理内容的标签共用同一节奏。
+ */
+function scheduleAutosaveAfterEdit(get: () => EditorState, id: string) {
+  const state = get();
+  if (!state.autoSaveOnEdit) return;
+  const tab = state.tabs.find((t) => t.id === id);
+  if (!tab || !tab.path || tab.isReadOnly || tab.isPreviewMode) return;
+  scheduleAutoSave(id, tab, (cleanId) => get().markClean(cleanId));
+}
 
 export const createTabsSlice: StateCreator<
   EditorState,
@@ -38,6 +51,7 @@ export const createTabsSlice: StateCreator<
     | "closeTabsToRight"
     | "setActiveTab"
     | "updateContent"
+    | "markTabDirty"
     | "markClean"
     | "reloadTab"
     | "reloadTabFromDisk"
@@ -138,6 +152,7 @@ export const createTabsSlice: StateCreator<
       }
       clearScrollMemory(id);
       clearAutoSaveTimer(id);
+      evictExcelDoc(id);
       persistTabsState(tabs, activeTabId);
       return { tabs, openFiles, activeTabId };
     }),
@@ -152,6 +167,7 @@ export const createTabsSlice: StateCreator<
       }
       ids.forEach((id) => clearScrollMemory(id));
       clearAutoSaveTimers(ids);
+      ids.forEach((id) => evictExcelDoc(id));
       persistTabsState(tabs, activeTabId);
       return { tabs, openFiles, activeTabId };
     }),
@@ -203,13 +219,25 @@ export const createTabsSlice: StateCreator<
       return { tabs: newTabs, secondaryTabs: newSecondaryTabs };
     });
 
-    const state = get();
-    if (!state.autoSaveOnEdit) return;
-    const tab = state.tabs.find((t) => t.id === id);
-    if (!tab || !tab.path || tab.isReadOnly) return;
-    if (tab.isPreviewMode) return;
+    scheduleAutosaveAfterEdit(get, id);
+  },
 
-    scheduleAutoSave(id, tab, (cleanId) => get().markClean(cleanId));
+  markTabDirty: (id: string) => {
+    set((state) => {
+      const markDirty = (t: FileTab) => (t.id === id ? { ...t, isDirty: true } : t);
+      const newTabs = state.tabs.map(markDirty);
+      const newSecondaryTabs = state.isSplit
+        ? state.secondaryTabs.map(markDirty)
+        : state.secondaryTabs;
+      const updatedTab = newTabs.find((tab) => tab.id === id);
+      const tabIndex = newTabs.findIndex((tab) => tab.id === id);
+      if (updatedTab && tabIndex !== -1) {
+        void persistSingleTabState(updatedTab, tabIndex);
+      }
+      return { tabs: newTabs, secondaryTabs: newSecondaryTabs };
+    });
+
+    scheduleAutosaveAfterEdit(get, id);
   },
 
   markClean: (id: string) => {
@@ -494,6 +522,7 @@ export const createTabsSlice: StateCreator<
         secondaryActiveTabId = tabs[idx]?.id ?? tabs[idx - 1]?.id ?? null;
       }
       clearScrollMemory(id);
+      evictExcelDoc(id);
       return { secondaryTabs: tabs, secondaryActiveTabId };
     });
   },
@@ -510,6 +539,7 @@ export const createTabsSlice: StateCreator<
         secondaryActiveTabId = tabs[tabs.length - 1]?.id ?? null;
       }
       ids.forEach((id) => clearScrollMemory(id));
+      ids.forEach((id) => evictExcelDoc(id));
       return { secondaryTabs: tabs, secondaryActiveTabId };
     });
   },

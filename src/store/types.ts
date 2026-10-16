@@ -125,6 +125,8 @@ export interface EditorState {
   closeTabsToRight: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateContent: (id: string, content: string) => void;
+  /** 标记标签已修改：供 Excel 等自行管理内容（不经 tab.content）的模式使用 */
+  markTabDirty: (id: string) => void;
   markClean: (id: string) => void;
   replaceTabFileLocation: (id: string, nextPath: string, nextName?: string) => void;
   addRootPath: (path: string) => void;

@@ -835,6 +835,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
         markdownOutlineTarget,
         clearMarkdownOutlineTarget,
         showNotification,
+        saveActiveTab: persistTab,
       })}
       {editorContextMenu && (
         <ContextMenu

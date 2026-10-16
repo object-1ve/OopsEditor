@@ -1,6 +1,7 @@
 ﻿import { invoke } from "@tauri-apps/api/core";
 import type { FileTab } from "@/types";
 import { hexViewToBase64 } from "@/utils/hexView";
+import { saveExcelDoc } from "@/services/excelDocs";
 
 type SaveTargetPath = string | undefined;
 
@@ -30,9 +31,17 @@ async function copyImageTab(tab: FileTab, targetPath?: SaveTargetPath) {
   });
 }
 
+/**
+ * 统一保存入口：按标签类型分派到文本 / 二进制 / 图片 / Excel 的写入通道。
+ */
 export async function saveTab(tab: FileTab, targetPath?: string) {
   if (tab.language === "image") {
     await copyImageTab(tab, targetPath);
+    return;
+  }
+
+  if (tab.language === "excel") {
+    await saveExcelDoc(tab.id, targetPath);
     return;
   }
 
