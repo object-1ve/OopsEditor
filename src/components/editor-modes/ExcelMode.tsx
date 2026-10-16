@@ -49,6 +49,8 @@ const DEFAULT_COLUMN_WIDTH = 96;
 const MIN_COLUMN_WIDTH = 40;
 /** 行头/列头上用于拖动调整尺寸的手柄厚度 */
 const RESIZE_HANDLE_SIZE = 5;
+/** 单次可设置格式的最大格数（含空白格，避免整列/整表操作爆炸） */
+const MAX_STYLE_CELLS = 5000;
 /** 渲染上限：超大表格只展示前若干行/列，避免一次性建出巨量 DOM */
 const MAX_RENDER_ROWS = 5000;
 const MAX_RENDER_COLUMNS = 512;
@@ -59,10 +61,14 @@ const MIN_RENDER_ROWS = 20;
 const MIN_RENDER_COLUMNS = 10;
 const HISTORY_LIMIT = 200;
 
-/** 单元格展示信息（表格渲染与右对齐判断都用它） */
+/** 单元格展示信息（表格渲染与对齐判断都用它） */
 interface CellSnapshot {
   text: string;
   numeric: boolean;
+  /** 样式里的水平对齐；为空时按内容类型回退（数字右对齐） */
+  align: "left" | "center" | "right" | null;
+  /** 样式里的垂直对齐（exceljs 用 middle 表示居中）；为空时按居中显示 */
+  vertical: "top" | "middle" | "bottom" | null;
 }
 
 /** 合并区跨度（单位：单元格个数） */
@@ -167,22 +173,6 @@ function measureTextWidth(text: string): number {
     width += char.codePointAt(0)! > 0x2e80 ? 14 : 7.2;
   }
   return width;
-}
-
-/** 选区内的“已有内容”的格：样式类操作只作用于它们，避免为空格建出成片空行 */
-function collectPresentCells(
-  snapshot: SheetSnapshot,
-  bounds: { top: number; bottom: number; left: number; right: number },
-): { row: number; column: number }[] {
-  const cells: { row: number; column: number }[] = [];
-  for (let row = bounds.top; row <= bounds.bottom; row += 1) {
-    const rowCells = snapshot.cells.get(row);
-    if (!rowCells) continue;
-    for (let column = bounds.left; column <= bounds.right; column += 1) {
-      if (rowCells.has(column)) cells.push({ row, column });
-    }
-  }
-  return cells;
 }
 
 /** Ctrl+Shift+1~6 对应的常用数字格式（Excel 习惯） */
@@ -383,15 +373,26 @@ function formatDateCell(date: Date, numFmt?: string): string {
   return `${datePart} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-function describeCellValue(value: CellValue, numFmt: string | undefined, formatted: string): CellSnapshot {
+function describeCellValue(
+  value: CellValue,
+  numFmt: string | undefined,
+  formatted: string,
+  horizontal?: string,
+  vertical?: string,
+): CellSnapshot {
+  const align =
+    horizontal === "left" || horizontal === "center" || horizontal === "right" ? horizontal : null;
+  const verticalAlign =
+    vertical === "top" || vertical === "middle" || vertical === "bottom" ? vertical : null;
+
   if (value instanceof Date) {
-    return { text: formatDateCell(value, numFmt), numeric: true };
+    return { text: formatDateCell(value, numFmt), numeric: true, align, vertical: verticalAlign };
   }
   // exceljs 的 cell.text 对数字不套 numFmt（百分比会显示成 0.25），这里自己渲染
   if (typeof value === "number") {
-    return { text: formatNumericCell(value, numFmt), numeric: true };
+    return { text: formatNumericCell(value, numFmt), numeric: true, align, vertical: verticalAlign };
   }
-  return { text: formatted ?? "", numeric: false };
+  return { text: formatted ?? "", numeric: false, align, vertical: verticalAlign };
 }
 
 /** 按常见 numFmt 渲染数字：小数位、千分位、百分比、货币前缀、科学计数 */
@@ -717,7 +718,16 @@ function buildSheetSnapshot(sheet: Worksheet): SheetSnapshot {
         rowCells = new Map();
         snapshot.cells.set(rowNumber, rowCells);
       }
-      rowCells.set(columnNumber, describeCellValue(value, cell.numFmt, cell.text));
+      rowCells.set(
+        columnNumber,
+        describeCellValue(
+          value,
+          cell.numFmt,
+          cell.text,
+          cell.alignment?.horizontal,
+          cell.alignment?.vertical,
+        ),
+      );
       snapshot.rowCount = Math.max(snapshot.rowCount, rowNumber);
       snapshot.columnCount = Math.max(snapshot.columnCount, columnNumber);
     });
@@ -746,7 +756,16 @@ function refreshSnapshotCell(
 
   const target = rowCells ?? new Map<number, CellSnapshot>();
   if (!rowCells) snapshot.cells.set(row, target);
-  target.set(column, describeCellValue(value, cell.numFmt, cell.text));
+  target.set(
+    column,
+    describeCellValue(
+      value,
+      cell.numFmt,
+      cell.text,
+      cell.alignment?.horizontal,
+      cell.alignment?.vertical,
+    ),
+  );
   snapshot.rowCount = Math.max(snapshot.rowCount, row);
   snapshot.columnCount = Math.max(snapshot.columnCount, column);
 }
@@ -1248,22 +1267,32 @@ function ExcelModeView({
     [activeTab.id, doc, layout, markTabDirty, sheetIndex],
   );
 
-  /** 对选区内的已有格应用样式；旧样式留档供撤销，数字格式变化会重算显示文本 */
+  /** 对选区应用样式（含空白格，和 Excel 一致）；旧样式留档供撤销，显示文本随之重算 */
   const applyStyleToSelection = useCallback(
     (label: string, mutate: (cell: Cell) => void) => {
       if (isReadOnly || !doc || !layout) return;
       const sheet = doc.workbook.worksheets[sheetIndex];
       const snapshot = layout.snapshot;
-      const targets = collectPresentCells(snapshot, selectionBounds(selection));
-      if (targets.length === 0) {
-        showNotification("选区内没有内容，格式只作用于已有数据的单元格", "info");
+      const bounds = selectionBounds(selection);
+
+      const total = (bounds.bottom - bounds.top + 1) * (bounds.right - bounds.left + 1);
+      if (total > MAX_STYLE_CELLS) {
+        showNotification(`选区过大（${total} 格），请缩小范围后再设置格式`, "info");
         return;
+      }
+
+      const targets: { row: number; column: number }[] = [];
+      for (let row = bounds.top; row <= bounds.bottom; row += 1) {
+        for (let column = bounds.left; column <= bounds.right; column += 1) {
+          targets.push({ row, column });
+        }
       }
 
       const before = targets.map((target) => ({
         ...target,
         style: sheet.getCell(target.row, target.column).style,
       }));
+
 
       const applyStyles = () => {
         for (const target of targets) {
@@ -1314,6 +1343,15 @@ function ExcelModeView({
     (horizontal: "left" | "center" | "right", label: string) => {
       applyStyleToSelection(label, (cell) => {
         cell.alignment = { ...(cell.alignment ?? {}), horizontal };
+      });
+    },
+    [applyStyleToSelection],
+  );
+
+  const applyVerticalAlignment = useCallback(
+    (vertical: "top" | "middle" | "bottom", label: string) => {
+      applyStyleToSelection(label, (cell) => {
+        cell.alignment = { ...(cell.alignment ?? {}), vertical };
       });
     },
     [applyStyleToSelection],
@@ -1548,9 +1586,12 @@ function ExcelModeView({
       { label: "填充颜色…", onClick: () => openPalette("fill") },
       { label: "字体颜色…", onClick: () => openPalette("font") },
       separator,
-      { label: "左对齐", onClick: () => applyAlignment("left", "左对齐") },
-      { label: "居中", onClick: () => applyAlignment("center", "居中") },
-      { label: "右对齐", onClick: () => applyAlignment("right", "右对齐") },
+      { label: "水平居中", onClick: () => applyAlignment("center", "水平居中") },
+      { label: "水平左对齐", onClick: () => applyAlignment("left", "左对齐") },
+      { label: "水平右对齐", onClick: () => applyAlignment("right", "右对齐") },
+      { label: "垂直居中", onClick: () => applyVerticalAlignment("middle", "垂直居中") },
+      { label: "垂直靠上", onClick: () => applyVerticalAlignment("top", "靠上对齐") },
+      { label: "垂直靠下", onClick: () => applyVerticalAlignment("bottom", "靠下对齐") },
       separator,
       { label: "常规", onClick: () => applyNumberFormat("General", "常规格式") },
       { label: "数字 0.00", onClick: () => applyNumberFormat("0.00", "数字格式") },
@@ -1559,7 +1600,7 @@ function ExcelModeView({
       { label: "货币 ¥#,##0.00", onClick: () => applyNumberFormat("¥#,##0.00", "货币格式") },
       { label: "日期 yyyy-mm-dd", onClick: () => applyNumberFormat("yyyy-mm-dd", "日期格式") },
     ];
-  }, [applyAlignment, applyNumberFormat, formatMenu]);
+  }, [applyAlignment, applyNumberFormat, applyVerticalAlignment, formatMenu]);
 
   /** 行列菜单：插入/删除行列与列宽自适应（按当前选区大小） */
   const rowColumnMenuItems = useMemo(() => {
@@ -3024,13 +3065,28 @@ function ExcelModeView({
                         setCellMenu({ x: event.clientX, y: event.clientY });
                       }}
                       title={text}
-                      className={`absolute overflow-hidden whitespace-nowrap border-b border-r border-border/50 px-1.5 text-xs leading-[25px] text-text-primary ${
-                        snapshotCell?.numeric ? "text-right" : "text-left"
+                      className={`absolute flex overflow-hidden border-b border-r border-border/50 text-xs text-text-primary ${
+                        snapshotCell?.vertical === "top"
+                          ? "items-start"
+                          : snapshotCell?.vertical === "bottom"
+                            ? "items-end"
+                            : "items-center"
                       } ${inSelection ? "bg-accent/10" : ""} ${
                         isActive ? "ring-1 ring-inset ring-accent" : ""
                       }`}
                     >
-                      {text}
+                      <span
+                        className={`w-full min-w-0 truncate px-1.5 ${
+                          snapshotCell?.align === "center"
+                            ? "text-center"
+                            : snapshotCell?.align === "right" ||
+                                (snapshotCell?.align === null && snapshotCell?.numeric)
+                              ? "text-right"
+                              : "text-left"
+                        }`}
+                      >
+                        {text}
+                      </span>
                     </div>
                   );
                 }),
@@ -3127,6 +3183,8 @@ function ExcelModeView({
                   onKeyDown={handleEditKeyDown}
                   onBlur={(event) => commitEdit(event.currentTarget.value, 0, 0)}
                   style={{
+                    textAlign:
+                      layout.snapshot.cells.get(editing.row)?.get(editing.column)?.align ?? "left",
                     top: layout.rowOffsets[editing.row - 1],
                     left: layout.offsets[editing.column - 1],
                     width: layout.widths[editing.column - 1],
