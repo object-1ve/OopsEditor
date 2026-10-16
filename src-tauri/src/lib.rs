@@ -576,7 +576,7 @@ struct SearchOptions {
     query: String,
     #[serde(default)]
     case_sensitive: bool,
-    /// 「仅固定文件」：只在这些文件里搜（固定文件可能在任意目录），非空时忽略 roots
+    /// 限定到具体文件：单个文件 / 「仅固定文件」（这类文件可能在任意目录），非空时忽略 roots
     #[serde(default)]
     only_paths: Vec<String>,
     /// 文件修改时间范围（Unix 毫秒，含端点）
@@ -680,7 +680,7 @@ fn search_dir(dir: &std::path::Path, needle: &str, filter: &ContentFilter, out: 
 }
 
 /// 文件内容搜索：命中行 + 是否被截断。
-/// 「仅固定文件」时逐个文件搜（固定文件可能在任意目录）；否则按文件夹范围遍历。
+/// 限定到具体文件（单个文件 / 仅固定文件）时逐个文件搜（它们可能在任意目录）；否则按文件夹范围遍历。
 #[tauri::command]
 fn search_file_contents(options: SearchOptions) -> Result<ContentSearchResult, String> {
     let query = options.query.trim();

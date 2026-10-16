@@ -2,13 +2,15 @@
  * ContentSearchDialog - 侧边栏搜索面板：文件内容 + 会话消息统一搜索。
  *
  * 只在点「搜索」按钮或按 Enter 时执行 —— 输入与筛选条件变化都不自动触发（全量内容搜索代价高）。
- * 筛选条件各管一个域：仅固定文件 / 文件夹 → 文件结果；会话 → 消息结果；日期范围 → 两者。
+ * 筛选条件各管一个域：单个文件 / 仅固定文件 / 单个文件夹 → 文件结果；单个会话 → 消息结果；日期范围 → 两者。
+ * 文件域范围优先级：单个文件 > 仅固定文件 > 单个文件夹 > 全部。
  * 空查询时展示最近打开（与 Launcher 一致）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, FileText, History, Loader2, MessageSquare, Pin } from "lucide-react";
+import { Search, FileText, History, Loader2, MessageSquare, Pin, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEditorStore } from "@/store/editor";
 import { searchChatMessages, type ChatMessageMatch } from "@/services/chat";
 import { formatChatDateTime } from "@/utils/chatTime";
@@ -39,6 +41,9 @@ interface FileSearchResult {
 const EMPTY_FILE_RESULT: FileSearchResult = { matches: [], truncated: false };
 const EMPTY_MESSAGE_RESULT = { matches: [] as ChatMessageMatch[], truncated: false };
 
+/** 文件夹下拉里的「选择文件夹…」哨兵项：选中它只负责唤起目录选择器，不会成为筛选值（用 \0 前缀避免与真实路径撞车） */
+const PICK_FOLDER = "\u0000pick-folder";
+
 export default function ContentSearchDialog({
   roots,
   onOpenFile,
@@ -47,6 +52,8 @@ export default function ContentSearchDialog({
 }: ContentSearchDialogProps) {
   const [query, setQuery] = useState("");
   const [onlyPinned, setOnlyPinned] = useState(false);
+  /** 单个文件范围（绝对路径）；与「仅固定文件」互斥，优先级更高 */
+  const [fileFilter, setFileFilter] = useState("");
   const [folderFilter, setFolderFilter] = useState("");
   const [sessionFilter, setSessionFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -79,10 +86,10 @@ export default function ContentSearchDialog({
   const trimmed = query.trim();
   const hasQuery = trimmed.length >= 2;
   // 条件签名：任一条件变化都让已有结果过期（但不自动重搜）
-  const signature = [trimmed, onlyPinned ? "pinned" : "", folderFilter, sessionFilter, dateFrom, dateTo].join("\u0000");
+  const signature = [trimmed, fileFilter, onlyPinned ? "pinned" : "", folderFilter, sessionFilter, dateFrom, dateTo].join("\u0000");
   const isFresh = runKey !== "" && runKey === signature;
   const filtersActive =
-    onlyPinned || folderFilter !== "" || sessionFilter !== "" || dateFrom !== "" || dateTo !== "";
+    fileFilter !== "" || onlyPinned || folderFilter !== "" || sessionFilter !== "" || dateFrom !== "" || dateTo !== "";
 
   const items = useMemo<ResultItem[]>(
     () => [
@@ -114,17 +121,19 @@ export default function ContentSearchDialog({
     const afterMs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
     const beforeMs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
     const pinnedPaths = pinnedFiles.map((file) => file.path);
+    // 文件域范围优先级：单个文件 > 仅固定文件 > 单个文件夹 > 全部
+    const scopePaths = fileFilter ? [fileFilter] : onlyPinned ? pinnedPaths : [];
     // 「仅固定文件」但一个都没固定 → 文件域没有可搜的（后端空 onlyPaths 表示不限，这里显式短路）
     const fileRequest =
-      onlyPinned && pinnedPaths.length === 0
+      !fileFilter && onlyPinned && pinnedPaths.length === 0
         ? Promise.resolve(EMPTY_FILE_RESULT)
         : invoke<FileSearchResult>("search_file_contents", {
             options: {
-              // 仅固定文件时忽略文件夹范围（固定文件可能不在任何根目录下）
-              roots: onlyPinned ? [] : folderFilter ? [folderFilter] : roots,
+              // 限定到指定文件时忽略根目录（该文件可能不在任何根目录下）
+              roots: scopePaths.length > 0 ? [] : folderFilter ? [folderFilter] : roots,
               query: keyword,
               caseSensitive: false,
-              onlyPaths: onlyPinned ? pinnedPaths : [],
+              onlyPaths: scopePaths,
               modifiedAfterMs: afterMs,
               modifiedBeforeMs: beforeMs,
             },
@@ -152,6 +161,7 @@ export default function ContentSearchDialog({
   }, [
     query,
     signature,
+    fileFilter,
     onlyPinned,
     pinnedFiles,
     folderFilter,
@@ -201,10 +211,34 @@ export default function ContentSearchDialog({
 
   const clearFilters = () => {
     setOnlyPinned(false);
+    setFileFilter("");
     setFolderFilter("");
     setSessionFilter("");
     setDateFrom("");
     setDateTo("");
+  };
+
+  /** 单个文件范围：走系统文件选择器，选中后文件域只在这一次文件里搜 */
+  const pickSearchFile = async () => {
+    try {
+      const selected = await open({ directory: false, multiple: false, title: "选择要搜索的文件" });
+      if (typeof selected !== "string") return;
+      setFileFilter(selected);
+      // 单文件是最具体的范围，与「仅固定文件」互斥，避免两个范围同时亮着却只有一个生效
+      setOnlyPinned(false);
+    } catch (err) {
+      console.error("选择搜索文件失败:", err);
+    }
+  };
+
+  /** 单个文件夹范围：可选任意目录，不限于工作区根目录 */
+  const pickSearchFolder = async () => {
+    try {
+      const selected = await open({ directory: true, multiple: false, title: "选择要搜索的文件夹" });
+      if (typeof selected === "string") setFolderFilter(selected);
+    } catch (err) {
+      console.error("选择搜索文件夹失败:", err);
+    }
   };
 
   const baseName = (p: string) => p.split(/[/\\]/).pop() || p;
@@ -252,31 +286,75 @@ export default function ContentSearchDialog({
 
         {/* 筛选条件：改条件不会自动搜索，点「搜索」/回车才生效 */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 border-b border-border text-xs text-text-muted">
+          <span className="flex items-center gap-1.5">
+            文件
+            <button
+              type="button"
+              onClick={() => void pickSearchFile()}
+              title={fileFilter ? `只在 ${fileFilter} 里搜索内容` : "选择单个文件，只在这一个文件里搜索内容"}
+              className={`max-w-[160px] truncate px-2 py-1 rounded-md border transition-colors cursor-pointer ${
+                fileFilter
+                  ? "border-accent/50 bg-accent/10 text-accent"
+                  : "border-border hover:bg-surface hover:text-text"
+              }`}
+            >
+              {fileFilter ? baseName(fileFilter) : "选择文件…"}
+            </button>
+            {fileFilter !== "" && (
+              <button
+                type="button"
+                onClick={() => setFileFilter("")}
+                title="取消单个文件范围"
+                className="p-0.5 rounded hover:bg-surface hover:text-text transition-colors cursor-pointer"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </span>
+
           <button
             type="button"
             onClick={() => setOnlyPinned((value) => !value)}
+            disabled={fileFilter !== ""}
             title={
-              pinnedFiles.length > 0
-                ? `只在 ${pinnedFiles.length} 个固定文件里搜索内容`
-                : "还没有固定文件"
+              fileFilter !== ""
+                ? "已选定单个文件，只在该文件里搜索内容"
+                : pinnedFiles.length > 0
+                  ? `只在 ${pinnedFiles.length} 个固定文件里搜索内容`
+                  : "还没有固定文件"
             }
             className={`flex items-center gap-1 px-2 py-1 rounded-md border transition-colors cursor-pointer ${
               onlyPinned
                 ? "border-accent/50 bg-accent/10 text-accent"
                 : "border-border hover:bg-surface hover:text-text"
-            }`}
+            } ${fileFilter !== "" ? "opacity-50 cursor-not-allowed" : ""}`}
           >
             <Pin size={12} />
             仅固定文件{pinnedFiles.length > 0 ? ` (${pinnedFiles.length})` : ""}
           </button>
 
-          <label className={`flex items-center gap-1.5 ${onlyPinned ? "opacity-50" : ""}`}>
+          <label className={`flex items-center gap-1.5 ${onlyPinned || fileFilter !== "" ? "opacity-50" : ""}`}>
             文件夹
             <select
               value={folderFilter}
-              onChange={(e) => setFolderFilter(e.target.value)}
-              disabled={onlyPinned}
-              title={onlyPinned ? "「仅固定文件」时不再限文件夹" : "只在选中的文件夹里搜索文件内容"}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === PICK_FOLDER) {
+                  // 受控 select 选到哨兵项后若不重渲染，DOM 会停在哨兵项上：先手动复原显示
+                  e.target.value = folderFilter;
+                  void pickSearchFolder();
+                  return;
+                }
+                setFolderFilter(value);
+              }}
+              disabled={onlyPinned || fileFilter !== ""}
+              title={
+                fileFilter !== ""
+                  ? "已选定单个文件，不再限文件夹"
+                  : onlyPinned
+                    ? "「仅固定文件」时不再限文件夹"
+                    : "只在选中的文件夹里搜索文件内容"
+              }
               style={{ outline: "none" }}
               className="max-w-[120px] px-1.5 py-1 rounded-md border border-border bg-surface text-text text-xs cursor-pointer disabled:cursor-not-allowed"
             >
@@ -286,6 +364,12 @@ export default function ContentSearchDialog({
                   {baseName(root)}
                 </option>
               ))}
+              {folderFilter !== "" && !roots.includes(folderFilter) && (
+                <option value={folderFilter} title={folderFilter}>
+                  {baseName(folderFilter)}
+                </option>
+              )}
+              <option value={PICK_FOLDER}>选择文件夹…</option>
             </select>
           </label>
 
