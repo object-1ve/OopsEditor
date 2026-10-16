@@ -9,6 +9,7 @@ import { Copy, MessagesSquare, Trash2, X } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import { getChatMessages } from "@/services/chat";
 import { formatChatDateTime, formatDayDivider, needsTimeDivider } from "@/utils/chatTime";
+import { copyTextToClipboard } from "@/utils/clipboard";
 import ChatComposer from "./ChatComposer";
 import MessageBubble from "./MessageBubble";
 import type { ChatMessageActions } from "./MessageBubble";
@@ -97,8 +98,7 @@ export default function ChatView() {
         return `[${formatChatDateTime(message.created_at)}] ${sender}: ${message.content || message.file_name || ""}`;
       });
       const header = `# ${activeSession.title}\n创建时间: ${formatChatDateTime(activeSession.created_at)}\n最近编辑: ${formatChatDateTime(activeSession.updated_at)}\n\n`;
-      await navigator.clipboard.writeText(header + lines.join("\n"));
-      showNotification("会话内容已复制到剪贴板", "success");
+      await copyTextToClipboard(header + lines.join("\n"), "会话内容已复制到剪贴板");
     } catch (err) {
       showNotification(`复制失败: ${String(err)}`, "error");
     }

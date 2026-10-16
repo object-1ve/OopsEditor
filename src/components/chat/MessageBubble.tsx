@@ -8,6 +8,7 @@ import ContextMenu from "@/components/ContextMenu";
 import MaterialFileIcon from "@/components/MaterialFileIcon";
 import type { ChatMessage } from "@/services/chat";
 import { formatChatDateTime } from "@/utils/chatTime";
+import { copyTextToClipboard } from "@/utils/clipboard";
 import { chatDisplayName, formatChatSize, isImageFileName } from "./chatFormat";
 
 export interface ChatMessageActions {
@@ -72,12 +73,10 @@ export default function MessageBubble({ message, actions }: MessageBubbleProps) 
     // 文件消息没有正文时复制文件名，比复制空串更有用
     const text = message.content || message.file_name || "";
     if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
+    // 提示统一由 copyTextToClipboard 弹出，这里只保留按钮上的「已复制」微状态
+    if (await copyTextToClipboard(text)) {
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 1200);
-    } catch {
-      // 剪贴板不可用时静默失败，用户可改用右键菜单
     }
   }, [message.content, message.file_name]);
 

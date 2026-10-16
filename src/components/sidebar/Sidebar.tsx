@@ -27,6 +27,7 @@ import {
 } from "@dnd-kit/sortable";
 import ContextMenu from "../ContextMenu";
 import { formatTimestampName } from "@/utils/format";
+import { copyTextToClipboard } from "@/utils/clipboard";
 import {
   findWorkspaceRoot,
   isSamePath,
@@ -887,13 +888,11 @@ export default function Sidebar() {
             await invoke("reveal_in_explorer", { path });
             break;
           case "copy-path":
-            await navigator.clipboard.writeText(path);
-            showNotification("路径已复制到剪贴板", "success");
+            await copyTextToClipboard(path, "路径已复制到剪贴板");
             break;
           case "copy-cd-path": {
             const dirPath = is_dir ? path : path.substring(0, Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
-            await navigator.clipboard.writeText(`cd ${dirPath}`);
-            showNotification("cd 路径已复制到剪贴板", "success");
+            await copyTextToClipboard(`cd ${dirPath}`, "cd 路径已复制到剪贴板");
             break;
           }
           case "terminal": {
@@ -1023,8 +1022,7 @@ export default function Sidebar() {
             await invoke("reveal_in_explorer", { path: pinnedFile.path });
             break;
           case "copy-path":
-            await navigator.clipboard.writeText(pinnedFile.path);
-            showNotification("路径已复制到剪贴板", "success");
+            await copyTextToClipboard(pinnedFile.path, "路径已复制到剪贴板");
             break;
           case "unpin":
             removePinnedFile(pinnedFile.path);
@@ -1240,7 +1238,7 @@ export default function Sidebar() {
       { separator: true, label: "", onClick: () => {} },
       { label: "在资源管理器中显示", icon: <ExternalLink size={14} />, onClick: () => invoke("reveal_in_explorer", { path: folder.path }) },
       { label: "在终端中打开", icon: <TerminalIcon size={14} />, onClick: () => addTerminal(folder.path) },
-      { label: "复制完整路径", icon: <Copy size={14} />, onClick: async () => { await navigator.clipboard.writeText(folder.path); showNotification("路径已复制到剪贴板", "success"); } },
+      { label: "复制完整路径", icon: <Copy size={14} />, onClick: () => void copyTextToClipboard(folder.path, "路径已复制到剪贴板") },
       { separator: true, label: "", onClick: () => {} },
       { label: "配置路径", icon: <Settings size={14} />, onClick: () => handleDefaultFolderAction("configure") },
       { label: "从列表中移除", icon: <Trash2 size={14} />, onClick: () => handleDefaultFolderAction("delete"), danger: true },

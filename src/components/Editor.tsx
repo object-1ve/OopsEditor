@@ -33,6 +33,7 @@ import { resolveEditorMode } from "./editor-modes";
 import { fetchAndSetFileMtime } from "@/store/fileMtime";
 import { saveTab } from "@/services/editorSave";
 import { clipboardToMarkdownTable, tsvToMarkdownTable } from "@/utils/clipboardTable";
+import { copyTextToClipboard } from "@/utils/clipboard";
 import { invoke } from "@tauri-apps/api/core";
 import { findMatchColumns } from "@/utils/editorJump";
 import { collapsePathSegments } from "@/utils/path";
@@ -629,12 +630,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(selectedText);
-      showNotification("已复制选中内容", "success");
-    } catch {
-      showNotification("复制失败", "error");
-    }
+    await copyTextToClipboard(selectedText, "已复制选中内容");
   }, [getEditorSelectionText, showNotification]);
 
   const handleEditorCut = useCallback(async () => {
@@ -645,12 +641,8 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(selectedText);
+    if (await copyTextToClipboard(selectedText, "已剪切选中内容")) {
       editor.trigger("context-menu", "editor.action.clipboardCutAction", undefined);
-      showNotification("已剪切选中内容", "success");
-    } catch {
-      showNotification("剪切失败", "error");
     }
   }, [getEditorSelectionText, showNotification]);
 

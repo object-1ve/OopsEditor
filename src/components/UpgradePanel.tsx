@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { X, Plus, Copy, ClipboardPaste, Trash2, Check, Clock, Edit2, Save, Filter } from "lucide-react";
+import { copyTextToClipboard } from "@/utils/clipboard";
 
 interface UpgradeItem {
   id: number;
@@ -116,9 +117,11 @@ export default function UpgradePanel({ onClose }: UpgradePanelProps) {
   const handleExportJson = async () => {
     try {
       const jsonStr = await invoke<string>("export_upgrade_items_json");
-      await navigator.clipboard.writeText(jsonStr);
-      setExportCopied(true);
-      setTimeout(() => setExportCopied(false), 2000);
+      // 提示统一由 copyTextToClipboard 弹出，这里只保留按钮上的「已复制」文案
+      if (await copyTextToClipboard(jsonStr, "升级项 JSON 已复制到剪贴板")) {
+        setExportCopied(true);
+        setTimeout(() => setExportCopied(false), 2000);
+      }
     } catch (err) {
       console.error("导出失败:", err);
     }

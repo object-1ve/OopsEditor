@@ -8,6 +8,7 @@ import { useEditorStore } from "@/store/editor";
 import type { ChatSession } from "@/services/chat";
 import { getChatMessages } from "@/services/chat";
 import { formatChatDateTime, formatConversationTime } from "@/utils/chatTime";
+import { copyTextToClipboard } from "@/utils/clipboard";
 
 export default function ConversationList() {
   const sessions = useEditorStore((s) => s.chatSessions);
@@ -42,8 +43,7 @@ export default function ConversationList() {
           return `[${formatChatDateTime(message.created_at)}] ${sender}: ${message.content || message.file_name || ""}`;
         });
         const header = `# ${session.title}\n创建时间: ${formatChatDateTime(session.created_at)}\n最近编辑: ${formatChatDateTime(session.updated_at)}\n\n`;
-        await navigator.clipboard.writeText(header + lines.join("\n"));
-        showNotification("会话内容已复制到剪贴板", "success");
+        await copyTextToClipboard(header + lines.join("\n"), "会话内容已复制到剪贴板");
       } catch (err) {
         showNotification(`复制失败: ${String(err)}`, "error");
       }

@@ -14,6 +14,7 @@ import ConfirmModal from "@/components/ConfirmModal";
 import SettingsModal from "@/components/SettingsModal";
 import UpdateDialog from "@/components/UpdateDialog";
 import { checkForUpdates } from "@/hooks/useUpdater";
+import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import ContextMenu from "@/components/ContextMenu";
 import UpgradePanel from "@/components/UpgradePanel";
 import { useEditorStore } from "@/store/editor";
@@ -565,6 +566,9 @@ function App() {
       if (unlistenClose) unlistenClose();
     };
   }, []);
+
+  // 全局复制反馈：原生复制（编辑器 Ctrl+C、终端选中复制等）也在右下角提示
+  useCopyFeedback();
 
   // 文件关联 / 命令行启动：接收 Rust 端收集的文件路径并打开
   useEffect(() => {

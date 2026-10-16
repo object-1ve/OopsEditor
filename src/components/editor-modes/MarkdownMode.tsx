@@ -19,6 +19,7 @@ import { Copy, FilePenLine } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getPreviewScrollTop, setPreviewScrollTop } from "@/utils/scrollMemory";
+import { copyTextToClipboard } from "@/utils/clipboard";
 import { createMarkdownHeadingIdFactory, extractTextFromReactNode } from "@/utils/markdown";
 import { collapsePathSegments } from "@/utils/path";
 import ContextMenu from "@/components/ContextMenu";
@@ -331,12 +332,7 @@ function MarkdownPreviewPane({
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(selectedText);
-      showNotification("已复制选中内容", "success");
-    } catch {
-      showNotification("复制失败", "error");
-    }
+    await copyTextToClipboard(selectedText, "已复制选中内容");
   }, [getPreviewSelectionText, showNotification]);
 
   const previewContextMenuItems = useMemo<SharedContextMenuItem[]>(() => {
