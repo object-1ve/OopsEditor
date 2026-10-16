@@ -8,10 +8,15 @@
  *
  * 渲染不直接读工作簿：ExcelJS 的 getCell 会顺带创建空行，进而被写回文件；
  * 因此展示层读一张只含非空单元格的快照，编辑时才落到工作簿。
+ *
+ * 图片走 ExcelJS 的浮动图（锚定到起始单元格），展示时按锚定范围裁剪在对应格子里，
+ * 点击任意图片调起全屏预览（复用 store 的 imagePreview）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileSpreadsheet, Info, Loader2, Redo2, Save, Undo2 } from "lucide-react";
-import type { CellValue, Worksheet } from "exceljs";
+import { FileSpreadsheet, ImagePlus, Info, Loader2, Redo2, Save, Trash2, Undo2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { readFile } from "@tauri-apps/plugin-fs";
+import type { CellValue, Workbook, Worksheet } from "exceljs";
 import { loadExcelDoc, type ExcelDoc } from "@/services/excelDocs";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import { useEditorStore } from "@/store/editor";
@@ -211,6 +216,125 @@ function columnWidthsPx(sheet: Worksheet, columnCount: number): number[] {
   return widths;
 }
 
+/** 工作表内嵌图片：锚定范围 + 媒体信息（url 是 buffer 生成的 blob URL） */
+interface SheetImage {
+  /** worksheet._media 中的下标，删除时定位用 */
+  mediaIndex: number;
+  imageId: number;
+  /** 锚定范围（1-based，endRow/endColumn 为空表示只占起始单元格） */
+  startRow: number;
+  startColumn: number;
+  endRow: number | null;
+  endColumn: number | null;
+  /** 无 br 锚点时给出的像素尺寸 */
+  width: number;
+  height: number;
+  url: string;
+  name: string;
+  extension: string;
+  byteLength: number;
+}
+
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  png: "image/png",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  gif: "image/gif",
+  bmp: "image/bmp",
+  webp: "image/webp",
+};
+
+/** ExcelJS 只接受 png / jpeg / gif 三种内嵌图片格式 */
+function imageExtensionForWrite(filePath: string): "png" | "jpeg" | "gif" | null {
+  const extension = filePath.split(".").pop()?.toLowerCase();
+  if (extension === "png") return "png";
+  if (extension === "jpg" || extension === "jpeg") return "jpeg";
+  if (extension === "gif") return "gif";
+  return null;
+}
+
+/** exceljs 未公开媒体列表（getImages() 会过滤背景图并丢失原始下标，删除与锚点解析都要用原数组） */
+interface SheetMediaEntry {
+  type?: string;
+  imageId?: number;
+  range?: {
+    tl?: { col?: number; row?: number };
+    br?: { col?: number; row?: number };
+    ext?: { width?: number; height?: number };
+  };
+}
+
+function readSheetMedia(sheet: Worksheet): SheetMediaEntry[] {
+  return (sheet as unknown as { _media?: SheetMediaEntry[] })._media ?? [];
+}
+
+/** 媒体二进制：类型声明里 Workbook 没有 media，但运行时存在（元素带 name / extension / buffer） */
+interface WorkbookMediaEntry {
+  name?: string;
+  extension?: string;
+  buffer?: unknown;
+}
+
+function readWorkbookMedia(workbook: Workbook): WorkbookMediaEntry[] {
+  return (workbook as unknown as { media?: WorkbookMediaEntry[] }).media ?? [];
+}
+
+/** 读取工作表内嵌图片，并为每张图建立可直接渲染的 blob URL */
+function collectSheetImages(sheet: Worksheet, workbook: Workbook): SheetImage[] {
+  const images: SheetImage[] = [];
+  const media = readWorkbookMedia(workbook);
+
+  readSheetMedia(sheet).forEach((entry, mediaIndex) => {
+    // 背景图没有锚点，不放进单元格图片列表
+    if (entry.type !== "image" || typeof entry.imageId !== "number") return;
+    const source = media[entry.imageId];
+    const anchor = entry.range?.tl;
+    if (!source?.buffer || !anchor) return;
+
+    const buffer = source.buffer as Uint8Array;
+    const extension = (source.extension ?? "png").toLowerCase();
+    images.push({
+      mediaIndex,
+      imageId: entry.imageId,
+      startRow: (anchor.row ?? 0) + 1,
+      startColumn: (anchor.col ?? 0) + 1,
+      endRow: entry.range?.br ? (entry.range.br.row ?? 0) + 1 : null,
+      endColumn: entry.range?.br ? (entry.range.br.col ?? 0) + 1 : null,
+      width: entry.range?.ext?.width ?? 0,
+      height: entry.range?.ext?.height ?? 0,
+      url: URL.createObjectURL(
+        new Blob([buffer as unknown as BlobPart], {
+          type: IMAGE_MIME_BY_EXTENSION[extension] ?? "image/png",
+        }),
+      ),
+      name: source.name ?? `图片${images.length + 1}`,
+      extension,
+      byteLength: buffer.byteLength ?? 0,
+    });
+  });
+
+  return images;
+}
+
+/** 读取图片原始像素尺寸，失败时返回 0（调用方回落到单元格尺寸） */
+async function measureImageBytes(bytes: Uint8Array): Promise<{ width: number; height: number }> {
+  try {
+    const bitmap = await createImageBitmap(new Blob([bytes as unknown as BlobPart]));
+    const size = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return size;
+  } catch {
+    return { width: 0, height: 0 };
+  }
+}
+
+/** 选中格是否落在图片的锚定范围内 */
+function isCellInImage(image: SheetImage, row: number, column: number): boolean {
+  const endRow = image.endRow ?? image.startRow;
+  const endColumn = image.endColumn ?? image.startColumn;
+  return row >= image.startRow && row <= endRow && column >= image.startColumn && column <= endColumn;
+}
+
 /** 合并区从属格 → 左上角 master；自由格原样返回 */
 function resolveMergeOwner(merges: MergeIndex, row: number, column: number): Selection {
   const owner = merges.owners.get(`${row}:${column}`);
@@ -276,6 +400,7 @@ function ExcelModeView({
   saveActiveTab,
 }: Pick<EditorModeContext, "activeTab" | "showNotification" | "saveActiveTab">) {
   const markTabDirty = useEditorStore((state) => state.markTabDirty);
+  const openImagePreview = useEditorStore((state) => state.openImagePreview);
   const [doc, setDoc] = useState<ExcelDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sheetIndex, setSheetIndex] = useState(0);
@@ -287,6 +412,10 @@ function ExcelModeView({
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   // 编辑/撤销会改变数据规模与列宽，用它触发布局与快照重算
   const [layoutVersion, setLayoutVersion] = useState(0);
+  const [images, setImages] = useState<SheetImage[]>([]);
+  // 插入/删除图片后靠它重新收集当前工作表的图片
+  const [imagesVersion, setImagesVersion] = useState(0);
+  const [insertingImage, setInsertingImage] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -331,13 +460,27 @@ function ExcelModeView({
     };
   }, [activeTab.id, activeTab.path, revision, showNotification]);
 
+  // 图片是二进制资源：按工作表重建成 blob URL，切表/重载时释放旧 URL
+  useEffect(() => {
+    const sheet = doc?.workbook.worksheets[sheetIndex];
+    if (!doc || !sheet) {
+      setImages([]);
+      return;
+    }
+
+    const collected = collectSheetImages(sheet, doc.workbook);
+    setImages(collected);
+    return () => {
+      collected.forEach((image) => URL.revokeObjectURL(image.url));
+    };
+  }, [doc, sheetIndex, imagesVersion]);
+
   useEffect(() => {
     const node = gridRef.current;
     if (!node) return;
 
     const measure = () => setViewport({ width: node.clientWidth, height: node.clientHeight });
     measure();
-
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
@@ -718,6 +861,128 @@ function ExcelModeView({
     [applyChanges, doc, editing, isReadOnly, layout, selection, showNotification],
   );
 
+  /** 图片在网格里的绘制矩形：有 br 锚点按覆盖范围，否则按像素尺寸（两者都裁剪到可见区） */
+  const imageRect = useCallback(
+    (image: SheetImage) => {
+      if (!layout) return null;
+
+      const left = layout.offsets[image.startColumn - 1] ?? 0;
+      const top = (image.startRow - 1) * ROW_HEIGHT;
+
+      let width = image.width;
+      let height = image.height;
+      if (image.endColumn !== null && image.endRow !== null) {
+        width = 0;
+        for (let column = image.startColumn; column <= image.endColumn; column += 1) {
+          width += layout.widths[column - 1] ?? DEFAULT_COLUMN_WIDTH;
+        }
+        height = (image.endRow - image.startRow + 1) * ROW_HEIGHT;
+      }
+      if (!width) width = layout.widths[image.startColumn - 1] ?? DEFAULT_COLUMN_WIDTH;
+      if (!height) height = ROW_HEIGHT;
+
+      return {
+        left,
+        top,
+        width: Math.min(width, layout.totalWidth - left),
+        height: Math.min(height, layout.totalHeight - top),
+      };
+    },
+    [layout],
+  );
+
+  const imagesInSelection = useMemo(
+    () => images.filter((image) => isCellInImage(image, selection.row, selection.column)),
+    [images, selection],
+  );
+
+  const handleInsertImage = useCallback(async () => {
+    if (isReadOnly || !doc || !layout || insertingImage) return;
+
+    try {
+      const picked = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif"] }],
+      });
+      if (typeof picked !== "string") return;
+
+      const extension = imageExtensionForWrite(picked);
+      if (!extension) {
+        showNotification("只支持 PNG / JPG / GIF 图片", "info");
+        return;
+      }
+
+      setInsertingImage(true);
+      const bytes = await readFile(picked);
+      const size = await measureImageBytes(bytes);
+      const cellWidth = layout.widths[selection.column - 1] ?? DEFAULT_COLUMN_WIDTH;
+      const scale = size.width && size.height
+        ? Math.min(cellWidth / size.width, ROW_HEIGHT / size.height, 1)
+        : 1;
+
+      // exceljs 声明的 Buffer 只是 ArrayBuffer 的类型别名，这里传 Uint8Array，jszip 同样接受
+      const imageId = doc.workbook.addImage({
+        buffer: bytes as unknown as ArrayBuffer,
+        extension,
+      });
+      layout.sheet.addImage(imageId, {
+        tl: { col: selection.column - 1, row: selection.row - 1 },
+        ext: {
+          width: Math.max(1, Math.round((size.width || cellWidth) * scale)),
+          height: Math.max(1, Math.round((size.height || ROW_HEIGHT) * scale)),
+        },
+      });
+
+      setImagesVersion((version) => version + 1);
+      markTabDirty(activeTab.id);
+      showNotification(
+        `已插入图片到 ${columnLetter(selection.column)}${selection.row}`,
+        "success",
+      );
+    } catch (err) {
+      showNotification(`插入图片失败: ${String(err)}`, "error");
+    } finally {
+      setInsertingImage(false);
+    }
+  }, [
+    activeTab.id,
+    doc,
+    insertingImage,
+    isReadOnly,
+    layout,
+    markTabDirty,
+    selection,
+    showNotification,
+  ]);
+
+  const handleDeleteImages = useCallback(() => {
+    if (isReadOnly || !layout || imagesInSelection.length === 0) return;
+
+    const media = readSheetMedia(layout.sheet);
+    if (media.length === 0) return;
+
+    // 从后往前删，避免前面的下标位移
+    [...imagesInSelection]
+      .sort((a, b) => b.mediaIndex - a.mediaIndex)
+      .forEach((image) => media.splice(image.mediaIndex, 1));
+
+    setImagesVersion((version) => version + 1);
+    markTabDirty(activeTab.id);
+    showNotification(`已删除 ${imagesInSelection.length} 张图片`, "success");
+  }, [activeTab.id, imagesInSelection, isReadOnly, layout, markTabDirty, showNotification]);
+
+  const handlePreviewImage = useCallback(
+    (image: SheetImage) => {
+      openImagePreview({
+        path: `${activeTab.path}#image${image.imageId}`,
+        name: image.name,
+        url: image.url,
+      });
+    },
+    [activeTab.path, openImagePreview],
+  );
+
   const handleSave = useCallback(() => {
     setSaving(true);
     void saveActiveTab(activeTab.id)
@@ -792,6 +1057,28 @@ function ExcelModeView({
           >
             <Info size={12} />
           </span>
+          <button
+            type="button"
+            onClick={() => void handleInsertImage()}
+            disabled={isReadOnly || insertingImage}
+            title="插入图片到当前单元格"
+            className="flex items-center gap-1 rounded border border-border bg-deepest px-2 py-1 text-[11px] text-text-muted transition-colors hover:text-accent disabled:opacity-40 disabled:hover:text-text-muted"
+          >
+            {insertingImage ? <Loader2 size={13} className="animate-spin" /> : <ImagePlus size={13} />}
+            插入图片
+          </button>
+          {imagesInSelection.length > 0 && (
+            <button
+              type="button"
+              onClick={handleDeleteImages}
+              disabled={isReadOnly}
+              title="删除当前单元格内的图片"
+              className="flex items-center gap-1 rounded border border-error/30 bg-error/5 px-2 py-1 text-[11px] text-error transition-colors hover:bg-error/10 disabled:opacity-40"
+            >
+              <Trash2 size={13} />
+              删除图片
+            </button>
+          )}
           <button
             type="button"
             onClick={() => applyHistory(-1)}
@@ -938,6 +1225,34 @@ function ExcelModeView({
                   );
                 }),
               )}
+
+              {images.map((image) => {
+                const rect = imageRect(image);
+                if (!rect) return null;
+                return (
+                  <img
+                    key={`image-${image.mediaIndex}`}
+                    src={image.url}
+                    alt={image.name}
+                    draggable={false}
+                    style={{
+                      top: rect.top,
+                      left: rect.left,
+                      width: rect.width,
+                      height: rect.height,
+                      zIndex: 4,
+                    }}
+                    onMouseDown={(event) => {
+                      event.stopPropagation();
+                      rootRef.current?.focus();
+                      selectCell(image.startRow, image.startColumn);
+                    }}
+                    onClick={() => handlePreviewImage(image)}
+                    title={`${image.name} · 点击预览`}
+                    className="absolute cursor-zoom-in border border-border/60 bg-white object-contain"
+                  />
+                );
+              })}
 
               {editing && (
                 <input
