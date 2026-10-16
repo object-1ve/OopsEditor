@@ -22,6 +22,8 @@ import {
   Loader2,
   Plus,
   Redo2,
+  Merge,
+  PaintBucket,
   Rows3,
   Save,
   Trash2,
@@ -29,7 +31,7 @@ import {
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
-import type { CellValue, Column, Row, Style, Workbook, Worksheet } from "exceljs";
+import type { Cell, CellValue, Column, Row, Style, Workbook, Worksheet } from "exceljs";
 import { loadExcelDoc, type ExcelDoc } from "@/services/excelDocs";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import { useEditorStore } from "@/store/editor";
@@ -142,6 +144,61 @@ function measureTextWidth(text: string): number {
   }
   return width;
 }
+
+/** 选区内的“已有内容”的格：样式类操作只作用于它们，避免为空格建出成片空行 */
+function collectPresentCells(
+  snapshot: SheetSnapshot,
+  bounds: { top: number; bottom: number; left: number; right: number },
+): { row: number; column: number }[] {
+  const cells: { row: number; column: number }[] = [];
+  for (let row = bounds.top; row <= bounds.bottom; row += 1) {
+    const rowCells = snapshot.cells.get(row);
+    if (!rowCells) continue;
+    for (let column = bounds.left; column <= bounds.right; column += 1) {
+      if (rowCells.has(column)) cells.push({ row, column });
+    }
+  }
+  return cells;
+}
+
+/** Ctrl+Shift+1~6 对应的常用数字格式（Excel 习惯） */
+const NUMBER_FORMAT_SHORTCUTS: Record<number, { format: string; label: string }> = {
+  1: { format: "0.00", label: "数字格式" },
+  2: { format: "hh:mm:ss", label: "时间格式" },
+  3: { format: "yyyy-mm-dd", label: "日期格式" },
+  4: { format: "¥#,##0.00", label: "货币格式" },
+  5: { format: "0.00%", label: "百分比格式" },
+  6: { format: "0.00E+00", label: "科学计数格式" },
+};
+
+/** 填充色板与字体色板 */
+const FILL_PALETTE: { name: string; argb: string }[] = [
+  { name: "浅黄", argb: "FFFFF2CC" },
+  { name: "橙", argb: "FFF8CBAD" },
+  { name: "浅红", argb: "FFFCE4E4" },
+  { name: "浅绿", argb: "FFE2EFDA" },
+  { name: "浅蓝", argb: "FFDDEBF7" },
+  { name: "浅紫", argb: "FFE9E1F2" },
+  { name: "浅灰", argb: "FFF2F2F2" },
+  { name: "黄", argb: "FFFFE699" },
+  { name: "绿", argb: "FFA9D08E" },
+  { name: "蓝", argb: "FF9DC3E6" },
+  { name: "红", argb: "FFFF9999" },
+  { name: "灰", argb: "FFBFBFBF" },
+];
+
+const FONT_PALETTE: { name: string; argb: string }[] = [
+  { name: "黑", argb: "FF000000" },
+  { name: "深红", argb: "FFC00000" },
+  { name: "橙", argb: "FFED7D31" },
+  { name: "深黄", argb: "FFBF8F00" },
+  { name: "绿", argb: "FF548235" },
+  { name: "蓝", argb: "FF2E75B6" },
+  { name: "深蓝", argb: "FF1F3864" },
+  { name: "紫", argb: "FF7030A0" },
+  { name: "灰", argb: "FF808080" },
+  { name: "白", argb: "FFFFFFFF" },
+];
 
 /** exceljs 未在类型里暴露 orderNo，但 worksheets 的顺序就是按它排序的 */
 function setWorksheetOrder(sheet: Worksheet, order: number) {
@@ -306,7 +363,32 @@ function describeCellValue(value: CellValue, numFmt: string | undefined, formatt
   if (value instanceof Date) {
     return { text: formatDateCell(value, numFmt), numeric: true };
   }
-  return { text: formatted ?? "", numeric: typeof value === "number" };
+  // exceljs 的 cell.text 对数字不套 numFmt（百分比会显示成 0.25），这里自己渲染
+  if (typeof value === "number") {
+    return { text: formatNumericCell(value, numFmt), numeric: true };
+  }
+  return { text: formatted ?? "", numeric: false };
+}
+
+/** 按常见 numFmt 渲染数字：小数位、千分位、百分比、货币前缀、科学计数 */
+function formatNumericCell(value: number, numFmt?: string): string {
+  if (!numFmt || numFmt === "General" || numFmt === "@") return String(value);
+
+  const percent = numFmt.includes("%");
+  const scientific = /E\+?0/i.test(numFmt);
+  const decimals = (numFmt.split(".")[1] ?? "").replace(/[^0#]/g, "").length;
+  const grouped = numFmt.includes("#,##");
+  const currency = /^[^0#.\-]*[¥$€£]/.exec(numFmt)?.[0] ?? "";
+
+  const scaled = percent ? value * 100 : value;
+  if (scientific) return `${scaled.toExponential(decimals)}${percent ? "%" : ""}`;
+
+  const [integerPart, fractionPart] = scaled.toFixed(decimals).split(".");
+  const groupedInteger = grouped
+    ? integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+    : integerPart;
+  const body = fractionPart ? `${groupedInteger}.${fractionPart}` : groupedInteger;
+  return `${currency}${body}${percent ? "%" : ""}`;
 }
 
 /** 单元格原始值 → 可编辑文本（公式带 = 前缀） */
@@ -670,6 +752,8 @@ function ExcelModeView({
   const [sheetMenu, setSheetMenu] = useState<{ x: number; y: number; index: number } | null>(null);
   const [renamingSheet, setRenamingSheet] = useState<{ index: number; value: string } | null>(null);
   const [dragSheetIndex, setDragSheetIndex] = useState<number | null>(null);
+  const [formatMenu, setFormatMenu] = useState<{ x: number; y: number } | null>(null);
+  const [palette, setPalette] = useState<{ x: number; y: number; target: "fill" | "font" } | null>(null);
   const [insertingImage, setInsertingImage] = useState(false);
   // 拖动调整的行高/列宽（像素），拖动过程中即时生效，松开后写入工作簿
   const [columnOverrides, setColumnOverrides] = useState<Record<number, number>>({});
@@ -971,9 +1055,9 @@ function ExcelModeView({
 
   /** 执行结构操作并记入撤销栈：redo 立即执行，undo 用闭包保存的逆操作 */
   const applyStructural = useCallback(
-    (undo: () => void, redo: () => void) => {
+    (label: string, undo: () => void, redo: () => void) => {
       redo();
-      pushHistory({ kind: "structure", sheetIndex, label: "结构操作", undo, redo });
+      pushHistory({ kind: "structure", sheetIndex, label, undo, redo });
       invalidateSheetCaches(sheetIndex);
       markTabDirty(activeTab.id);
     },
@@ -1002,6 +1086,7 @@ function ExcelModeView({
       if (!(await confirmFormulaCaveat())) return;
 
       applyStructural(
+        `插入 ${count} 行`,
         () => {
           sheet.spliceRows(startRow, count);
           shiftImageAnchors(sheet, "row", startRow - 1, -count);
@@ -1025,6 +1110,7 @@ function ExcelModeView({
 
       const captured = captureRows(sheet, startRow, count);
       applyStructural(
+        `删除 ${count} 行`,
         () => {
           sheet.spliceRows(startRow, 0, ...emptySlots(count));
           captured.forEach((item, offset) => restoreRowSnapshot(sheet, startRow + offset, item));
@@ -1048,6 +1134,7 @@ function ExcelModeView({
       if (!(await confirmFormulaCaveat())) return;
 
       applyStructural(
+        `插入 ${count} 列`,
         () => {
           sheet.spliceColumns(startColumn, count);
           shiftImageAnchors(sheet, "column", startColumn - 1, -count);
@@ -1073,6 +1160,7 @@ function ExcelModeView({
         captureColumn(sheet, startColumn + offset),
       );
       applyStructural(
+        `删除 ${count} 列`,
         () => {
           sheet.spliceColumns(startColumn, 0, ...emptySlots(count));
           captured.forEach((item, offset) =>
@@ -1110,6 +1198,167 @@ function ExcelModeView({
     },
     [activeTab.id, doc, layout, markTabDirty, sheetIndex],
   );
+
+  /** 对选区内的已有格应用样式；旧样式留档供撤销，数字格式变化会重算显示文本 */
+  const applyStyleToSelection = useCallback(
+    (label: string, mutate: (cell: Cell) => void) => {
+      if (isReadOnly || !doc || !layout) return;
+      const sheet = doc.workbook.worksheets[sheetIndex];
+      const snapshot = layout.snapshot;
+      const targets = collectPresentCells(snapshot, selectionBounds(selection));
+      if (targets.length === 0) {
+        showNotification("选区内没有内容，格式只作用于已有数据的单元格", "info");
+        return;
+      }
+
+      const before = targets.map((target) => ({
+        ...target,
+        style: sheet.getCell(target.row, target.column).style,
+      }));
+
+      const applyStyles = () => {
+        for (const target of targets) {
+          mutate(sheet.getCell(target.row, target.column));
+          refreshSnapshotCell(snapshot, sheet, target.row, target.column);
+        }
+      };
+
+      const restoreStyles = () => {
+        for (const entry of before) {
+          const cell = sheet.getCell(entry.row, entry.column);
+          cell.style = entry.style;
+          refreshSnapshotCell(snapshot, sheet, entry.row, entry.column);
+        }
+      };
+
+      applyStructural(label, restoreStyles, applyStyles);
+    },
+    [applyStructural, doc, isReadOnly, layout, selection, sheetIndex, showNotification],
+  );
+
+  const toggleFontStyle = useCallback(
+    (key: "bold" | "italic" | "underline", label: string) => {
+      if (!doc || !layout) return;
+      const sheet = doc.workbook.worksheets[sheetIndex];
+      const hasValue = layout.snapshot.cells.get(selection.row)?.has(selection.column) ?? false;
+      const current = hasValue
+        ? Boolean(sheet.getCell(selection.row, selection.column).font?.[key])
+        : false;
+
+      applyStyleToSelection(label, (cell) => {
+        cell.font = { ...(cell.font ?? {}), [key]: !current };
+      });
+    },
+    [applyStyleToSelection, doc, layout, selection, sheetIndex],
+  );
+
+  const applyNumberFormat = useCallback(
+    (format: string, label: string) => {
+      applyStyleToSelection(label, (cell) => {
+        cell.numFmt = format;
+      });
+    },
+    [applyStyleToSelection],
+  );
+
+  const applyAlignment = useCallback(
+    (horizontal: "left" | "center" | "right", label: string) => {
+      applyStyleToSelection(label, (cell) => {
+        cell.alignment = { ...(cell.alignment ?? {}), horizontal };
+      });
+    },
+    [applyStyleToSelection],
+  );
+
+  const applyColor = useCallback(
+    (target: "fill" | "font", argb: string | null) => {
+      if (target === "fill") {
+        applyStyleToSelection(argb ? "设置填充色" : "清除填充色", (cell) => {
+          cell.fill = argb
+            ? { type: "pattern", pattern: "solid", fgColor: { argb } }
+            : { type: "pattern", pattern: "none" };
+        });
+        return;
+      }
+
+      applyStyleToSelection(argb ? "设置字体颜色" : "恢复默认字体色", (cell) => {
+        cell.font = { ...(cell.font ?? {}), color: argb ? { argb } : undefined };
+      });
+    },
+    [applyStyleToSelection],
+  );
+
+  /** 合并 / 取消合并所选区域（单格无效） */
+  const toggleMerge = useCallback(() => {
+    if (isReadOnly || !doc || !layout) return;
+    const sheet = doc.workbook.worksheets[sheetIndex];
+    const bounds = selectionBounds(selection);
+    if (bounds.top === bounds.bottom && bounds.left === bounds.right) {
+      showNotification("请先选择至少两个单元格", "info");
+      return;
+    }
+
+    const range = `${columnLetter(bounds.left)}${bounds.top}:${columnLetter(bounds.right)}${bounds.bottom}`;
+    const alreadyMerged = layout.snapshot.merges.spans.has(`${bounds.top}:${bounds.left}`);
+    const merge = () => {
+      try {
+        sheet.mergeCells(range);
+      } catch {
+        // 与已有合并区重叠时 exceljs 会抛错
+      }
+    };
+    const unmerge = () => {
+      try {
+        sheet.unMergeCells(range);
+      } catch {
+        // 未合并时忽略
+      }
+    };
+
+    if (alreadyMerged) {
+      applyStructural("取消合并", merge, unmerge);
+      showNotification("已取消合并", "success");
+    } else {
+      applyStructural("合并单元格", unmerge, merge);
+      showNotification("已合并单元格", "success");
+    }
+  }, [applyStructural, doc, isReadOnly, layout, selection, sheetIndex, showNotification]);
+
+  /** 活动单元格的粗体/斜体/下划线状态（工具栏按钮高亮用） */
+  const activeFont = useMemo(() => {
+    const sheet = doc?.workbook.worksheets[sheetIndex];
+    const hasValue = layout?.snapshot.cells.get(selection.row)?.has(selection.column) ?? false;
+    const font = sheet && hasValue ? sheet.getCell(selection.row, selection.column).font : undefined;
+    return {
+      bold: Boolean(font?.bold),
+      italic: Boolean(font?.italic),
+      underline: Boolean(font?.underline),
+    };
+  }, [doc, layout, selection, sheetIndex]);
+
+  /** 格式菜单：颜色 / 对齐 / 数字格式 */
+  const formatMenuItems = useMemo(() => {
+    const separator = { label: "", separator: true, onClick: () => {} };
+    const openPalette = (target: "fill" | "font") => {
+      setPalette({ x: formatMenu?.x ?? 0, y: formatMenu?.y ?? 0, target });
+    };
+
+    return [
+      { label: "填充颜色…", onClick: () => openPalette("fill") },
+      { label: "字体颜色…", onClick: () => openPalette("font") },
+      separator,
+      { label: "左对齐", onClick: () => applyAlignment("left", "左对齐") },
+      { label: "居中", onClick: () => applyAlignment("center", "居中") },
+      { label: "右对齐", onClick: () => applyAlignment("right", "右对齐") },
+      separator,
+      { label: "常规", onClick: () => applyNumberFormat("General", "常规格式") },
+      { label: "数字 0.00", onClick: () => applyNumberFormat("0.00", "数字格式") },
+      { label: "千分位 #,##0.00", onClick: () => applyNumberFormat("#,##0.00", "千分位格式") },
+      { label: "百分比 0.00%", onClick: () => applyNumberFormat("0.00%", "百分比格式") },
+      { label: "货币 ¥#,##0.00", onClick: () => applyNumberFormat("¥#,##0.00", "货币格式") },
+      { label: "日期 yyyy-mm-dd", onClick: () => applyNumberFormat("yyyy-mm-dd", "日期格式") },
+    ];
+  }, [applyAlignment, applyNumberFormat, formatMenu]);
 
   /** 行列菜单：插入/删除行列与列宽自适应（按当前选区大小） */
   const rowColumnMenuItems = useMemo(() => {
@@ -1357,6 +1606,21 @@ function ExcelModeView({
         } else if (key === "a") {
           event.preventDefault();
           selectAllData();
+        } else if (key === "b") {
+          event.preventDefault();
+          toggleFontStyle("bold", "加粗");
+        } else if (key === "i") {
+          event.preventDefault();
+          toggleFontStyle("italic", "倾斜");
+        } else if (key === "u") {
+          event.preventDefault();
+          toggleFontStyle("underline", "下划线");
+        } else if (event.shiftKey && /^Digit[1-6]$/.test(event.code)) {
+          event.preventDefault();
+          const shortcut = NUMBER_FORMAT_SHORTCUTS[Number(event.code.slice(-1))];
+          if (shortcut) {
+            applyNumberFormat(shortcut.format, shortcut.label);
+          }
         } else if (key === "pageup") {
           event.preventDefault();
           switchSheet(Math.max(0, sheetIndex - 1));
@@ -1418,6 +1682,7 @@ function ExcelModeView({
     [
       activeTab.id,
       applyHistory,
+      applyNumberFormat,
       clearSelection,
       copySelection,
       cutSelection,
@@ -1433,6 +1698,7 @@ function ExcelModeView({
       sheetIndex,
       startEdit,
       switchSheet,
+      toggleFontStyle,
     ],
   );
 
@@ -1942,6 +2208,64 @@ function ExcelModeView({
           >
             <Info size={12} />
           </span>
+          <div className="flex shrink-0 items-center gap-0.5 rounded border border-border bg-deepest px-1 py-0.5">
+            <button
+              type="button"
+              disabled={isReadOnly}
+              onClick={() => toggleFontStyle("bold", "加粗")}
+              title="加粗 (Ctrl+B)"
+              className={`h-5 w-5 rounded text-[11px] font-bold transition-colors disabled:opacity-40 ${
+                activeFont.bold ? "bg-accent/15 text-accent" : "text-text-muted hover:text-accent"
+              }`}
+            >
+              B
+            </button>
+            <button
+              type="button"
+              disabled={isReadOnly}
+              onClick={() => toggleFontStyle("italic", "倾斜")}
+              title="倾斜 (Ctrl+I)"
+              className={`h-5 w-5 rounded text-[11px] italic transition-colors disabled:opacity-40 ${
+                activeFont.italic ? "bg-accent/15 text-accent" : "text-text-muted hover:text-accent"
+              }`}
+            >
+              I
+            </button>
+            <button
+              type="button"
+              disabled={isReadOnly}
+              onClick={() => toggleFontStyle("underline", "下划线")}
+              title="下划线 (Ctrl+U)"
+              className={`h-5 w-5 rounded text-[11px] underline transition-colors disabled:opacity-40 ${
+                activeFont.underline ? "bg-accent/15 text-accent" : "text-text-muted hover:text-accent"
+              }`}
+            >
+              U
+            </button>
+          </div>
+          <button
+            type="button"
+            disabled={isReadOnly}
+            onClick={toggleMerge}
+            title="合并 / 取消合并所选单元格"
+            className="flex items-center gap-1 rounded border border-border bg-deepest px-2 py-1 text-[11px] text-text-muted transition-colors hover:text-accent disabled:opacity-40 disabled:hover:text-text-muted"
+          >
+            <Merge size={13} />
+            合并
+          </button>
+          <button
+            type="button"
+            disabled={isReadOnly}
+            title="填充色 / 字体色 / 对齐 / 数字格式"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setFormatMenu({ x: rect.left, y: rect.bottom + 2 });
+            }}
+            className="flex items-center gap-1 rounded border border-border bg-deepest px-2 py-1 text-[11px] text-text-muted transition-colors hover:text-accent disabled:opacity-40 disabled:hover:text-text-muted"
+          >
+            <PaintBucket size={13} />
+            格式
+          </button>
           <button
             type="button"
             disabled={isReadOnly}
@@ -2357,6 +2681,54 @@ function ExcelModeView({
           items={sheetMenuItems}
           onClose={() => setSheetMenu(null)}
         />
+      )}
+
+      {formatMenu && (
+        <ContextMenu
+          x={formatMenu.x}
+          y={formatMenu.y}
+          items={formatMenuItems}
+          onClose={() => setFormatMenu(null)}
+        />
+      )}
+
+      {palette && (
+        <>
+          <div className="fixed inset-0 z-40" onMouseDown={() => setPalette(null)} />
+          <div
+            className="fixed z-50 rounded-lg border border-border bg-surface p-2 shadow-xl"
+            style={{ left: palette.x, top: palette.y }}
+          >
+            <div className="mb-1 text-[10px] text-text-muted">
+              {palette.target === "fill" ? "填充颜色" : "字体颜色"}
+            </div>
+            <div className="grid grid-cols-6 gap-1">
+              {(palette.target === "fill" ? FILL_PALETTE : FONT_PALETTE).map((color) => (
+                <button
+                  key={color.argb}
+                  type="button"
+                  title={color.name}
+                  onClick={() => {
+                    applyColor(palette.target, color.argb);
+                    setPalette(null);
+                  }}
+                  className="h-5 w-5 rounded border border-border/60 transition-transform hover:scale-110"
+                  style={{ background: `#${color.argb.slice(2)}` }}
+                />
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                applyColor(palette.target, null);
+                setPalette(null);
+              }}
+              className="mt-2 w-full rounded border border-border px-2 py-0.5 text-[11px] text-text-secondary hover:text-accent"
+            >
+              清除颜色
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
