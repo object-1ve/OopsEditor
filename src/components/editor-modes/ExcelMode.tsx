@@ -69,8 +69,54 @@ interface SheetSnapshot {
 }
 
 interface Selection {
+  /** 活动单元格：编辑输入、粘贴、插入图片的落点 */
   row: number;
   column: number;
+  /** 选区终点；与 row/column 相同即单格 */
+  endRow: number;
+  endColumn: number;
+}
+
+/** 单格选择 */
+function cellSelection(row: number, column: number): Selection {
+  return { row, column, endRow: row, endColumn: column };
+}
+
+/** 选区边界（1-based，含端点） */
+function selectionBounds(selection: Selection) {
+  return {
+    top: Math.min(selection.row, selection.endRow),
+    bottom: Math.max(selection.row, selection.endRow),
+    left: Math.min(selection.column, selection.endColumn),
+    right: Math.max(selection.column, selection.endColumn),
+  };
+}
+
+function isCellInSelection(selection: Selection, row: number, column: number): boolean {
+  const bounds = selectionBounds(selection);
+  return row >= bounds.top && row <= bounds.bottom && column >= bounds.left && column <= bounds.right;
+}
+
+/** 选区是否只含一个单元格 */
+function isSingleCell(selection: Selection): boolean {
+  return selection.row === selection.endRow && selection.column === selection.endColumn;
+}
+
+/** 地址文本：B3 或 B3:D5 */
+function selectionLabel(selection: Selection): string {
+  const bounds = selectionBounds(selection);
+  const start = `${columnLetter(bounds.left)}${bounds.top}`;
+  return isSingleCell(selection) ? start : `${start}:${columnLetter(bounds.right)}${bounds.bottom}`;
+}
+
+/** 单元格展示文本 → 数值（容忍千分位与百分号），用于选区统计 */
+function parseNumericText(text: string): number | null {
+  const cleaned = text.replace(/,/g, "").trim();
+  if (!cleaned) return null;
+  const isPercent = cleaned.endsWith("%");
+  const value = Number(isPercent ? cleaned.slice(0, -1) : cleaned);
+  if (!Number.isFinite(value)) return null;
+  return isPercent ? value / 100 : value;
 }
 
 interface CellChange {
@@ -391,7 +437,11 @@ function isCellInImage(image: SheetImage, row: number, column: number): boolean 
 }
 
 /** 合并区从属格 → 左上角 master；自由格原样返回 */
-function resolveMergeOwner(merges: MergeIndex, row: number, column: number): Selection {
+function resolveMergeOwner(
+  merges: MergeIndex,
+  row: number,
+  column: number,
+): { row: number; column: number } {
   const owner = merges.owners.get(`${row}:${column}`);
   if (!owner) return { row, column };
   const [ownerRow, ownerColumn] = owner.split(":").map(Number);
@@ -459,7 +509,7 @@ function ExcelModeView({
   const [doc, setDoc] = useState<ExcelDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sheetIndex, setSheetIndex] = useState(0);
-  const [selection, setSelection] = useState<Selection>({ row: 1, column: 1 });
+  const [selection, setSelection] = useState<Selection>(() => cellSelection(1, 1));
   const [editing, setEditing] = useState<{ row: number; column: number; value: string } | null>(null);
   const [scroll, setScroll] = useState({ left: 0, top: 0 });
   const [viewport, setViewport] = useState({ width: 900, height: 500 });
@@ -492,6 +542,8 @@ function ExcelModeView({
     startSize: number;
     size: number;
   } | null>(null);
+  /** 鼠标按下后是否处于拖拽选择中 */
+  const dragSelectRef = useRef(false);
 
   const revision = activeTab.revision ?? 0;
   const isReadOnly = Boolean(activeTab.isReadOnly);
@@ -511,7 +563,7 @@ function ExcelModeView({
         }
         setDoc(loaded);
         setSheetIndex(0);
-        setSelection({ row: 1, column: 1 });
+        setSelection(cellSelection(1, 1));
         snapshotsRef.current = new Map();
         historyRef.current = { entries: [], index: -1 };
         setHistoryState({ canUndo: false, canRedo: false });
@@ -571,6 +623,15 @@ function ExcelModeView({
     input?.focus();
     input?.select();
   }, [editing]);
+
+  // 松开鼠标即结束拖拽选择
+  useEffect(() => {
+    const stopDragSelect = () => {
+      dragSelectRef.current = false;
+    };
+    window.addEventListener("mouseup", stopDragSelect);
+    return () => window.removeEventListener("mouseup", stopDragSelect);
+  }, []);
 
   // 切换或新增工作表后，把当前标签滚进可视区
   useEffect(() => {
@@ -732,7 +793,7 @@ function ExcelModeView({
         canRedo: history.index < history.entries.length - 1,
       });
       setSheetIndex(entry.sheetIndex);
-      setSelection({ row: entry.changes[0].row, column: entry.changes[0].column });
+      setSelection(cellSelection(entry.changes[0].row, entry.changes[0].column));
       setLayoutVersion((version) => version + 1);
       markTabDirty(activeTab.id);
     },
@@ -764,8 +825,21 @@ function ExcelModeView({
       setSelection((previous) => {
         const row = Math.min(Math.max(1, previous.row + rowDelta), layout?.rowCount ?? 1);
         const column = Math.min(Math.max(1, previous.column + columnDelta), layout?.columnCount ?? 1);
-        return layout ? resolveMergeOwner(layout.snapshot.merges, row, column) : { row, column };
+        const target = layout ? resolveMergeOwner(layout.snapshot.merges, row, column) : { row, column };
+        return cellSelection(target.row, target.column);
       });
+    },
+    [layout],
+  );
+
+  /** Shift+方向键：活动单元格移动、锚点留在原地，形成/收缩选区 */
+  const extendSelection = useCallback(
+    (rowDelta: number, columnDelta: number) => {
+      setSelection((previous) => ({
+        ...previous,
+        row: Math.min(Math.max(1, previous.row + rowDelta), layout?.rowCount ?? 1),
+        column: Math.min(Math.max(1, previous.column + columnDelta), layout?.columnCount ?? 1),
+      }));
     },
     [layout],
   );
@@ -773,10 +847,26 @@ function ExcelModeView({
   /** 点选单元格：合并区内的从属格统一落到 master 上 */
   const selectCell = useCallback(
     (row: number, column: number) => {
-      setSelection(layout ? resolveMergeOwner(layout.snapshot.merges, row, column) : { row, column });
+      const target = layout ? resolveMergeOwner(layout.snapshot.merges, row, column) : { row, column };
+      setSelection(cellSelection(target.row, target.column));
     },
     [layout],
   );
+
+  /** 拖拽选择：锚点保持不动，终点跟随鼠标所在格 */
+  const extendSelectionTo = useCallback((row: number, column: number) => {
+    setSelection((previous) => ({ ...previous, endRow: row, endColumn: column }));
+  }, []);
+
+  const selectAllData = useCallback(() => {
+    if (!layout) return;
+    setSelection({
+      row: 1,
+      column: 1,
+      endRow: layout.snapshot.rowCount,
+      endColumn: layout.snapshot.columnCount,
+    });
+  }, [layout]);
 
   const startEdit = useCallback(
     (row: number, column: number, initialValue?: string) => {
@@ -795,7 +885,7 @@ function ExcelModeView({
         value = hasValue ? cellEditText(layout.sheet.getCell(targetRow, targetColumn).value) : "";
       }
 
-      setSelection({ row: targetRow, column: targetColumn });
+      setSelection(cellSelection(targetRow, targetColumn));
       setEditing({ row: targetRow, column: targetColumn, value });
     },
     [isReadOnly, layout],
@@ -823,17 +913,52 @@ function ExcelModeView({
     [applyChanges, editing, layout, moveSelection],
   );
 
+  /** 清空选区内容（整片作为一步撤销） */
   const clearSelection = useCallback(() => {
     if (isReadOnly || !layout) return;
 
-    const hasValue = layout.snapshot.cells.get(selection.row)?.has(selection.column) ?? false;
-    if (!hasValue) return;
+    const bounds = selectionBounds(selection);
+    const changes: CellChange[] = [];
 
-    const cell = layout.sheet.getCell(selection.row, selection.column);
-    const before = cell.value;
-    cell.value = null;
-    applyChanges([{ row: selection.row, column: selection.column, before, after: null }]);
+    for (let row = bounds.top; row <= bounds.bottom; row += 1) {
+      const rowCells = layout.snapshot.cells.get(row);
+      if (!rowCells) continue;
+      for (let column = bounds.left; column <= bounds.right; column += 1) {
+        // 只碰本来就有的格子，避免为清空而在工作簿里建出空行
+        if (!rowCells.has(column)) continue;
+        const cell = layout.sheet.getCell(row, column);
+        const before = cell.value;
+        cell.value = null;
+        changes.push({ row, column, before, after: null });
+      }
+    }
+
+    if (changes.length === 0) return;
+    applyChanges(changes);
   }, [applyChanges, isReadOnly, layout, selection]);
+
+  /** 复制选区为 TSV（制表符分列、换行分行，可直接粘进 Excel） */
+  const copySelection = useCallback(() => {
+    if (!layout) return;
+
+    const bounds = selectionBounds(selection);
+    const lines: string[] = [];
+    for (let row = bounds.top; row <= bounds.bottom; row += 1) {
+      const rowCells = layout.snapshot.cells.get(row);
+      const cells: string[] = [];
+      for (let column = bounds.left; column <= bounds.right; column += 1) {
+        cells.push(rowCells?.get(column)?.text ?? "");
+      }
+      lines.push(cells.join("\t"));
+    }
+    void copyTextToClipboard(lines.join("\n"));
+  }, [layout, selection]);
+
+  const cutSelection = useCallback(() => {
+    if (isReadOnly) return;
+    copySelection();
+    clearSelection();
+  }, [clearSelection, copySelection, isReadOnly]);
 
   const handleEditKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -882,8 +1007,13 @@ function ExcelModeView({
           applyHistory(1);
         } else if (key === "c") {
           event.preventDefault();
-          const text = layout.snapshot.cells.get(selection.row)?.get(selection.column)?.text ?? "";
-          void copyTextToClipboard(text);
+          copySelection();
+        } else if (key === "x") {
+          event.preventDefault();
+          cutSelection();
+        } else if (key === "a") {
+          event.preventDefault();
+          selectAllData();
         }
         return;
       }
@@ -891,19 +1021,23 @@ function ExcelModeView({
       switch (event.key) {
         case "ArrowUp":
           event.preventDefault();
-          moveSelection(-1, 0);
+          if (event.shiftKey) extendSelection(-1, 0);
+          else moveSelection(-1, 0);
           return;
         case "ArrowDown":
           event.preventDefault();
-          moveSelection(1, 0);
+          if (event.shiftKey) extendSelection(1, 0);
+          else moveSelection(1, 0);
           return;
         case "ArrowLeft":
           event.preventDefault();
-          moveSelection(0, -1);
+          if (event.shiftKey) extendSelection(0, -1);
+          else moveSelection(0, -1);
           return;
         case "ArrowRight":
           event.preventDefault();
-          moveSelection(0, 1);
+          if (event.shiftKey) extendSelection(0, 1);
+          else moveSelection(0, 1);
           return;
         case "Enter":
           event.preventDefault();
@@ -936,12 +1070,16 @@ function ExcelModeView({
       activeTab.id,
       applyHistory,
       clearSelection,
+      copySelection,
+      cutSelection,
       doc,
       editing,
+      extendSelection,
       isReadOnly,
       layout,
       moveSelection,
       saveActiveTab,
+      selectAllData,
       selection,
       startEdit,
     ],
@@ -1094,6 +1232,30 @@ function ExcelModeView({
     [images, selection],
   );
 
+  /** 选区数值统计（状态栏显示求和/计数/平均） */
+  const selectionStats = useMemo(() => {
+    if (!layout || isSingleCell(selection)) return null;
+
+    const bounds = selectionBounds(selection);
+    let count = 0;
+    let sum = 0;
+
+    for (let row = bounds.top; row <= bounds.bottom; row += 1) {
+      const rowCells = layout.snapshot.cells.get(row);
+      if (!rowCells) continue;
+      for (let column = bounds.left; column <= bounds.right; column += 1) {
+        const cell = rowCells.get(column);
+        if (!cell?.numeric) continue;
+        const value = parseNumericText(cell.text);
+        if (value === null) continue;
+        count += 1;
+        sum += value;
+      }
+    }
+
+    return count > 0 ? { count, sum, average: sum / count } : null;
+  }, [layout, selection]);
+
   const handleInsertImage = useCallback(async () => {
     if (isReadOnly || !doc || !layout || insertingImage) return;
 
@@ -1241,7 +1403,7 @@ function ExcelModeView({
 
   const switchSheet = useCallback((index: number) => {
     setSheetIndex(index);
-    setSelection({ row: 1, column: 1 });
+    setSelection(cellSelection(1, 1));
     setEditing(null);
     const node = gridRef.current;
     if (node) {
@@ -1326,8 +1488,7 @@ function ExcelModeView({
         )}
         <span className="mx-1 h-4 w-px shrink-0 bg-border" />
         <span className="shrink-0 rounded border border-border bg-deepest px-1.5 py-0.5 font-mono text-[11px] text-text-secondary">
-          {columnLetter(selection.column)}
-          {selection.row}
+          {selectionLabel(selection)}
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
           {layout.snapshot.cells.get(selection.row)?.get(selection.column)?.text ?? ""}
@@ -1414,8 +1575,30 @@ function ExcelModeView({
                 <div
                   key={row}
                   style={{ top: layout.rowOffsets[row - 1], height: layout.heights[row - 1] }}
-                  className={`group absolute inset-x-0 flex items-center justify-center border-b border-border/60 text-[10px] ${
-                    selection.row === row ? "bg-accent/10 font-medium text-accent" : "text-text-muted"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    rootRef.current?.focus();
+                    setEditing(null);
+                    // 点行头选中整行；Shift 点选则扩到该行
+                    if (event.shiftKey) {
+                      setSelection((previous) => ({
+                        ...previous,
+                        endRow: row,
+                        endColumn: layout.columnCount,
+                      }));
+                    } else {
+                      setSelection({
+                        row,
+                        column: 1,
+                        endRow: row,
+                        endColumn: layout.columnCount,
+                      });
+                    }
+                  }}
+                  className={`group absolute inset-x-0 flex cursor-default items-center justify-center border-b border-border/60 text-[10px] ${
+                    selectionBounds(selection).top <= row && selectionBounds(selection).bottom >= row
+                      ? "bg-accent/10 font-medium text-accent"
+                      : "text-text-muted"
                   }`}
                 >
                   {row}
@@ -1449,8 +1632,29 @@ function ExcelModeView({
                 <div
                   key={index}
                   style={{ width: layout.widths[index] }}
-                  className={`relative flex h-full items-center justify-center border-r border-border/60 text-[10px] ${
-                    selection.column === index + 1
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    rootRef.current?.focus();
+                    setEditing(null);
+                    // 点列头选中整列；Shift 点选则扩到该列
+                    if (event.shiftKey) {
+                      setSelection((previous) => ({
+                        ...previous,
+                        endRow: layout.rowCount,
+                        endColumn: index + 1,
+                      }));
+                    } else {
+                      setSelection({
+                        row: 1,
+                        column: index + 1,
+                        endRow: layout.rowCount,
+                        endColumn: index + 1,
+                      });
+                    }
+                  }}
+                  className={`relative flex h-full cursor-default items-center justify-center border-r border-border/60 text-[10px] ${
+                    selectionBounds(selection).left <= index + 1 &&
+                    selectionBounds(selection).right >= index + 1
                       ? "bg-accent/10 font-medium text-accent"
                       : "text-text-muted"
                   }`}
@@ -1487,7 +1691,8 @@ function ExcelModeView({
                     ? undefined
                     : layout.snapshot.cells.get(row)?.get(column);
                   const text = snapshotCell?.text ?? "";
-                  const isSelected = selection.row === row && selection.column === column;
+                  const inSelection = isCellInSelection(selection, row, column);
+                  const isActive = selection.row === row && selection.column === column;
 
                   let width = layout.widths[column - 1];
                   let height = layout.heights[row - 1];
@@ -1509,21 +1714,33 @@ function ExcelModeView({
                         left: layout.offsets[column - 1],
                         width,
                         height,
-                        zIndex: isSelected ? 3 : span ? 2 : undefined,
+                        zIndex: isActive ? 3 : span ? 2 : undefined,
                       }}
-                      onMouseDown={() => {
+                      onMouseDown={(event) => {
                         rootRef.current?.focus();
                         // 正在编辑别的单元格时先提交，避免点击丢内容
                         if (editing && (editing.row !== row || editing.column !== column)) {
                           commitEdit(editing.value, 0, 0);
                         }
+                        if (event.shiftKey) {
+                          extendSelectionTo(row, column);
+                          return;
+                        }
+                        dragSelectRef.current = true;
                         selectCell(row, column);
+                      }}
+                      onMouseEnter={() => {
+                        if (dragSelectRef.current) {
+                          extendSelectionTo(row, column);
+                        }
                       }}
                       onDoubleClick={() => startEdit(row, column)}
                       title={text}
                       className={`absolute overflow-hidden whitespace-nowrap border-b border-r border-border/50 px-1.5 text-xs leading-[25px] text-text-primary ${
                         snapshotCell?.numeric ? "text-right" : "text-left"
-                      } ${isSelected ? "bg-accent/5 ring-1 ring-inset ring-accent" : ""}`}
+                      } ${inSelection ? "bg-accent/10" : ""} ${
+                        isActive ? "ring-1 ring-inset ring-accent" : ""
+                      }`}
                     >
                       {text}
                     </div>
@@ -1609,6 +1826,24 @@ function ExcelModeView({
           <Plus size={12} />
           新增
         </button>
+        <div className="ml-auto flex shrink-0 items-center gap-3 pl-3 text-[11px] text-text-secondary">
+          {selectionStats && (
+            <>
+              <span>
+                求和{" "}
+                {selectionStats.sum.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </span>
+              <span>计数 {selectionStats.count}</span>
+              <span>
+                平均{" "}
+                {selectionStats.average.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </span>
+            </>
+          )}
+          {!isSingleCell(selection) && (
+            <span className="text-text-muted">{selectionLabel(selection)}</span>
+          )}
+        </div>
       </div>
     </div>
   );
