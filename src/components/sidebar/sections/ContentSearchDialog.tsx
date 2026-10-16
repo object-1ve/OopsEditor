@@ -396,9 +396,9 @@ export default function ContentSearchDialog({
             )}
           </div>
 
-          {/* 没有查询时结果区只剩提示，候选列表可以把这块空间铺满；有结果时收窄让位给结果 */}
+          {/* 空查询时结果区整块不占位，候选列表可以把省下的高度铺满；有结果时收窄让位给结果 */}
           <div
-            className={`overflow-y-auto px-1.5 py-1.5 ${hasQuery ? "max-h-[196px]" : "max-h-[380px]"}`}
+            className={`overflow-y-auto px-1.5 py-1.5 ${hasQuery ? "max-h-[196px]" : "max-h-[420px]"}`}
           >
             {candidates[activeKind].length === 0 ? (
               <div className="px-2.5 py-2 text-xs text-text-muted">{activeTabHint}</div>
@@ -440,8 +440,8 @@ export default function ContentSearchDialog({
           </div>
         </div>
 
-        {/* Results */}
-        <div className="max-h-[380px] overflow-y-auto p-1.5">
+        {/* Results：空查询时整块不占位（高度让给候选列表），只有能出结果或正在搜索时显示 */}
+        <div className={`overflow-y-auto p-1.5 ${isFresh || searching ? "max-h-[380px]" : "hidden"}`}>
           {isFresh ? (
             <>
               {items.length === 0 && (
@@ -516,11 +516,7 @@ export default function ContentSearchDialog({
             </>
           ) : searching ? (
             <div className="px-3 py-6 text-center text-xs text-text-muted">搜索中...</div>
-          ) : (
-            <div className="px-3 py-6 text-center text-xs text-text-muted">
-              先在 3 个标签里点选范围，再输入关键词按 Enter 或点「搜索」
-            </div>
-          )}
+          ) : null}
         </div>
 
         {/* Hints */}
