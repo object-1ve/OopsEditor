@@ -136,6 +136,24 @@ function parseNumericText(text: string): number | null {
   return isPercent ? value / 100 : value;
 }
 
+/** 解析地址框输入：B12 或 B2:D5（$ 与大小写都可） */
+function parseA1Range(
+  raw: string,
+): { startRow: number; startColumn: number; endRow?: number; endColumn?: number } | null {
+  const match = /^\$?([A-Za-z]+)\$?(\d+)(?::\$?([A-Za-z]+)\$?(\d+))?$/.exec(raw.trim());
+  if (!match) return null;
+
+  const startColumn = columnIndexFromLetter(match[1]);
+  const startRow = Number(match[2]);
+  if (!startColumn || !startRow) return null;
+  if (!match[3]) return { startRow, startColumn };
+
+  const endColumn = columnIndexFromLetter(match[3]);
+  const endRow = Number(match[4]);
+  if (!endColumn || !endRow) return null;
+  return { startRow, startColumn, endRow, endColumn };
+}
+
 /** 文本近似像素宽：全角字符按两倍算，用于列宽自适应 */
 function measureTextWidth(text: string): number {
   let width = 0;
@@ -754,6 +772,13 @@ function ExcelModeView({
   const [dragSheetIndex, setDragSheetIndex] = useState<number | null>(null);
   const [formatMenu, setFormatMenu] = useState<{ x: number; y: number } | null>(null);
   const [palette, setPalette] = useState<{ x: number; y: number; target: "fill" | "font" } | null>(null);
+  const [addressInput, setAddressInput] = useState<string | null>(null);
+  const [fillPreview, setFillPreview] = useState<{
+    top: number;
+    bottom: number;
+    left: number;
+    right: number;
+  } | null>(null);
   const [insertingImage, setInsertingImage] = useState(false);
   // 拖动调整的行高/列宽（像素），拖动过程中即时生效，松开后写入工作簿
   const [columnOverrides, setColumnOverrides] = useState<Record<number, number>>({});
@@ -778,6 +803,9 @@ function ExcelModeView({
   } | null>(null);
   /** 鼠标按下后是否处于拖拽选择中 */
   const dragSelectRef = useRef(false);
+  /** 填充柄拖拽：源区域与当前预览区域 */
+  const fillDragRef = useRef<{ top: number; bottom: number; left: number; right: number } | null>(null);
+  const fillPreviewRef = useRef<{ top: number; bottom: number; left: number; right: number } | null>(null);
 
   const revision = activeTab.revision ?? 0;
   const isReadOnly = Boolean(activeTab.isReadOnly);
@@ -857,15 +885,6 @@ function ExcelModeView({
     input?.focus();
     input?.select();
   }, [editing]);
-
-  // 松开鼠标即结束拖拽选择
-  useEffect(() => {
-    const stopDragSelect = () => {
-      dragSelectRef.current = false;
-    };
-    window.addEventListener("mouseup", stopDragSelect);
-    return () => window.removeEventListener("mouseup", stopDragSelect);
-  }, []);
 
   // 切换或新增工作表后，把当前标签滚进可视区
   useEffect(() => {
@@ -1460,6 +1479,62 @@ function ExcelModeView({
     });
   }, [layout]);
 
+  /** 地址框跳转（B12 / B2:D5） */
+  const gotoAddress = useCallback(
+    (raw: string) => {
+      setAddressInput(null);
+      if (!layout) return;
+
+      const parsed = parseA1Range(raw);
+      if (!parsed) {
+        showNotification("地址格式应为 B12 或 B2:D5", "info");
+        return;
+      }
+
+      const row = Math.min(Math.max(1, parsed.startRow), layout.rowCount);
+      const column = Math.min(Math.max(1, parsed.startColumn), layout.columnCount);
+      const endRow = Math.min(Math.max(1, parsed.endRow ?? parsed.startRow), layout.rowCount);
+      const endColumn = Math.min(Math.max(1, parsed.endColumn ?? parsed.startColumn), layout.columnCount);
+
+      setSelection({ row, column, endRow, endColumn });
+      rootRef.current?.focus();
+    },
+    [layout, showNotification],
+  );
+
+  /** Ctrl+方向键：沿方向走到「有值/空」交界处（Excel 语义） */
+  const jumpToEdge = useCallback(
+    (rowStep: number, columnStep: number) => {
+      if (!layout) return;
+      const bounds = selectionBounds(selection);
+      const hasValue = (row: number, column: number) =>
+        layout.snapshot.cells.get(row)?.has(column) ?? false;
+
+      let row = rowStep > 0 ? bounds.bottom : bounds.top;
+      let column = columnStep > 0 ? bounds.right : bounds.left;
+      const startedOnValue = hasValue(row, column);
+
+      for (;;) {
+        const nextRow = row + rowStep;
+        const nextColumn = column + columnStep;
+        if (
+          nextRow < 1 ||
+          nextRow > layout.rowCount ||
+          nextColumn < 1 ||
+          nextColumn > layout.columnCount
+        ) {
+          break;
+        }
+        row = nextRow;
+        column = nextColumn;
+        if (hasValue(row, column) !== startedOnValue) break;
+      }
+
+      setSelection(cellSelection(row, column));
+    },
+    [layout, selection],
+  );
+
   const startEdit = useCallback(
     (row: number, column: number, initialValue?: string) => {
       if (isReadOnly || !layout) return;
@@ -1552,6 +1627,99 @@ function ExcelModeView({
     clearSelection();
   }, [clearSelection, copySelection, isReadOnly]);
 
+  /** 填充柄落定：数值序列按步长递增，其余按源区复制 */
+  const commitFill = useCallback(
+    (source: { top: number; bottom: number; left: number; right: number }, target: { top: number; bottom: number; left: number; right: number }) => {
+      const sheet = doc?.workbook.worksheets[sheetIndex];
+      if (!sheet || !layout) return;
+
+      const changes: CellChange[] = [];
+      const writeCell = (row: number, column: number, value: CellValue) => {
+        const cell = sheet.getCell(row, column);
+        const before = cell.value;
+        if (isSameCellValue(before, value)) return;
+        cell.value = value;
+        changes.push({ row, column, before, after: value });
+      };
+
+      if (target.bottom > source.bottom) {
+        for (let column = source.left; column <= source.right; column += 1) {
+          const series: string[] = [];
+          for (let row = source.top; row <= source.bottom; row += 1) {
+            series.push(layout.snapshot.cells.get(row)?.get(column)?.text ?? "");
+          }
+          if (series.length === 0) continue;
+
+          const numbers = series.map((text) => parseNumericText(text));
+          const allNumeric = numbers.every((value) => value !== null);
+          const step = numbers.length > 1
+            ? (numbers[numbers.length - 1]! - numbers[0]!) / (numbers.length - 1)
+            : 1;
+          const base = numbers[numbers.length - 1] ?? 0;
+
+          for (let row = source.bottom + 1, offset = 0; row <= target.bottom; row += 1, offset += 1) {
+            if (allNumeric) {
+              writeCell(row, column, base + step * (offset + 1));
+            } else {
+              writeCell(row, column, parseCellInput(series[offset % series.length]));
+            }
+          }
+        }
+      }
+
+      if (target.right > source.right) {
+        for (let row = source.top; row <= source.bottom; row += 1) {
+          const series: string[] = [];
+          for (let column = source.left; column <= source.right; column += 1) {
+            series.push(layout.snapshot.cells.get(row)?.get(column)?.text ?? "");
+          }
+          if (series.length === 0) continue;
+
+          const numbers = series.map((text) => parseNumericText(text));
+          const allNumeric = numbers.every((value) => value !== null);
+          const step = numbers.length > 1
+            ? (numbers[numbers.length - 1]! - numbers[0]!) / (numbers.length - 1)
+            : 1;
+          const base = numbers[numbers.length - 1] ?? 0;
+
+          for (
+            let column = source.right + 1, offset = 0;
+            column <= target.right;
+            column += 1, offset += 1
+          ) {
+            if (allNumeric) {
+              writeCell(row, column, base + step * (offset + 1));
+            } else {
+              writeCell(row, column, parseCellInput(series[offset % series.length]));
+            }
+          }
+        }
+      }
+
+      if (changes.length === 0) return;
+      applyChanges(changes);
+    },
+    [applyChanges, doc, layout, sheetIndex],
+  );
+
+  // 松开鼠标即结束拖拽选择
+  useEffect(() => {
+    const stopDragSelect = () => {
+      dragSelectRef.current = false;
+
+      const source = fillDragRef.current;
+      const target = fillPreviewRef.current;
+      if (source && target) {
+        commitFill(source, target);
+      }
+      fillDragRef.current = null;
+      fillPreviewRef.current = null;
+      setFillPreview(null);
+    };
+    window.addEventListener("mouseup", stopDragSelect);
+    return () => window.removeEventListener("mouseup", stopDragSelect);
+  }, [commitFill]);
+
   const handleEditKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter") {
@@ -1621,6 +1789,29 @@ function ExcelModeView({
           if (shortcut) {
             applyNumberFormat(shortcut.format, shortcut.label);
           }
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          jumpToEdge(-1, 0);
+        } else if (event.key === "ArrowDown") {
+          event.preventDefault();
+          jumpToEdge(1, 0);
+        } else if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          jumpToEdge(0, -1);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          jumpToEdge(0, 1);
+        } else if (event.key === "Home") {
+          event.preventDefault();
+          setSelection(cellSelection(1, 1));
+        } else if (event.key === "End") {
+          event.preventDefault();
+          setSelection({
+            row: layout?.snapshot.rowCount ?? 1,
+            column: layout?.snapshot.columnCount ?? 1,
+            endRow: layout?.snapshot.rowCount ?? 1,
+            endColumn: layout?.snapshot.columnCount ?? 1,
+          });
         } else if (key === "pageup") {
           event.preventDefault();
           switchSheet(Math.max(0, sheetIndex - 1));
@@ -1690,6 +1881,7 @@ function ExcelModeView({
       editing,
       extendSelection,
       isReadOnly,
+      jumpToEdge,
       layout,
       moveSelection,
       saveActiveTab,
@@ -2192,9 +2384,24 @@ function ExcelModeView({
           </span>
         )}
         <span className="mx-1 h-4 w-px shrink-0 bg-border" />
-        <span className="shrink-0 rounded border border-border bg-deepest px-1.5 py-0.5 font-mono text-[11px] text-text-secondary">
-          {selectionLabel(selection)}
-        </span>
+        <input
+          value={addressInput ?? selectionLabel(selection)}
+          onChange={(event) => setAddressInput(event.target.value)}
+          onFocus={() => setAddressInput(selectionLabel(selection))}
+          onBlur={() => setAddressInput(null)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              gotoAddress(addressInput ?? "");
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              setAddressInput(null);
+              rootRef.current?.focus();
+            }
+          }}
+          title="输入单元格地址回车跳转（B12 / B2:D5）"
+          className="w-20 shrink-0 rounded border border-border bg-deepest px-1.5 py-0.5 font-mono text-[11px] text-text-secondary outline-none focus:border-accent"
+        />
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
           {layout.snapshot.cells.get(selection.row)?.get(selection.column)?.text ?? ""}
         </span>
@@ -2511,6 +2718,19 @@ function ExcelModeView({
                         selectCell(row, column);
                       }}
                       onMouseEnter={() => {
+                        const fillSource = fillDragRef.current;
+                        if (fillSource) {
+                          // 只向下 / 向右扩展，且不缩回源区
+                          const next = {
+                            top: fillSource.top,
+                            left: fillSource.left,
+                            bottom: Math.max(fillSource.bottom, row),
+                            right: Math.max(fillSource.right, column),
+                          };
+                          fillPreviewRef.current = next;
+                          setFillPreview(next);
+                          return;
+                        }
                         if (dragSelectRef.current) {
                           extendSelectionTo(row, column);
                         }
@@ -2527,6 +2747,55 @@ function ExcelModeView({
                     </div>
                   );
                 }),
+              )}
+
+              {fillPreview && (
+                <div
+                  style={{
+                    top: layout.rowOffsets[fillPreview.top - 1],
+                    left: layout.offsets[fillPreview.left - 1],
+                    width: (() => {
+                      let total = 0;
+                      for (let column = fillPreview.left; column <= fillPreview.right; column += 1) {
+                        total += layout.widths[column - 1] ?? DEFAULT_COLUMN_WIDTH;
+                      }
+                      return total;
+                    })(),
+                    height: (() => {
+                      let total = 0;
+                      for (let row = fillPreview.top; row <= fillPreview.bottom; row += 1) {
+                        total += layout.heights[row - 1] ?? DEFAULT_ROW_HEIGHT;
+                      }
+                      return total;
+                    })(),
+                  }}
+                  className="pointer-events-none absolute z-[5] border border-dashed border-accent bg-accent/5"
+                />
+              )}
+
+              {!editing && !isReadOnly && (
+                <div
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const bounds = selectionBounds(selection);
+                    fillDragRef.current = bounds;
+                    fillPreviewRef.current = bounds;
+                    setFillPreview(bounds);
+                  }}
+                  title="拖动填充（数字自动递增）"
+                  style={{
+                    top:
+                      (layout.rowOffsets[selectionBounds(selection).bottom - 1] ?? 0) +
+                      (layout.heights[selectionBounds(selection).bottom - 1] ?? DEFAULT_ROW_HEIGHT) -
+                      4,
+                    left:
+                      (layout.offsets[selectionBounds(selection).right - 1] ?? 0) +
+                      (layout.widths[selectionBounds(selection).right - 1] ?? DEFAULT_COLUMN_WIDTH) -
+                      4,
+                  }}
+                  className="absolute z-[6] h-2 w-2 cursor-crosshair rounded-sm border border-white bg-accent"
+                />
               )}
 
               {images.map((image) => {
