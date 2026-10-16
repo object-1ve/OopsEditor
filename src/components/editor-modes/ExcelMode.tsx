@@ -143,6 +143,11 @@ function measureTextWidth(text: string): number {
   return width;
 }
 
+/** exceljs 未在类型里暴露 orderNo，但 worksheets 的顺序就是按它排序的 */
+function setWorksheetOrder(sheet: Worksheet, order: number) {
+  (sheet as unknown as { orderNo?: number }).orderNo = order;
+}
+
 /** exceljs 的 spliceRows / spliceColumns 只用参数个数表达插入数量 */
 function emptySlots(count: number): unknown[][] {
   return Array.from({ length: count }, () => []);
@@ -662,6 +667,9 @@ function ExcelModeView({
   // 插入/删除图片后靠它重新收集当前工作表的图片
   const [imagesVersion, setImagesVersion] = useState(0);
   const [rowColumnMenu, setRowColumnMenu] = useState<{ x: number; y: number } | null>(null);
+  const [sheetMenu, setSheetMenu] = useState<{ x: number; y: number; index: number } | null>(null);
+  const [renamingSheet, setRenamingSheet] = useState<{ index: number; value: string } | null>(null);
+  const [dragSheetIndex, setDragSheetIndex] = useState<number | null>(null);
   const [insertingImage, setInsertingImage] = useState(false);
   // 拖动调整的行高/列宽（像素），拖动过程中即时生效，松开后写入工作簿
   const [columnOverrides, setColumnOverrides] = useState<Record<number, number>>({});
@@ -1181,6 +1189,18 @@ function ExcelModeView({
     setSelection((previous) => ({ ...previous, endRow: row, endColumn: column }));
   }, []);
 
+  const switchSheet = useCallback((index: number) => {
+    setSheetIndex(index);
+    setSelection(cellSelection(1, 1));
+    setEditing(null);
+    const node = gridRef.current;
+    if (node) {
+      node.scrollTop = 0;
+      node.scrollLeft = 0;
+    }
+    setScroll({ left: 0, top: 0 });
+  }, []);
+
   const selectAllData = useCallback(() => {
     if (!layout) return;
     setSelection({
@@ -1337,6 +1357,12 @@ function ExcelModeView({
         } else if (key === "a") {
           event.preventDefault();
           selectAllData();
+        } else if (key === "pageup") {
+          event.preventDefault();
+          switchSheet(Math.max(0, sheetIndex - 1));
+        } else if (key === "pagedown") {
+          event.preventDefault();
+          switchSheet(Math.min(doc.workbook.worksheets.length - 1, sheetIndex + 1));
         }
         return;
       }
@@ -1404,7 +1430,9 @@ function ExcelModeView({
       saveActiveTab,
       selectAllData,
       selection,
+      sheetIndex,
       startEdit,
+      switchSheet,
     ],
   );
 
@@ -1724,18 +1752,6 @@ function ExcelModeView({
       .finally(() => setSaving(false));
   }, [activeTab.id, saveActiveTab, showNotification]);
 
-  const switchSheet = useCallback((index: number) => {
-    setSheetIndex(index);
-    setSelection(cellSelection(1, 1));
-    setEditing(null);
-    const node = gridRef.current;
-    if (node) {
-      node.scrollTop = 0;
-      node.scrollLeft = 0;
-    }
-    setScroll({ left: 0, top: 0 });
-  }, []);
-
   /** 底部新增工作表：命名沿用 Excel 习惯（Sheet1、Sheet2…），并切到新表 */
   const handleAddSheet = useCallback(() => {
     if (isReadOnly || !doc) return;
@@ -1753,6 +1769,106 @@ function ExcelModeView({
     markTabDirty(activeTab.id);
     showNotification(`已新增工作表 ${sheet.name}`, "success");
   }, [activeTab.id, doc, isReadOnly, markTabDirty, showNotification, switchSheet]);
+
+  /** 重命名工作表（重名/空名会被拒绝，编辑态保留让用户改） */
+  const renameSheet = useCallback(
+    (index: number, nextName: string) => {
+      const workbook = doc?.workbook;
+      const sheet = workbook?.worksheets[index];
+      const name = nextName.trim();
+      if (!sheet || !name || name === sheet.name) {
+        setRenamingSheet(null);
+        return;
+      }
+      if (
+        workbook.worksheets.some(
+          (item) => item !== sheet && item.name.toLowerCase() === name.toLowerCase(),
+        )
+      ) {
+        showNotification(`工作表名 "${name}" 已存在`, "error");
+        return;
+      }
+
+      sheet.name = name;
+      setRenamingSheet(null);
+      markTabDirty(activeTab.id);
+    },
+    [activeTab.id, doc, markTabDirty, showNotification],
+  );
+
+  /** 删除工作表（至少要留一个；此操作不可撤销，先确认） */
+  const deleteSheet = useCallback(
+    async (index: number) => {
+      const workbook = doc?.workbook;
+      const sheet = workbook?.worksheets[index];
+      if (!workbook || !sheet) return;
+      if (workbook.worksheets.length <= 1) {
+        showNotification("工作簿至少要保留一个工作表", "info");
+        return;
+      }
+
+      const confirmed = await confirmDialog({
+        title: "删除工作表",
+        message: `将删除工作表 "${sheet.name}" 及其全部内容，此操作无法撤销。是否继续？`,
+        kind: "danger",
+      });
+      if (!confirmed) return;
+
+      workbook.removeWorksheet(sheet.id);
+      // orderNo 压紧（worksheets 按 orderNo 排序）
+      workbook.worksheets.forEach((item, position) => setWorksheetOrder(item, position + 1));
+
+      // 下标变了，缓存全部作废
+      snapshotsRef.current = new Map();
+      setSheetIndex(Math.min(index, workbook.worksheets.length - 1));
+      setSelection(cellSelection(1, 1));
+      setEditing(null);
+      setLayoutVersion((version) => version + 1);
+      setImagesVersion((version) => version + 1);
+      markTabDirty(activeTab.id);
+      showNotification(`已删除工作表 ${sheet.name}`, "success");
+    },
+    [activeTab.id, doc, markTabDirty, showNotification],
+  );
+
+  /** 拖拽重排工作表：只改 orderNo，写盘顺序随之变化 */
+  const moveSheet = useCallback(
+    (from: number, to: number) => {
+      const workbook = doc?.workbook;
+      if (!workbook || from === to) return;
+      const sheets = workbook.worksheets;
+      if (from < 0 || from >= sheets.length || to < 0 || to >= sheets.length) return;
+
+      const ordered = [...sheets];
+      const [moved] = ordered.splice(from, 1);
+      ordered.splice(to, 0, moved);
+      ordered.forEach((sheet, position) => setWorksheetOrder(sheet, position + 1));
+
+      snapshotsRef.current = new Map();
+      setSheetIndex(to);
+      setSelection(cellSelection(1, 1));
+      setEditing(null);
+      setLayoutVersion((version) => version + 1);
+      setImagesVersion((version) => version + 1);
+      markTabDirty(activeTab.id);
+    },
+    [activeTab.id, doc, markTabDirty],
+  );
+
+  /** 工作表标签的右键菜单 */
+  const sheetMenuItems = useMemo(() => {
+    if (!sheetMenu) return [];
+    const target = doc?.workbook.worksheets[sheetMenu.index];
+    return [
+      {
+        label: "重命名",
+        onClick: () => setRenamingSheet({ index: sheetMenu.index, value: target?.name ?? "" }),
+      },
+      { label: "删除工作表", danger: true, onClick: () => void deleteSheet(sheetMenu.index) },
+      { label: "", separator: true, onClick: () => {} },
+      { label: "新增工作表", onClick: handleAddSheet },
+    ];
+  }, [deleteSheet, doc, handleAddSheet, sheetMenu]);
 
   if (error) {
     return (
@@ -2142,21 +2258,59 @@ function ExcelModeView({
         ref={sheetTabsRef}
         className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-border bg-surface/30 px-2 py-1"
       >
-        {doc.workbook.worksheets.map((worksheet, index) => (
-          <button
-            key={worksheet.id}
-            type="button"
-            data-sheet-index={index}
-            onClick={() => switchSheet(index)}
-            className={`shrink-0 rounded px-2 py-0.5 text-[11px] transition-colors ${
-              index === sheetIndex
-                ? "bg-surface text-accent"
-                : "text-text-secondary hover:bg-surface/60"
-            }`}
-          >
-            {worksheet.name}
-          </button>
-        ))}
+        {doc.workbook.worksheets.map((worksheet, index) =>
+          renamingSheet?.index === index ? (
+            <input
+              key={worksheet.id}
+              autoFocus
+              value={renamingSheet.value}
+              onChange={(event) => setRenamingSheet({ index, value: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  renameSheet(index, renamingSheet.value);
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setRenamingSheet(null);
+                }
+              }}
+              onBlur={() => renameSheet(index, renamingSheet.value)}
+              className="w-24 shrink-0 rounded border border-accent bg-primary px-1.5 py-0.5 text-[11px] text-text-primary outline-none"
+            />
+          ) : (
+            <button
+              key={worksheet.id}
+              type="button"
+              data-sheet-index={index}
+              draggable
+              onDragStart={() => setDragSheetIndex(index)}
+              onDragEnd={() => setDragSheetIndex(null)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => {
+                if (dragSheetIndex !== null) {
+                  moveSheet(dragSheetIndex, index);
+                }
+                setDragSheetIndex(null);
+              }}
+              onDoubleClick={() => setRenamingSheet({ index, value: worksheet.name })}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setSheetMenu({ x: event.clientX, y: event.clientY, index });
+              }}
+              onClick={() => switchSheet(index)}
+              title="双击重命名，右键更多操作，可拖动排序"
+              className={`shrink-0 rounded px-2 py-0.5 text-[11px] transition-colors ${
+                dragSheetIndex === index ? "opacity-50" : ""
+              } ${
+                index === sheetIndex
+                  ? "bg-surface text-accent"
+                  : "text-text-secondary hover:bg-surface/60"
+              }`}
+            >
+              {worksheet.name}
+            </button>
+          ),
+        )}
         <button
           type="button"
           onClick={handleAddSheet}
@@ -2193,6 +2347,15 @@ function ExcelModeView({
           y={rowColumnMenu.y}
           items={rowColumnMenuItems}
           onClose={() => setRowColumnMenu(null)}
+        />
+      )}
+
+      {sheetMenu && (
+        <ContextMenu
+          x={sheetMenu.x}
+          y={sheetMenu.y}
+          items={sheetMenuItems}
+          onClose={() => setSheetMenu(null)}
         />
       )}
     </div>
