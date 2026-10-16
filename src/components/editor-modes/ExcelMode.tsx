@@ -13,13 +13,28 @@
  * 点击任意图片调起全屏预览（复用 store 的 imagePreview）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, FileSpreadsheet, ImagePlus, Info, Loader2, Plus, Redo2, Save, Trash2, Undo2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Columns3,
+  FileSpreadsheet,
+  ImagePlus,
+  Info,
+  Loader2,
+  Plus,
+  Redo2,
+  Rows3,
+  Save,
+  Trash2,
+  Undo2,
+} from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
-import type { CellValue, Column, Workbook, Worksheet } from "exceljs";
+import type { CellValue, Column, Row, Style, Workbook, Worksheet } from "exceljs";
 import { loadExcelDoc, type ExcelDoc } from "@/services/excelDocs";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import { useEditorStore } from "@/store/editor";
+import { confirmDialog } from "@/utils/confirmDialog";
+import ContextMenu from "@/components/ContextMenu";
 import type { EditorModeContext, EditorModeAdapter } from "./types";
 
 const DEFAULT_ROW_HEIGHT = 26;
@@ -119,6 +134,121 @@ function parseNumericText(text: string): number | null {
   return isPercent ? value / 100 : value;
 }
 
+/** 文本近似像素宽：全角字符按两倍算，用于列宽自适应 */
+function measureTextWidth(text: string): number {
+  let width = 0;
+  for (const char of text) {
+    width += char.codePointAt(0)! > 0x2e80 ? 14 : 7.2;
+  }
+  return width;
+}
+
+/** exceljs 的 spliceRows / spliceColumns 只用参数个数表达插入数量 */
+function emptySlots(count: number): unknown[][] {
+  return Array.from({ length: count }, () => []);
+}
+
+/** 结构变化后平移图片锚点（exceljs 不会自动移动图片；from 为 0-based 起始行/列） */
+function shiftImageAnchors(sheet: Worksheet, axis: "row" | "column", from: number, delta: number) {
+  for (const media of readSheetMedia(sheet)) {
+    const range = media.range;
+    if (!range) continue;
+    for (const anchor of [range.tl, range.br]) {
+      if (!anchor) continue;
+      const value = axis === "row" ? anchor.row : anchor.col;
+      if (typeof value !== "number" || value < from) continue;
+      if (axis === "row") anchor.row = value + delta;
+      else anchor.col = value + delta;
+    }
+  }
+}
+
+/** exceljs 的类型声明没暴露 Row.style（运行时存在，spliceRows 也会搬它） */
+function readRowStyle(row: Row): Partial<Style> | undefined {
+  return (row as unknown as { style?: Partial<Style> }).style;
+}
+
+function writeRowStyle(row: Row, style: Partial<Style>) {
+  (row as unknown as { style?: Partial<Style> }).style = style;
+}
+
+interface RowSnapshot {
+  values: unknown[];
+  style: Partial<Style>;
+  height?: number;
+  cellStyles: { column: number; style: Partial<Style> }[];
+}
+
+/** 删除行前留档，供撤销恢复值/样式/行高 */
+function captureRows(sheet: Worksheet, startRow: number, count: number): RowSnapshot[] {
+  return Array.from({ length: count }, (_, offset) => {
+    const row = sheet.getRow(startRow + offset);
+    const cellStyles: { column: number; style: Partial<Style> }[] = [];
+    row.eachCell({ includeEmpty: true }, (cell, column) => {
+      cellStyles.push({ column, style: cell.style });
+    });
+    return {
+      values: row.values as unknown[],
+      style: readRowStyle(row) ?? {},
+      height: row.height,
+      cellStyles,
+    };
+  });
+}
+
+function restoreRowSnapshot(sheet: Worksheet, rowNumber: number, snapshot: RowSnapshot) {
+  const row = sheet.getRow(rowNumber);
+  writeRowStyle(row, snapshot.style);
+  if (typeof snapshot.height === "number") {
+    row.height = snapshot.height;
+  }
+  for (const item of snapshot.cellStyles) {
+    row.getCell(item.column).style = item.style;
+  }
+}
+
+interface ColumnSnapshot {
+  width?: number;
+  cells: { row: number; value: CellValue; style: Partial<Style> }[];
+}
+
+/** 删除列前留档（含列宽与有值格的样式） */
+function captureColumn(sheet: Worksheet, column: number): ColumnSnapshot {
+  const cells: ColumnSnapshot["cells"] = [];
+  sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    const cell = row.getCell(column);
+    if (cell.value === null || cell.value === undefined) return;
+    cells.push({ row: rowNumber, value: cell.value, style: cell.style });
+  });
+  return { width: sheet.getColumn(column).width, cells };
+}
+
+function restoreColumnSnapshot(sheet: Worksheet, column: number, snapshot: ColumnSnapshot) {
+  if (typeof snapshot.width === "number") {
+    sheet.getColumn(column).width = snapshot.width;
+  }
+  for (const item of snapshot.cells) {
+    const cell = sheet.getRow(item.row).getCell(column);
+    cell.value = item.value;
+    cell.style = item.style;
+  }
+}
+
+/** 工作表里是否存在公式（插入/删除行列不会调整公式引用，操作前用来提示） */
+function sheetHasFormulas(sheet: Worksheet): boolean {
+  let found = false;
+  sheet.eachRow({ includeEmpty: false }, (row) => {
+    if (found) return;
+    row.eachCell({ includeEmpty: false }, (cell) => {
+      const value = cell.value;
+      if (value && typeof value === "object" && ("formula" in value || "sharedFormula" in value)) {
+        found = true;
+      }
+    });
+  });
+  return found;
+}
+
 interface CellChange {
   row: number;
   column: number;
@@ -130,6 +260,17 @@ interface HistoryEntry {
   sheetIndex: number;
   changes: CellChange[];
 }
+
+/** 结构操作的撤销项：用闭包保存逆操作，避免为每种操作写恢复逻辑 */
+interface StructuralHistoryEntry {
+  kind: "structure";
+  sheetIndex: number;
+  label: string;
+  undo: () => void;
+  redo: () => void;
+}
+
+type HistoryRecord = ({ kind: "cells" } & HistoryEntry) | StructuralHistoryEntry;
 
 /** 1 → A、27 → AA */
 function columnLetter(index: number): string {
@@ -520,6 +661,7 @@ function ExcelModeView({
   const [images, setImages] = useState<SheetImage[]>([]);
   // 插入/删除图片后靠它重新收集当前工作表的图片
   const [imagesVersion, setImagesVersion] = useState(0);
+  const [rowColumnMenu, setRowColumnMenu] = useState<{ x: number; y: number } | null>(null);
   const [insertingImage, setInsertingImage] = useState(false);
   // 拖动调整的行高/列宽（像素），拖动过程中即时生效，松开后写入工作簿
   const [columnOverrides, setColumnOverrides] = useState<Record<number, number>>({});
@@ -531,7 +673,7 @@ function ExcelModeView({
   const gridRef = useRef<HTMLDivElement>(null);
   const sheetTabsRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
-  const historyRef = useRef<{ entries: HistoryEntry[]; index: number }>({ entries: [], index: -1 });
+  const historyRef = useRef<{ entries: HistoryRecord[]; index: number }>({ entries: [], index: -1 });
   const snapshotsRef = useRef<Map<number, SheetSnapshot>>(new Map());
   /** 文件里已定义的行高基线；只按 doc/sheet 变化重读，避免每次布局都遍历行 */
   const storedRowHeightsRef = useRef<Record<number, number>>({});
@@ -758,7 +900,7 @@ function ExcelModeView({
     }
   }, [selection, layout]);
 
-  const pushHistory = useCallback((entry: HistoryEntry) => {
+  const pushHistory = useCallback((entry: HistoryRecord) => {
     const history = historyRef.current;
     history.entries = history.entries.slice(0, history.index + 1);
     history.entries.push(entry);
@@ -776,9 +918,27 @@ function ExcelModeView({
       if (!entry || !doc) return;
 
       const sheet = doc.workbook.worksheets[entry.sheetIndex];
-      const snapshot = snapshotsRef.current.get(entry.sheetIndex);
       if (!sheet) return;
 
+      history.index += direction;
+      setHistoryState({
+        canUndo: history.index >= 0,
+        canRedo: history.index < history.entries.length - 1,
+      });
+      setSheetIndex(entry.sheetIndex);
+
+      if (entry.kind === "structure") {
+        // 结构操作自带逆操作，执行后整表缓存作废
+        if (direction === -1) entry.undo();
+        else entry.redo();
+        snapshotsRef.current.delete(entry.sheetIndex);
+        setLayoutVersion((version) => version + 1);
+        setImagesVersion((version) => version + 1);
+        markTabDirty(activeTab.id);
+        return;
+      }
+
+      const snapshot = snapshotsRef.current.get(entry.sheetIndex);
       for (const change of entry.changes) {
         sheet.getCell(change.row, change.column).value =
           direction === -1 ? change.before : change.after;
@@ -787,18 +947,181 @@ function ExcelModeView({
         }
       }
 
-      history.index += direction;
-      setHistoryState({
-        canUndo: history.index >= 0,
-        canRedo: history.index < history.entries.length - 1,
-      });
-      setSheetIndex(entry.sheetIndex);
       setSelection(cellSelection(entry.changes[0].row, entry.changes[0].column));
       setLayoutVersion((version) => version + 1);
       markTabDirty(activeTab.id);
     },
     [activeTab.id, doc, markTabDirty],
   );
+
+  /** 结构变化后作废该工作表的快照与图片缓存 */
+  const invalidateSheetCaches = useCallback((index: number) => {
+    snapshotsRef.current.delete(index);
+    setLayoutVersion((version) => version + 1);
+    setImagesVersion((version) => version + 1);
+  }, []);
+
+  /** 执行结构操作并记入撤销栈：redo 立即执行，undo 用闭包保存的逆操作 */
+  const applyStructural = useCallback(
+    (undo: () => void, redo: () => void) => {
+      redo();
+      pushHistory({ kind: "structure", sheetIndex, label: "结构操作", undo, redo });
+      invalidateSheetCaches(sheetIndex);
+      markTabDirty(activeTab.id);
+    },
+    [activeTab.id, invalidateSheetCaches, markTabDirty, pushHistory, sheetIndex],
+  );
+
+  /** 插入/删除行列前提醒：exceljs 不会调整公式引用 */
+  const confirmFormulaCaveat = useCallback(async (): Promise<boolean> => {
+    const sheet = doc?.workbook.worksheets[sheetIndex];
+    if (!sheet || !sheetHasFormulas(sheet)) return true;
+
+    return await confirmDialog({
+      title: "公式引用不会自动调整",
+      message:
+        `"${sheet.name}" 里含公式。插入或删除行列后，公式中的单元格引用不会被改写` +
+        "（Excel 会自动调整），请核对公式结果，或先另存为副本再操作。是否继续？",
+      kind: "warning",
+    });
+  }, [doc, sheetIndex]);
+
+  /** 在 startRow（1-based）上方插入 count 行 */
+  const insertRows = useCallback(
+    async (startRow: number, count: number) => {
+      const sheet = doc?.workbook.worksheets[sheetIndex];
+      if (!sheet || count < 1) return;
+      if (!(await confirmFormulaCaveat())) return;
+
+      applyStructural(
+        () => {
+          sheet.spliceRows(startRow, count);
+          shiftImageAnchors(sheet, "row", startRow - 1, -count);
+        },
+        () => {
+          sheet.spliceRows(startRow, 0, ...emptySlots(count));
+          shiftImageAnchors(sheet, "row", startRow - 1, count);
+        },
+      );
+      showNotification(`已插入 ${count} 行`, "success");
+    },
+    [applyStructural, confirmFormulaCaveat, doc, sheetIndex, showNotification],
+  );
+
+  /** 删除 startRow 起的 count 行（撤销时回填值/样式/行高） */
+  const deleteRows = useCallback(
+    async (startRow: number, count: number) => {
+      const sheet = doc?.workbook.worksheets[sheetIndex];
+      if (!sheet || count < 1) return;
+      if (!(await confirmFormulaCaveat())) return;
+
+      const captured = captureRows(sheet, startRow, count);
+      applyStructural(
+        () => {
+          sheet.spliceRows(startRow, 0, ...emptySlots(count));
+          captured.forEach((item, offset) => restoreRowSnapshot(sheet, startRow + offset, item));
+          shiftImageAnchors(sheet, "row", startRow - 1, count);
+        },
+        () => {
+          sheet.spliceRows(startRow, count);
+          shiftImageAnchors(sheet, "row", startRow - 1, -count);
+        },
+      );
+      showNotification(`已删除 ${count} 行`, "success");
+    },
+    [applyStructural, confirmFormulaCaveat, doc, sheetIndex, showNotification],
+  );
+
+  /** 在 startColumn（1-based）左侧插入 count 列 */
+  const insertColumns = useCallback(
+    async (startColumn: number, count: number) => {
+      const sheet = doc?.workbook.worksheets[sheetIndex];
+      if (!sheet || count < 1) return;
+      if (!(await confirmFormulaCaveat())) return;
+
+      applyStructural(
+        () => {
+          sheet.spliceColumns(startColumn, count);
+          shiftImageAnchors(sheet, "column", startColumn - 1, -count);
+        },
+        () => {
+          sheet.spliceColumns(startColumn, 0, ...emptySlots(count));
+          shiftImageAnchors(sheet, "column", startColumn - 1, count);
+        },
+      );
+      showNotification(`已插入 ${count} 列`, "success");
+    },
+    [applyStructural, confirmFormulaCaveat, doc, sheetIndex, showNotification],
+  );
+
+  /** 删除 startColumn 起的 count 列（撤销时回填列宽与有值格） */
+  const deleteColumns = useCallback(
+    async (startColumn: number, count: number) => {
+      const sheet = doc?.workbook.worksheets[sheetIndex];
+      if (!sheet || count < 1) return;
+      if (!(await confirmFormulaCaveat())) return;
+
+      const captured = Array.from({ length: count }, (_, offset) =>
+        captureColumn(sheet, startColumn + offset),
+      );
+      applyStructural(
+        () => {
+          sheet.spliceColumns(startColumn, 0, ...emptySlots(count));
+          captured.forEach((item, offset) =>
+            restoreColumnSnapshot(sheet, startColumn + offset, item),
+          );
+          shiftImageAnchors(sheet, "column", startColumn - 1, count);
+        },
+        () => {
+          sheet.spliceColumns(startColumn, count);
+          shiftImageAnchors(sheet, "column", startColumn - 1, -count);
+        },
+      );
+      showNotification(`已删除 ${count} 列`, "success");
+    },
+    [applyStructural, confirmFormulaCaveat, doc, sheetIndex, showNotification],
+  );
+
+  /** 按内容自适应列宽（列头手柄双击 / 行列菜单） */
+  const autoFitColumn = useCallback(
+    (column: number) => {
+      const sheet = doc?.workbook.worksheets[sheetIndex];
+      if (!sheet || !layout) return;
+
+      let widest = MIN_COLUMN_WIDTH;
+      for (const rowCells of layout.snapshot.cells.values()) {
+        const cell = rowCells.get(column);
+        if (!cell) continue;
+        widest = Math.max(widest, measureTextWidth(cell.text));
+      }
+
+      const width = Math.min(600, Math.round(widest) + 16);
+      setColumnOverrides((previous) => ({ ...previous, [column]: width }));
+      sheet.getColumn(column).width = pixelsToColumnWidth(width);
+      markTabDirty(activeTab.id);
+    },
+    [activeTab.id, doc, layout, markTabDirty, sheetIndex],
+  );
+
+  /** 行列菜单：插入/删除行列与列宽自适应（按当前选区大小） */
+  const rowColumnMenuItems = useMemo(() => {
+    const bounds = selectionBounds(selection);
+    const rows = bounds.bottom - bounds.top + 1;
+    const columns = bounds.right - bounds.left + 1;
+    const separator = { label: "", separator: true, onClick: () => {} };
+
+    return [
+      { label: `在上方插入 ${rows} 行`, onClick: () => void insertRows(bounds.top, rows) },
+      { label: `在下方插入 ${rows} 行`, onClick: () => void insertRows(bounds.bottom + 1, rows) },
+      { label: `删除所选 ${rows} 行`, danger: true, onClick: () => void deleteRows(bounds.top, rows) },
+      separator,
+      { label: `在左侧插入 ${columns} 列`, onClick: () => void insertColumns(bounds.left, columns) },
+      { label: `在右侧插入 ${columns} 列`, onClick: () => void insertColumns(bounds.right + 1, columns) },
+      { label: `删除所选 ${columns} 列`, danger: true, onClick: () => void deleteColumns(bounds.left, columns) },
+      separator,
+      { label: "自适应列宽", onClick: () => autoFitColumn(bounds.left) },
+    ];
+  }, [autoFitColumn, deleteColumns, deleteRows, insertColumns, insertRows, selection]);
 
   /** 批量写入单元格并记入撤销栈（单格编辑与多格粘贴共用） */
   const applyChanges = useCallback(
@@ -813,7 +1136,7 @@ function ExcelModeView({
         }
       }
 
-      pushHistory({ sheetIndex, changes });
+      pushHistory({ kind: "cells", sheetIndex, changes });
       setLayoutVersion((version) => version + 1);
       markTabDirty(activeTab.id);
     },
@@ -1505,6 +1828,20 @@ function ExcelModeView({
           </span>
           <button
             type="button"
+            disabled={isReadOnly}
+            title="插入/删除行列、自适应列宽"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setRowColumnMenu({ x: rect.left, y: rect.bottom + 2 });
+            }}
+            className="flex items-center gap-0.5 rounded border border-border bg-deepest px-2 py-1 text-[11px] text-text-muted transition-colors hover:text-accent disabled:opacity-40 disabled:hover:text-text-muted"
+          >
+            <Rows3 size={13} />
+            <Columns3 size={13} />
+            行列
+          </button>
+          <button
+            type="button"
             onClick={() => void handleInsertImage()}
             disabled={isReadOnly || insertingImage}
             title="插入图片到当前单元格"
@@ -1662,7 +1999,11 @@ function ExcelModeView({
                   {columnLetter(index + 1)}
                   <div
                     onMouseDown={(event) => beginResize("column", index + 1, event)}
-                    title="拖动调整列宽"
+                    onDoubleClick={(event) => {
+                      event.stopPropagation();
+                      autoFitColumn(index + 1);
+                    }}
+                    title="拖动调整列宽，双击自适应"
                     style={{ width: RESIZE_HANDLE_SIZE }}
                     className="absolute inset-y-0 right-0 cursor-col-resize hover:bg-accent/50"
                   />
@@ -1845,6 +2186,15 @@ function ExcelModeView({
           )}
         </div>
       </div>
+
+      {rowColumnMenu && (
+        <ContextMenu
+          x={rowColumnMenu.x}
+          y={rowColumnMenu.y}
+          items={rowColumnMenuItems}
+          onClose={() => setRowColumnMenu(null)}
+        />
+      )}
     </div>
   );
 }

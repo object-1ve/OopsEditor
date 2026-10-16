@@ -10,6 +10,7 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import type { Workbook } from "exceljs";
 import { probeXlsxFidelity, type XlsxFidelityReport } from "@/services/xlsxProbe";
 import { useEditorStore } from "@/store/editor";
+import { confirmDialog } from "@/utils/confirmDialog";
 
 export interface ExcelDoc {
   /** 已解析的工作簿，编辑直接作用于它 */
@@ -102,28 +103,15 @@ export function evictExcelDoc(tabId: string) {
   docs.delete(tabId);
 }
 
-/** 线性取下 resolve；lib 目标是 ES2020，且旧 WebKit 没有 Promise.withResolvers */
-function withResolvers<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
-
 /** 首次保存含“会被丢弃部件”的文件前确认一次；返回用户是否选择继续 */
 function confirmLossySave(labels: string[]): Promise<boolean> {
-  const { promise, resolve } = withResolvers<boolean>();
-  useEditorStore.getState().showModal({
+  return confirmDialog({
     title: "保存会丢失部分内容",
     message:
       `该文件包含编辑器无法保留的内容：${labels.join("、")}。\n` +
       "保存后用 Excel 打开时这些内容会消失（建议先另存为副本再编辑）。是否继续保存？",
     kind: "warning",
-    onConfirm: () => resolve(true),
-    onCancel: () => resolve(false),
   });
-  return promise;
 }
 
 /**
