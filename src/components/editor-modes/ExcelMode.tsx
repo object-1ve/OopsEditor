@@ -296,6 +296,14 @@ function imageExtensionForWrite(filePath: string): "png" | "jpeg" | "gif" | null
   return null;
 }
 
+/** 剪贴板 MIME → ExcelJS 支持的扩展名 */
+function imageExtensionFromMime(mime: string): "png" | "jpeg" | "gif" | null {
+  if (mime === "image/png") return "png";
+  if (mime === "image/jpeg" || mime === "image/jpg") return "jpeg";
+  if (mime === "image/gif") return "gif";
+  return null;
+}
+
 /** exceljs 未公开媒体列表（getImages() 会过滤背景图并丢失原始下标，删除与锚点解析都要用原数组） */
 interface SheetMediaEntry {
   type?: string;
@@ -927,9 +935,72 @@ function ExcelModeView({
     ],
   );
 
+  /** 把一段图片字节插到当前选中格：等比缩放到单元格内并锚定（选文件与粘贴共用） */
+  const insertImageAtSelection = useCallback(
+    async (bytes: Uint8Array, extension: "png" | "jpeg" | "gif", verb: "插入" | "粘贴") => {
+      if (!doc || !layout) return;
+
+      const size = await measureImageBytes(bytes);
+      const cellWidth = layout.widths[selection.column - 1] ?? DEFAULT_COLUMN_WIDTH;
+      const cellHeight = layout.heights[selection.row - 1] ?? DEFAULT_ROW_HEIGHT;
+      const scale = size.width && size.height
+        ? Math.min(cellWidth / size.width, cellHeight / size.height, 1)
+        : 1;
+
+      // exceljs 声明的 Buffer 只是 ArrayBuffer 的类型别名，这里传 Uint8Array，jszip 同样接受
+      const imageId = doc.workbook.addImage({
+        buffer: bytes as unknown as ArrayBuffer,
+        extension,
+      });
+      layout.sheet.addImage(imageId, {
+        tl: { col: selection.column - 1, row: selection.row - 1 },
+        ext: {
+          width: Math.max(1, Math.round((size.width || cellWidth) * scale)),
+          height: Math.max(1, Math.round((size.height || cellHeight) * scale)),
+        },
+      });
+
+      setImagesVersion((version) => version + 1);
+      markTabDirty(activeTab.id);
+      showNotification(
+        `已${verb}图片到 ${columnLetter(selection.column)}${selection.row}`,
+        "success",
+      );
+    },
+    [activeTab.id, doc, layout, markTabDirty, selection, showNotification],
+  );
+
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
-      if (editing || isReadOnly || !doc || !layout) return;
+      if (isReadOnly || !doc || !layout) return;
+
+      // 剪贴板里带图片时优先按图片插入（截图 / 复制的图片文件都能直接粘）
+      const imageFile = Array.from(event.clipboardData.files).find(
+        (file) => file.type.startsWith("image/") || imageExtensionForWrite(file.name) !== null,
+      );
+      if (imageFile) {
+        event.preventDefault();
+        const extension =
+          imageExtensionFromMime(imageFile.type) ?? imageExtensionForWrite(imageFile.name);
+        if (!extension) {
+          showNotification("只支持 PNG / JPG / GIF 图片", "info");
+          return;
+        }
+
+        // 正在编辑单元格时先落定这次输入，再插图片
+        if (editing) {
+          commitEdit(editing.value, 0, 0);
+        }
+
+        void imageFile
+          .arrayBuffer()
+          .then((buffer) => insertImageAtSelection(new Uint8Array(buffer), extension, "粘贴"))
+          .catch((err) => showNotification(`粘贴图片失败: ${String(err)}`, "error"));
+        return;
+      }
+
+      // 纯文本：编辑态交给输入框自己处理
+      if (editing) return;
       const text = event.clipboardData.getData("text/plain");
       if (!text) return;
       event.preventDefault();
@@ -960,7 +1031,17 @@ function ExcelModeView({
       applyChanges(changes);
       showNotification(`已粘贴 ${matrix.length} 行 × ${matrix[0].length} 列`, "success");
     },
-    [applyChanges, doc, editing, isReadOnly, layout, selection, showNotification],
+    [
+      applyChanges,
+      commitEdit,
+      doc,
+      editing,
+      insertImageAtSelection,
+      isReadOnly,
+      layout,
+      selection,
+      showNotification,
+    ],
   );
 
   /** 图片在网格里的绘制矩形：有 br 锚点按覆盖范围，否则按像素尺寸（两者都裁剪到可见区） */
@@ -1019,48 +1100,13 @@ function ExcelModeView({
       }
 
       setInsertingImage(true);
-      const bytes = await readFile(picked);
-      const size = await measureImageBytes(bytes);
-      const cellWidth = layout.widths[selection.column - 1] ?? DEFAULT_COLUMN_WIDTH;
-      const cellHeight = layout.heights[selection.row - 1] ?? DEFAULT_ROW_HEIGHT;
-      const scale = size.width && size.height
-        ? Math.min(cellWidth / size.width, cellHeight / size.height, 1)
-        : 1;
-
-      // exceljs 声明的 Buffer 只是 ArrayBuffer 的类型别名，这里传 Uint8Array，jszip 同样接受
-      const imageId = doc.workbook.addImage({
-        buffer: bytes as unknown as ArrayBuffer,
-        extension,
-      });
-      layout.sheet.addImage(imageId, {
-        tl: { col: selection.column - 1, row: selection.row - 1 },
-        ext: {
-          width: Math.max(1, Math.round((size.width || cellWidth) * scale)),
-          height: Math.max(1, Math.round((size.height || cellHeight) * scale)),
-        },
-      });
-
-      setImagesVersion((version) => version + 1);
-      markTabDirty(activeTab.id);
-      showNotification(
-        `已插入图片到 ${columnLetter(selection.column)}${selection.row}`,
-        "success",
-      );
+      await insertImageAtSelection(await readFile(picked), extension, "插入");
     } catch (err) {
       showNotification(`插入图片失败: ${String(err)}`, "error");
     } finally {
       setInsertingImage(false);
     }
-  }, [
-    activeTab.id,
-    doc,
-    insertingImage,
-    isReadOnly,
-    layout,
-    markTabDirty,
-    selection,
-    showNotification,
-  ]);
+  }, [doc, insertImageAtSelection, insertingImage, isReadOnly, layout, showNotification]);
 
   const handleDeleteImages = useCallback(() => {
     if (isReadOnly || !layout || imagesInSelection.length === 0) return;
