@@ -292,7 +292,66 @@ export default function ContentSearchDialog({
           </button>
         </div>
 
-        {/* 范围：3 个 tab 各列候选，点击候选即加入筛选条件、再点移出（不自动搜索） */}
+        {/* 搜索范围与时间筛选同级；改条件不会自动搜索，点「搜索」/回车才生效 */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 border-b border-border text-xs text-text-muted">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span>搜索范围</span>
+            {scopes.length === 0 ? (
+              <span className="text-text-muted/85">全部（工作区根目录 + 全部会话）</span>
+            ) : (
+              scopes.map((scope) => (
+                <span
+                  key={scopeKey(scope)}
+                  title={scope.detail}
+                  className="flex items-center gap-1 max-w-[220px] px-2 py-1 rounded-md border border-accent/50 bg-accent/10 text-accent"
+                >
+                  <span className="truncate">{scope.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => toggleScope(scope)}
+                    title="移出该范围"
+                    className="p-0.5 rounded transition-colors cursor-pointer hover:bg-accent/15"
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ))
+            )}
+          </div>
+
+          <label className="flex items-center gap-1.5">
+            时间
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              title="起始日期（含当天）"
+              style={{ outline: "none" }}
+              className="px-1.5 py-1 rounded-md border border-border bg-surface text-text text-xs cursor-pointer"
+            />
+            <span>至</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              title="结束日期（含当天）"
+              style={{ outline: "none" }}
+              className="px-1.5 py-1 rounded-md border border-border bg-surface text-text text-xs cursor-pointer"
+            />
+          </label>
+
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="px-2 py-1 rounded-md transition-colors cursor-pointer hover:bg-surface hover:text-text"
+            >
+              清除筛选
+            </button>
+          )}
+        </div>
+
+        {/* 范围候选：3 个 tab，点击候选即加入上面的搜索范围、再点移出（不自动搜索） */}
         <div className="px-4 py-2 border-b border-border text-xs">
           <div className="flex items-center gap-1">
             {tabs.map((tab) => {
@@ -353,63 +412,6 @@ export default function ContentSearchDialog({
               ))
             )}
           </div>
-        </div>
-
-        {/* 已选条件：改条件不会自动搜索，点「搜索」/回车才生效 */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 border-b border-border text-xs text-text-muted">
-          {scopes.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span>范围</span>
-              {scopes.map((scope) => (
-                <span
-                  key={scopeKey(scope)}
-                  title={scope.detail}
-                  className="flex items-center gap-1 max-w-[220px] px-2 py-1 rounded-md border border-accent/50 bg-accent/10 text-accent"
-                >
-                  <span className="truncate">{scope.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => toggleScope(scope)}
-                    title="移出该范围"
-                    className="p-0.5 rounded transition-colors cursor-pointer hover:bg-accent/15"
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          <label className="flex items-center gap-1.5">
-            日期
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              title="起始日期（含当天）"
-              style={{ outline: "none" }}
-              className="px-1.5 py-1 rounded-md border border-border bg-surface text-text text-xs cursor-pointer"
-            />
-            <span>至</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              title="结束日期（含当天）"
-              style={{ outline: "none" }}
-              className="px-1.5 py-1 rounded-md border border-border bg-surface text-text text-xs cursor-pointer"
-            />
-          </label>
-
-          {filtersActive && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="px-2 py-1 rounded-md transition-colors cursor-pointer hover:bg-surface hover:text-text"
-            >
-              清除筛选
-            </button>
-          )}
         </div>
 
         {/* Results */}
