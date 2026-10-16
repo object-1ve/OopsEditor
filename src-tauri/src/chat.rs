@@ -431,14 +431,15 @@ fn match_preview(text: &str, query: &str) -> String {
     line.chars().take(120).collect()
 }
 
-/// 消息搜索：按关键词匹配正文或文件名，可按会话与创建时间范围收窄。
+/// 消息搜索：按关键词匹配正文或文件名，可按会话集合与创建时间范围收窄。
 ///
 /// 关键词走 SQL（LIKE 对 ASCII 大小写不敏感，正文里的中文不受影响）；
-/// 时间范围在 Rust 侧比较 —— `created_at` 带本地时区偏移，字符串比较不可靠。
+/// 会话与时间范围都在 Rust 侧比较 —— 会话是可多选的集合（避免拼 SQL 的 IN 列表），
+/// `created_at` 带本地时区偏移、字符串比较不可靠。
 fn search_messages(
     conn: &Connection,
     query: &str,
-    session_id: Option<i64>,
+    session_ids: &[i64],
     created_after_ms: Option<i64>,
     created_before_ms: Option<i64>,
 ) -> SqlResult<ChatMessageSearchResult> {
@@ -450,11 +451,10 @@ fn search_messages(
          FROM chat_messages m
          JOIN chat_sessions s ON s.id = m.session_id
          WHERE (m.content LIKE ?1 ESCAPE '\\' OR COALESCE(m.file_name, '') LIKE ?1 ESCAPE '\\')
-           AND (?2 IS NULL OR m.session_id = ?2)
          ORDER BY m.id DESC",
     )?;
 
-    let rows = stmt.query_map(params![pattern, session_id], |row| {
+    let rows = stmt.query_map(params![pattern], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, i64>(1)?,
@@ -470,6 +470,10 @@ fn search_messages(
     let mut truncated = false;
     for row in rows {
         let (id, sid, session_title, role, kind, content, created_at) = row?;
+        // 空集合表示不限会话
+        if !session_ids.is_empty() && !session_ids.contains(&sid) {
+            continue;
+        }
         let Some(ms) = parse_ms(&created_at) else { continue };
         if created_after_ms.map_or(false, |after| ms < after) {
             continue;
@@ -687,11 +691,11 @@ pub fn set_chat_message_favorite(id: i64, favorited: bool) -> Result<ChatMessage
         .ok_or_else(|| format!("消息不存在: {}", id))
 }
 
-/// 搜索会话消息（正文或文件名），可按会话与创建时间范围收窄（时间戳为 Unix 毫秒，含端点）
+/// 搜索会话消息（正文或文件名），可按会话集合与创建时间范围收窄（时间戳为 Unix 毫秒，含端点）
 #[tauri::command]
 pub fn search_chat_messages(
     query: String,
-    session_id: Option<i64>,
+    session_ids: Vec<i64>,
     created_after_ms: Option<i64>,
     created_before_ms: Option<i64>,
 ) -> Result<ChatMessageSearchResult, String> {
@@ -699,7 +703,7 @@ pub fn search_chat_messages(
     if query.is_empty() {
         return Ok(ChatMessageSearchResult { matches: Vec::new(), truncated: false });
     }
-    with_db(|conn| search_messages(conn, query, session_id, created_after_ms, created_before_ms))
+    with_db(|conn| search_messages(conn, query, &session_ids, created_after_ms, created_before_ms))
 }
 
 /// 发送文件：只做一次 stat 校验并**记录其本地路径**，不复制内容。
@@ -1127,7 +1131,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = search_messages(&conn, "报表导出", None, None, None).unwrap();
+        let result = search_messages(&conn, "报表导出", &[], None, None).unwrap();
         assert!(!result.truncated);
         assert_eq!(result.matches.len(), 2, "matches: {:?}", result.matches);
         // 最新的排前面：文件消息后插入，排第一
@@ -1139,21 +1143,28 @@ mod tests {
         assert_eq!(result.matches[1].role, "me");
     }
 
-    /// 消息搜索可按会话与创建时间范围收窄（毫秒时间戳，含端点）
+    /// 消息搜索可按会话集合与创建时间范围收窄（毫秒时间戳，含端点）
     #[test]
     fn message_search_scopes_session_and_time() {
         let conn = db();
         let first = insert_session(&conn, "甲").unwrap();
         let second = insert_session(&conn, "乙").unwrap();
+        let third = insert_session(&conn, "丙").unwrap();
         insert_message(&conn, text_message(first.id, "别的 A")).unwrap();
         let old = insert_message(&conn, text_message(second.id, "关键词 B"))
             .unwrap()
             .unwrap();
         insert_message(&conn, text_message(second.id, "关键词 C")).unwrap();
+        insert_message(&conn, text_message(third.id, "关键词 D")).unwrap();
 
-        let scoped = search_messages(&conn, "关键词", Some(second.id), None, None).unwrap();
+        let scoped = search_messages(&conn, "关键词", &[second.id], None, None).unwrap();
         assert_eq!(scoped.matches.len(), 2, "matches: {:?}", scoped.matches);
         assert!(scoped.matches.iter().all(|m| m.session_id == second.id));
+
+        // 多选会话：甲、乙都在范围内，丙被排除
+        let multi = search_messages(&conn, "关键词", &[first.id, second.id], None, None).unwrap();
+        assert_eq!(multi.matches.len(), 3, "matches: {:?}", multi.matches);
+        assert!(multi.matches.iter().all(|m| m.session_id != third.id));
 
         // B 的创建时间挪到很久以前：按时间下界应把它过滤掉
         conn.execute(
@@ -1162,11 +1173,11 @@ mod tests {
         )
         .unwrap();
         let cut = parse_ms("2002-01-01T00:00:00+08:00").unwrap();
-        let recent = search_messages(&conn, "关键词", None, Some(cut), None).unwrap();
-        assert_eq!(recent.matches.len(), 1, "matches: {:?}", recent.matches);
-        assert_eq!(recent.matches[0].content, "关键词 C");
+        let recent = search_messages(&conn, "关键词", &[], Some(cut), None).unwrap();
+        assert_eq!(recent.matches.len(), 2, "matches: {:?}", recent.matches);
+        assert!(recent.matches.iter().all(|m| m.content != "关键词 B"));
 
-        let past = search_messages(&conn, "关键词", None, None, Some(cut)).unwrap();
+        let past = search_messages(&conn, "关键词", &[], None, Some(cut)).unwrap();
         assert_eq!(past.matches.len(), 1, "matches: {:?}", past.matches);
         assert_eq!(past.matches[0].content, "关键词 B");
     }
@@ -1179,9 +1190,9 @@ mod tests {
         insert_message(&conn, text_message(session.id, "覆盖率 80%")).unwrap();
         insert_message(&conn, text_message(session.id, "纯中文内容")).unwrap();
 
-        let percent = search_messages(&conn, "80%", None, None, None).unwrap();
+        let percent = search_messages(&conn, "80%", &[], None, None).unwrap();
         assert_eq!(percent.matches.len(), 1, "matches: {:?}", percent.matches);
-        let underscore = search_messages(&conn, "覆_率", None, None, None).unwrap();
+        let underscore = search_messages(&conn, "覆_率", &[], None, None).unwrap();
         assert!(underscore.matches.is_empty(), "下划线应作为字面量: {:?}", underscore.matches);
     }
 
@@ -1196,7 +1207,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = search_messages(&conn, "关键词", None, None, None).unwrap();
+        let result = search_messages(&conn, "关键词", &[], None, None).unwrap();
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].content.chars().count(), 120);
     }
@@ -1210,7 +1221,7 @@ mod tests {
             insert_message(&conn, text_message(session.id, &format!("关键词 {index}"))).unwrap();
         }
 
-        let result = search_messages(&conn, "关键词", None, None, None).unwrap();
+        let result = search_messages(&conn, "关键词", &[], None, None).unwrap();
         assert!(result.truncated);
         assert_eq!(result.matches.len(), MESSAGE_SEARCH_MAX);
     }

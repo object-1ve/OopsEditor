@@ -576,7 +576,7 @@ struct SearchOptions {
     query: String,
     #[serde(default)]
     case_sensitive: bool,
-    /// 限定到具体文件：单个文件 / 「仅固定文件」（这类文件可能在任意目录），非空时忽略 roots
+    /// 具体文件范围（可多选，这类文件可能在任意目录）；与 roots 并存，结果是两者的并集
     #[serde(default)]
     only_paths: Vec<String>,
     /// 文件修改时间范围（Unix 毫秒，含端点）
@@ -680,7 +680,8 @@ fn search_dir(dir: &std::path::Path, needle: &str, filter: &ContentFilter, out: 
 }
 
 /// 文件内容搜索：命中行 + 是否被截断。
-/// 限定到具体文件（单个文件 / 仅固定文件）时逐个文件搜（它们可能在任意目录）；否则按文件夹范围遍历。
+/// 具体文件（可多选，可能不在任何根目录下）与文件夹范围可同时生效，结果是两者的并集；
+/// 两者都为空时返回空结果（调用方负责在「一个范围都没选」时回落到工作区根目录）。
 #[tauri::command]
 fn search_file_contents(options: SearchOptions) -> Result<ContentSearchResult, String> {
     let query = options.query.trim();
@@ -696,29 +697,28 @@ fn search_file_contents(options: SearchOptions) -> Result<ContentSearchResult, S
     let mut matches = Vec::new();
     let mut truncated = false;
 
-    if !options.only_paths.is_empty() {
-        for path in &options.only_paths {
-            if matches.len() >= SEARCH_MAX_MATCHES {
-                truncated = true;
-                break;
-            }
-            search_file(std::path::Path::new(path), &needle, &filter, &mut matches);
-        }
-        return Ok(ContentSearchResult { matches, truncated });
-    }
-
-    for root in &options.roots {
+    for path in &options.only_paths {
         if matches.len() >= SEARCH_MAX_MATCHES {
             truncated = true;
             break;
         }
-        let root_path = std::path::Path::new(root);
-        if !root_path.is_dir() {
-            continue;
-        }
-        truncated = search_dir(root_path, &needle, &filter, &mut matches);
-        if truncated {
-            break;
+        search_file(std::path::Path::new(path), &needle, &filter, &mut matches);
+    }
+
+    if !truncated {
+        for root in &options.roots {
+            if matches.len() >= SEARCH_MAX_MATCHES {
+                truncated = true;
+                break;
+            }
+            let root_path = std::path::Path::new(root);
+            if !root_path.is_dir() {
+                continue;
+            }
+            truncated = search_dir(root_path, &needle, &filter, &mut matches);
+            if truncated {
+                break;
+            }
         }
     }
     Ok(ContentSearchResult { matches, truncated })
@@ -1118,7 +1118,7 @@ mod content_search_tests {
     }
 
     #[test]
-    fn only_paths_searches_pinned_files_and_ignores_roots() {
+    fn only_paths_searches_pinned_files_without_roots() {
         let root = fixture();
         // 固定文件可能不在任何根目录下：只给文件路径、不给 roots 也应命中
         let pinned = root.join("sub").join("b.md").to_string_lossy().to_string();
@@ -1132,6 +1132,25 @@ mod content_search_tests {
         let mut opts = options(Vec::new(), "hello", false);
         opts.only_paths = vec![root.join("sub").join("c.txt").to_string_lossy().to_string()];
         assert!(search_file_contents(opts).unwrap().matches.is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 具体文件与文件夹范围并存时取并集：文件范围之外的文件照样被补上
+    #[test]
+    fn only_paths_and_roots_are_merged() {
+        let root = fixture();
+        // 只给 sub 目录这一个文件夹 + 根目录下的 a.txt：两处命中都要在
+        let mut opts = options(
+            vec![root.join("sub").to_string_lossy().to_string()],
+            "hello",
+            false,
+        );
+        opts.only_paths = vec![root.join("a.txt").to_string_lossy().to_string()];
+        let result = search_file_contents(opts).unwrap();
+        let paths: Vec<&str> = result.matches.iter().map(|m| m.path.as_str()).collect();
+        assert_eq!(result.matches.len(), 2, "matches: {:?}", result.matches);
+        assert!(paths.iter().any(|p| p.ends_with("a.txt")), "paths: {:?}", paths);
+        assert!(paths.iter().any(|p| p.ends_with("b.md")), "paths: {:?}", paths);
         fs::remove_dir_all(&root).unwrap();
     }
 

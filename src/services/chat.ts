@@ -148,13 +148,14 @@ export interface ChatMessageSearchResult {
 /**
  * 搜索会话消息（正文或文件名）。
  * 时间范围为 Unix 毫秒且含端点；传 null 表示该侧不限。
+ * `sessionIds` 为空数组表示不限会话，非空表示只在选中的会话里搜。
  */
 export function searchChatMessages(
   query: string,
-  sessionId: number | null,
+  sessionIds: number[],
   createdAfterMs: number | null,
   createdBeforeMs: number | null,
 ): Promise<ChatMessageSearchResult> {
-  return invoke("search_chat_messages", { query, sessionId, createdAfterMs, createdBeforeMs });
+  return invoke("search_chat_messages", { query, sessionIds, createdAfterMs, createdBeforeMs });
 }
 
