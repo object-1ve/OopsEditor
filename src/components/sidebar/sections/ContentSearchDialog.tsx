@@ -8,10 +8,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, FileText, Loader2, MessageSquare, Pin, Folder, X } from "lucide-react";
+import { Search, FileText, Loader2, MessageSquare, Pin, Folder, Check, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEditorStore } from "@/store/editor";
+import MaterialFileIcon from "@/components/MaterialFileIcon";
 import { searchChatMessages, type ChatMessageMatch } from "@/services/chat";
 import { formatChatDateTime } from "@/utils/chatTime";
 import {
@@ -250,10 +251,13 @@ export default function ContentSearchDialog({
     }
   };
 
+  // 结果行：左侧选中竖条 + 单行主信息 + 次要信息，形状与候选行一致
   const rowClass = (index: number) =>
-    `w-full text-left px-3.5 py-2.5 rounded-md cursor-pointer transition-colors ${
+    `flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer ${
       index === selectedIndex ? "bg-accent/10" : "hover:bg-surface"
     }`;
+  const rowBarClass = (index: number) =>
+    `mt-1 h-4 w-0.5 shrink-0 rounded-full ${index === selectedIndex ? "bg-accent" : "bg-transparent"}`;
 
   return createPortal(
     <div className="fixed inset-0 z-[1000] flex justify-center items-start pt-[10vh] select-none">
@@ -268,8 +272,8 @@ export default function ContentSearchDialog({
       {/* Dialog */}
       <div className="relative w-full max-w-[620px] mx-4 bg-secondary border border-border rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
         {/* Search box:焦点反馈在整行容器上;输入框 outline 用内联盖掉全局 :focus-visible */}
-        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border transition-colors focus-within:border-accent/60 focus-within:bg-accent/[0.04]">
-          <Search size={20} className="shrink-0 text-text-muted" />
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border transition-colors focus-within:border-accent/50 focus-within:bg-accent/[0.03]">
+          <Search size={18} className="shrink-0 text-text-muted" />
           <input
             ref={inputRef}
             type="text"
@@ -278,65 +282,69 @@ export default function ContentSearchDialog({
             onKeyDown={handleKeyDown}
             placeholder="搜索文件内容 / 会话消息..."
             style={{ outline: "none" }}
-            className="flex-1 bg-transparent border-none text-base font-medium text-text placeholder:text-text-muted placeholder:font-normal"
+            className="flex-1 bg-transparent border-none text-sm font-medium text-text placeholder:text-text-muted placeholder:font-normal"
           />
-          {searching && <Loader2 size={16} className="shrink-0 text-text-muted animate-spin" />}
+          {searching && <Loader2 size={15} className="shrink-0 text-text-muted animate-spin" />}
           <button
             type="button"
             onClick={() => void runSearch()}
             disabled={!hasQuery || searching}
             title="搜索（Enter）"
-            className="shrink-0 px-3 py-1 rounded-lg bg-accent hover:bg-accent-bright text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="shrink-0 px-2.5 py-1 rounded-md bg-accent hover:bg-accent-bright text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             搜索
           </button>
         </div>
 
         {/* 搜索范围与时间筛选同级；改条件不会自动搜索，点「搜索」/回车才生效 */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 border-b border-border text-xs text-text-muted">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 border-b border-border text-xs">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span>搜索范围</span>
+            <span className="text-text-muted">搜索范围</span>
             {scopes.length === 0 ? (
-              <span className="text-text-muted/85">全部（工作区根目录 + 全部会话）</span>
+              <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] text-text-muted">
+                全部（工作区根目录 + 全部会话）
+              </span>
             ) : (
               scopes.map((scope) => (
                 <span
                   key={scopeKey(scope)}
                   title={scope.detail}
-                  className="flex items-center gap-1 max-w-[220px] px-2 py-1 rounded-md border border-accent/50 bg-accent/10 text-accent"
+                  className="flex max-w-[220px] items-center gap-1 rounded-full bg-accent/10 py-0.5 pl-2 pr-1 text-[11px] text-accent"
                 >
                   <span className="truncate">{scope.name}</span>
                   <button
                     type="button"
                     onClick={() => toggleScope(scope)}
                     title="移出该范围"
-                    className="p-0.5 rounded transition-colors cursor-pointer hover:bg-accent/15"
+                    className="rounded-full p-0.5 transition-colors cursor-pointer hover:bg-accent/15"
                   >
-                    <X size={12} />
+                    <X size={11} />
                   </button>
                 </span>
               ))
             )}
           </div>
 
+          <span className="h-4 w-px bg-border" />
+
           <label className="flex items-center gap-1.5">
-            时间
+            <span className="text-text-muted">时间</span>
             <input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
               title="起始日期（含当天）"
               style={{ outline: "none" }}
-              className="px-1.5 py-1 rounded-md border border-border bg-surface text-text text-xs cursor-pointer"
+              className="w-[112px] rounded-md border border-border bg-surface px-1.5 py-1 text-xs text-text cursor-pointer"
             />
-            <span>至</span>
+            <span className="text-text-muted">至</span>
             <input
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
               title="结束日期（含当天）"
               style={{ outline: "none" }}
-              className="px-1.5 py-1 rounded-md border border-border bg-surface text-text text-xs cursor-pointer"
+              className="w-[112px] rounded-md border border-border bg-surface px-1.5 py-1 text-xs text-text cursor-pointer"
             />
           </label>
 
@@ -344,7 +352,7 @@ export default function ContentSearchDialog({
             <button
               type="button"
               onClick={clearFilters}
-              className="px-2 py-1 rounded-md transition-colors cursor-pointer hover:bg-surface hover:text-text"
+              className="ml-auto rounded-md px-2 py-1 text-text-muted transition-colors cursor-pointer hover:bg-surface hover:text-text"
             >
               清除筛选
             </button>
@@ -352,8 +360,8 @@ export default function ContentSearchDialog({
         </div>
 
         {/* 范围候选：3 个 tab，点击候选即加入上面的搜索范围、再点移出（不自动搜索） */}
-        <div className="px-4 py-2 border-b border-border text-xs">
-          <div className="flex items-center gap-1">
+        <div className="flex flex-col border-b border-border">
+          <div className="flex items-center gap-1 px-2.5 pt-2">
             {tabs.map((tab) => {
               const tabCandidates = candidates[tab.kind];
               const picked = tabCandidates.filter((scope) => selectedScopeKeys.has(scopeKey(scope))).length;
@@ -363,13 +371,15 @@ export default function ContentSearchDialog({
                   key={tab.kind}
                   type="button"
                   onClick={() => setActiveKind(tab.kind)}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
-                    active ? "bg-accent/10 text-accent" : "text-text-muted hover:bg-surface hover:text-text"
+                  className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors cursor-pointer ${
+                    active
+                      ? "border-border bg-surface font-medium text-text"
+                      : "border-transparent text-text-muted hover:bg-surface/60 hover:text-text"
                   }`}
                 >
                   {tab.icon}
                   {tab.label}
-                  <span className={active ? "text-accent/80" : "text-text-muted/85"}>
+                  <span className="text-[10px] text-text-muted">
                     {picked > 0 ? `${picked}/${tabCandidates.length}` : tabCandidates.length}
                   </span>
                 </button>
@@ -379,7 +389,7 @@ export default function ContentSearchDialog({
               <button
                 type="button"
                 onClick={() => void (activeKind === "file" ? pickSearchFile() : pickSearchFolder())}
-                className="ml-auto px-2 py-1 rounded-md border border-border text-text-muted transition-colors cursor-pointer hover:bg-surface hover:text-text"
+                className="ml-auto rounded-md border border-border px-2 py-1 text-xs text-text-muted transition-colors cursor-pointer hover:bg-surface hover:text-text"
               >
                 {activeKind === "file" ? "选择文件…" : "选择文件夹…"}
               </button>
@@ -388,28 +398,44 @@ export default function ContentSearchDialog({
 
           {/* 没有查询时结果区只剩提示，候选列表可以把这块空间铺满；有结果时收窄让位给结果 */}
           <div
-            className={`mt-2 flex flex-wrap gap-1.5 overflow-y-auto ${
-              hasQuery ? "max-h-[180px]" : "max-h-[420px]"
-            }`}
+            className={`overflow-y-auto px-1.5 py-1.5 ${hasQuery ? "max-h-[196px]" : "max-h-[380px]"}`}
           >
             {candidates[activeKind].length === 0 ? (
-              <span className="py-1 text-text-muted/85">{activeTabHint}</span>
+              <div className="px-2.5 py-2 text-xs text-text-muted">{activeTabHint}</div>
             ) : (
-              candidates[activeKind].map((scope) => (
-                <button
-                  key={scopeKey(scope)}
-                  type="button"
-                  onClick={() => toggleScope(scope)}
-                  title={scope.detail}
-                  className={`max-w-[200px] truncate px-2 py-1 rounded-md border transition-colors cursor-pointer ${
-                    selectedScopeKeys.has(scopeKey(scope))
-                      ? "border-accent/50 bg-accent/10 text-accent"
-                      : "border-border text-text-muted hover:bg-surface hover:text-text"
-                  }`}
-                >
-                  {scope.name}
-                </button>
-              ))
+              candidates[activeKind].map((scope) => {
+                const selected = selectedScopeKeys.has(scopeKey(scope));
+                return (
+                  <button
+                    key={scopeKey(scope)}
+                    type="button"
+                    onClick={() => toggleScope(scope)}
+                    title={scope.detail}
+                    className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer ${
+                      selected ? "bg-accent/10" : "hover:bg-surface"
+                    }`}
+                  >
+                    <span
+                      className={`h-4 w-0.5 shrink-0 rounded-full ${selected ? "bg-accent" : "bg-transparent"}`}
+                    />
+                    {scope.kind === "file" ? (
+                      <MaterialFileIcon name={scope.name} path={scope.path ?? ""} size={16} />
+                    ) : scope.kind === "folder" ? (
+                      <Folder size={15} className="shrink-0 text-text-muted" />
+                    ) : (
+                      <MessageSquare size={15} className="shrink-0 text-accent/70" />
+                    )}
+                    <span
+                      className={`max-w-[45%] shrink-0 truncate text-sm ${selected ? "font-medium text-accent" : "text-text"}`}
+                    >
+                      {scope.name}
+                    </span>
+                    <span className="shrink-0 text-text-muted">·</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{scope.detail}</span>
+                    {selected && <Check size={14} className="shrink-0 text-accent" />}
+                  </button>
+                );
+              })
             )}
           </div>
         </div>
@@ -419,11 +445,11 @@ export default function ContentSearchDialog({
           {isFresh ? (
             <>
               {items.length === 0 && (
-                <div className="px-4 py-6 text-sm text-text-muted text-center">未找到相关内容</div>
+                <div className="px-3 py-6 text-center text-xs text-text-muted">未找到相关内容</div>
               )}
               {fileMatches.length > 0 && (
-                <div className="px-3.5 pt-2 pb-1 text-xs font-semibold text-text-muted tracking-wide">
-                  文件内容 ({fileMatches.length})
+                <div className="px-2.5 pb-1 pt-2 text-[11px] font-medium tracking-wide text-text-muted">
+                  文件内容 · {fileMatches.length}
                 </div>
               )}
               {fileMatches.map((m, i) => (
@@ -435,18 +461,23 @@ export default function ContentSearchDialog({
                   title={m.path}
                   className={rowClass(i)}
                 >
-                  <div className="flex items-center gap-2">
-                    <FileText size={14} className="shrink-0 text-text-muted" />
-                    <span className="truncate text-sm font-medium text-text">{scopeBaseName(m.path)}</span>
-                    <span className="shrink-0 text-xs text-text-muted">:{m.line}</span>
+                  <span className={rowBarClass(i)} />
+                  <FileText size={15} className="mt-0.5 shrink-0 text-text-muted" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-text">{scopeBaseName(m.path)}</span>
+                      <span className="shrink-0 text-xs text-text-muted">:{m.line}</span>
+                      <span className="ml-auto max-w-[45%] shrink-0 truncate text-xs text-text-muted">
+                        {m.path}
+                      </span>
+                    </div>
+                    <div className="truncate font-mono text-xs text-text-muted">{m.preview}</div>
                   </div>
-                  <div className="truncate pl-6 text-xs text-text-muted font-mono">{m.preview}</div>
-                  <div className="truncate pl-6 text-xs text-text-muted/70">{m.path}</div>
                 </button>
               ))}
               {messageMatches.length > 0 && (
-                <div className="px-3.5 pt-3 pb-1 text-xs font-semibold text-text-muted tracking-wide">
-                  会话消息 ({messageMatches.length})
+                <div className="px-2.5 pb-1 pt-3 text-[11px] font-medium tracking-wide text-text-muted">
+                  会话消息 · {messageMatches.length}
                 </div>
               )}
               {messageMatches.map((m, i) => {
@@ -460,45 +491,51 @@ export default function ContentSearchDialog({
                     title={`${m.session_title} · ${formatChatDateTime(m.created_at)}`}
                     className={rowClass(index)}
                   >
-                    <div className="flex items-center gap-2">
-                      <MessageSquare size={14} className="shrink-0 text-accent" />
-                      <span className="truncate text-sm font-medium text-text">{m.session_title}</span>
-                      <span className="shrink-0 text-xs text-text-muted">
-                        {m.role === "me" ? "我" : "对方"}
-                      </span>
-                      <span className="ml-auto shrink-0 text-xs text-text-muted">
-                        {formatChatDateTime(m.created_at)}
-                      </span>
+                    <span className={rowBarClass(index)} />
+                    <MessageSquare size={15} className="mt-0.5 shrink-0 text-accent/70" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium text-text">{m.session_title}</span>
+                        <span className="shrink-0 text-xs text-text-muted">
+                          {m.role === "me" ? "我" : "对方"}
+                        </span>
+                        <span className="ml-auto shrink-0 text-xs text-text-muted">
+                          {formatChatDateTime(m.created_at)}
+                        </span>
+                      </div>
+                      <div className="truncate text-xs text-text-muted">{m.content}</div>
                     </div>
-                    <div className="truncate pl-6 text-xs text-text-muted">{m.content}</div>
                   </button>
                 );
               })}
               {(fileTruncated || messageTruncated) && (
-                <div className="px-4 py-2 text-xs text-text-muted text-center">
+                <div className="px-3 py-2 text-center text-xs text-text-muted">
                   结果过多已截断，请缩小搜索范围...
                 </div>
               )}
             </>
           ) : searching ? (
-            <div className="px-4 py-8 text-sm text-text-muted text-center">搜索中...</div>
+            <div className="px-3 py-6 text-center text-xs text-text-muted">搜索中...</div>
           ) : (
-            <div className="px-4 py-8 text-sm text-text-muted text-center">
+            <div className="px-3 py-6 text-center text-xs text-text-muted">
               先在 3 个标签里点选范围，再输入关键词按 Enter 或点「搜索」
             </div>
           )}
         </div>
 
         {/* Hints */}
-        <div className="flex items-center gap-4 px-4 py-2.5 border-t border-border text-xs text-text-muted">
-          <span>
-            <b className="font-semibold">ESC</b> 退出
+        <div className="flex items-center gap-3 border-t border-border px-3 py-2 text-[11px] text-text-muted">
+          <span className="flex items-center gap-1.5">
+            <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px]">↑↓</kbd>
+            选择
           </span>
-          <span>
-            <b className="font-semibold">↑↓</b> 选择
+          <span className="flex items-center gap-1.5">
+            <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px]">ENTER</kbd>
+            搜索 / 打开
           </span>
-          <span>
-            <b className="font-semibold">ENTER</b> 搜索 / 打开
+          <span className="ml-auto flex items-center gap-1.5">
+            <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px]">ESC</kbd>
+            关闭
           </span>
         </div>
       </div>
