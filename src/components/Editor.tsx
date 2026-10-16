@@ -285,7 +285,11 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       return;
     }
 
-    await saveTab(tab);
+    const saved = await saveTab(tab);
+    // 用户取消了保存（例如 Excel 提示“会丢失内容”）时保持脏标记
+    if (!saved) {
+      return;
+    }
     state.markClean(id);
     void fetchAndSetFileMtime(tab.path);
 

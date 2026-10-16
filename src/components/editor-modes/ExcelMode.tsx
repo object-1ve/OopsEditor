@@ -13,7 +13,7 @@
  * 点击任意图片调起全屏预览（复用 store 的 imagePreview）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileSpreadsheet, ImagePlus, Info, Loader2, Plus, Redo2, Save, Trash2, Undo2 } from "lucide-react";
+import { AlertTriangle, FileSpreadsheet, ImagePlus, Info, Loader2, Plus, Redo2, Save, Trash2, Undo2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import type { CellValue, Column, Workbook, Worksheet } from "exceljs";
@@ -1304,6 +1304,18 @@ function ExcelModeView({
         <span className="shrink-0 text-[10px] text-text-muted">
           {layout.snapshot.rowCount} 行 × {layout.snapshot.columnCount} 列
         </span>
+        {doc.fidelity.lossyLabels.length > 0 && (
+          <span
+            className="flex shrink-0 items-center gap-1 rounded bg-accent-warm/10 px-1.5 py-0.5 text-[10px] text-accent-warm"
+            title={`该文件含编辑器无法保留的内容：${doc.fidelity.lossyLabels.join("、")}。保存后会丢失这些内容，建议先另存为副本再编辑。`}
+          >
+            <AlertTriangle size={11} />
+            保存会丢失：{doc.fidelity.lossyLabels.slice(0, 2).join("、")}
+            {doc.fidelity.lossyLabels.length > 2
+              ? ` 等 ${doc.fidelity.lossyLabels.length} 类`
+              : ""}
+          </span>
+        )}
         {doc.isBlank && (
           <span
             className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent"

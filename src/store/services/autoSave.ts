@@ -35,7 +35,9 @@ export function scheduleAutoSave(
     setTimeout(() => {
       autoSaveTimers.delete(id);
       void saveTab(tab as FileTab)
-        .then(() => {
+        .then((saved) => {
+          // 用户在“会丢失内容”的提示里取消时不要标记为已保存
+          if (!saved) return;
           onMarkClean(id);
           void fetchAndSetFileMtime(tab.path);
           window.dispatchEvent(

@@ -33,22 +33,23 @@ async function copyImageTab(tab: FileTab, targetPath?: SaveTargetPath) {
 
 /**
  * 统一保存入口：按标签类型分派到文本 / 二进制 / 图片 / Excel 的写入通道。
+ * 返回 false 表示用户取消了保存（例如 Excel 提示“会丢失内容”时选择取消）。
  */
-export async function saveTab(tab: FileTab, targetPath?: string) {
+export async function saveTab(tab: FileTab, targetPath?: string): Promise<boolean> {
   if (tab.language === "image") {
     await copyImageTab(tab, targetPath);
-    return;
+    return true;
   }
 
   if (tab.language === "excel") {
-    await saveExcelDoc(tab.id, targetPath);
-    return;
+    return await saveExcelDoc(tab.id, targetPath);
   }
 
   if (tab.viewMode === "base64") {
     await saveBase64Tab(tab, targetPath);
-    return;
+    return true;
   }
 
   await saveTextTab(tab, targetPath);
+  return true;
 }

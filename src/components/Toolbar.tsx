@@ -192,7 +192,11 @@ const tabs = useEditorStore(s => s.tabs);
     }
 
     const persistToTarget = async () => {
-      await saveTab(tab, targetPath);
+      // 用户取消保存（Excel 会丢失内容的提示）时不改标签路径
+      if (!(await saveTab(tab, targetPath))) {
+        setContextMenu(null);
+        return;
+      }
       replaceTabFileLocation(tab.id, targetPath, tab.name);
       showNotification(`已保存到默认文件夹: ${defaultFolderName}`, "success");
       window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: defaultFolderPath } }));
