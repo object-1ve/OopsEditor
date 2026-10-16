@@ -35,9 +35,10 @@ const RESIZE_HANDLE_SIZE = 5;
 const MAX_RENDER_ROWS = 5000;
 const MAX_RENDER_COLUMNS = 512;
 /** 数据区下方额外留出的空行，方便直接往下录入 */
-const TRAILING_EMPTY_ROWS = 20;
-const MIN_RENDER_ROWS = 60;
-const MIN_RENDER_COLUMNS = 26;
+const TRAILING_EMPTY_ROWS = 10;
+/** 默认网格规模：空表按 20 行 × 10 列铺开 */
+const MIN_RENDER_ROWS = 20;
+const MIN_RENDER_COLUMNS = 10;
 const HISTORY_LIMIT = 200;
 
 /** 单元格展示信息（表格渲染与右对齐判断都用它） */
