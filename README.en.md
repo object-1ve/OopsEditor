@@ -13,7 +13,7 @@ A cross-platform desktop code editor built with **Tauri v2 + React + Monaco Edit
 - **Git Integration** -- View branches, staged/unstaged/untracked files, commit changes
 - **Image Preview** -- Inline preview with zoom support
 - **Word Document Preview** -- Preview .docx/.docm/.dotx formats
-- **Excel Editing** -- Edit .xlsx/.xlsm cells and formulas, with multiple sheets, undo/redo, draggable row/column sizing, and images (insert or paste from clipboard, click to preview)
+- **Excel Editing** -- Edit .xlsx/.xlsm: cells and formulas, multiple sheets (add/rename/delete/reorder), range selection and copy-paste, insert/delete rows and columns, draggable and auto-fit sizing, cell formatting (bold/italic/underline, colors, alignment, number formats) and merge, sorting, AutoFilter and find/replace, images (insert or clipboard paste), plus a save-time fidelity warning
 - **Markdown Preview** -- Live rendering with syntax highlighting
 - **Hex Viewer** -- Hex dump for binary files
 - **Clipboard Table** -- Paste table data auto-converts to Markdown tables
