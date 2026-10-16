@@ -13,7 +13,7 @@
  * 点击任意图片调起全屏预览（复用 store 的 imagePreview）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileSpreadsheet, ImagePlus, Info, Loader2, Redo2, Save, Trash2, Undo2 } from "lucide-react";
+import { FileSpreadsheet, ImagePlus, Info, Loader2, Plus, Redo2, Save, Trash2, Undo2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import type { CellValue, Column, Workbook, Worksheet } from "exceljs";
@@ -479,6 +479,7 @@ function ExcelModeView({
 
   const rootRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const sheetTabsRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<{ entries: HistoryEntry[]; index: number }>({ entries: [], index: -1 });
   const snapshotsRef = useRef<Map<number, SheetSnapshot>>(new Map());
@@ -570,6 +571,13 @@ function ExcelModeView({
     input?.focus();
     input?.select();
   }, [editing]);
+
+  // 切换或新增工作表后，把当前标签滚进可视区
+  useEffect(() => {
+    sheetTabsRef.current
+      ?.querySelector<HTMLElement>(`[data-sheet-index="${sheetIndex}"]`)
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [sheetIndex, doc]);
 
   const layout = useMemo(() => {
     const sheet = doc?.workbook.worksheets[sheetIndex];
@@ -1243,6 +1251,24 @@ function ExcelModeView({
     setScroll({ left: 0, top: 0 });
   }, []);
 
+  /** 底部新增工作表：命名沿用 Excel 习惯（Sheet1、Sheet2…），并切到新表 */
+  const handleAddSheet = useCallback(() => {
+    if (isReadOnly || !doc) return;
+
+    const workbook = doc.workbook;
+    const usedNames = new Set(workbook.worksheets.map((worksheet) => worksheet.name));
+    let suffix = workbook.worksheets.length + 1;
+    while (usedNames.has(`Sheet${suffix}`)) {
+      suffix += 1;
+    }
+
+    const sheet = workbook.addWorksheet(`Sheet${suffix}`);
+    // 新表由按工作表切换的逻辑接管：快照懒建、行高基线重读、尺寸覆盖清空
+    switchSheet(workbook.worksheets.indexOf(sheet));
+    markTabDirty(activeTab.id);
+    showNotification(`已新增工作表 ${sheet.name}`, "success");
+  }, [activeTab.id, doc, isReadOnly, markTabDirty, showNotification, switchSheet]);
+
   if (error) {
     return (
       <div className="flex h-full items-center justify-center bg-deepest p-6">
@@ -1542,11 +1568,15 @@ function ExcelModeView({
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-border bg-surface/30 px-2 py-1">
+      <div
+        ref={sheetTabsRef}
+        className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-border bg-surface/30 px-2 py-1"
+      >
         {doc.workbook.worksheets.map((worksheet, index) => (
           <button
             key={worksheet.id}
             type="button"
+            data-sheet-index={index}
             onClick={() => switchSheet(index)}
             className={`shrink-0 rounded px-2 py-0.5 text-[11px] transition-colors ${
               index === sheetIndex
@@ -1557,6 +1587,16 @@ function ExcelModeView({
             {worksheet.name}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={handleAddSheet}
+          disabled={isReadOnly}
+          title="新增工作表"
+          className="ml-0.5 flex shrink-0 items-center gap-1 rounded px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:bg-surface/60 hover:text-accent disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
+        >
+          <Plus size={12} />
+          新增
+        </button>
       </div>
     </div>
   );
