@@ -364,6 +364,48 @@ export function clearNotebookOutputs(doc: NotebookDoc, cellId: string): boolean 
   return true;
 }
 
+const ATTACHMENT_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+  "image/bmp": "bmp",
+};
+
+/**
+ * 往 Markdown / Raw 单元格写一张内嵌图片（Jupyter 的 cell.attachments 机制）。
+ * 返回附件名，调用方据此插入 `![说明](attachment:名字)`；代码单元格不支持附件。
+ */
+export function addNotebookCellAttachment(
+  doc: NotebookDoc,
+  cellId: string,
+  mime: string,
+  base64: string,
+): string | null {
+  const cell = findCell(doc, cellId);
+  if (!cell || cell.cellType === "code") return null;
+
+  const attachments =
+    cell.raw.attachments &&
+    typeof cell.raw.attachments === "object" &&
+    !Array.isArray(cell.raw.attachments)
+      ? (cell.raw.attachments as Record<string, Record<string, string>>)
+      : {};
+
+  const extension = ATTACHMENT_EXTENSIONS[mime] ?? "png";
+  let index = 1;
+  let name = `image-${index}.${extension}`;
+  while (attachments[name]) {
+    index += 1;
+    name = `image-${index}.${extension}`;
+  }
+
+  attachments[name] = { [mime]: base64 };
+  cell.raw.attachments = attachments;
+  return name;
+}
+
 /** 清空全部输出；返回清掉的单元格数量 */
 export function clearAllNotebookOutputs(doc: NotebookDoc): number {
   let cleared = 0;

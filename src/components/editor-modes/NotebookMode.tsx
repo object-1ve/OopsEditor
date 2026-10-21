@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import {
+  addNotebookCellAttachment,
   applyNotebookCellRun,
   clearAllNotebookOutputs,
   clearNotebookOutputs,
@@ -53,6 +54,7 @@ import {
   stopNotebookKernel,
   type NotebookCellRunResult,
 } from "@/services/notebookKernel";
+import { bytesToBase64 } from "@/utils/hexView";
 import type { EditorModeAdapter, EditorModeContext } from "./types";
 
 type MonacoEditorInstance = Parameters<OnMount>[0];
@@ -116,6 +118,8 @@ interface NotebookCellEditorProps {
   applyTheme: (monaco: MonacoApi) => void;
   onSourceChange: (cellId: string, value: string) => void;
   onSave: () => void;
+  /** 粘贴图片：写入 cell.attachments，返回要插入的 Markdown 片段 */
+  onPasteImage: (cellId: string, file: File) => Promise<string | null>;
   onFocus: (cellId: string) => void;
   onBlur: (cellId: string) => void;
   onReady: (cellId: string, editor: MonacoEditorInstance) => void;
@@ -131,6 +135,7 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
   applyTheme,
   onSourceChange,
   onSave,
+  onPasteImage,
   onFocus,
   onBlur,
   onReady,
@@ -166,6 +171,43 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
         // Monaco 自带 Ctrl+Enter（插入行）会抢走按键，运行快捷键改在窗口捕获阶段处理
         editor.onDidFocusEditorText(() => onFocus(cellId));
         editor.onDidBlurEditorWidget(() => onBlur(cellId));
+
+        // 剪贴板里是图片时由我们接管（Monaco 只会当纯文本处理）：
+        // 在 document 捕获阶段拦下（事件不一定经过编辑器节点），
+        // 写进 cell.attachments 后在光标处插入 Markdown 引用。
+        const handlePaste = (event: ClipboardEvent) => {
+          const domNode = editor.getDomNode();
+          const target = event.target;
+          if (!domNode || !(target instanceof Node) || !domNode.contains(target)) return;
+          const data = event.clipboardData;
+          if (!data) return;
+          let file: File | null = null;
+          for (const item of Array.from(data.items)) {
+            if (item.kind === "file" && item.type.startsWith("image/")) {
+              file = item.getAsFile();
+              break;
+            }
+          }
+          if (!file) {
+            file = Array.from(data.files).find((entry) => entry.type.startsWith("image/")) ?? null;
+          }
+          if (!file) return;
+
+          event.preventDefault();
+          event.stopPropagation();
+          void onPasteImage(cellId, file).then((snippet) => {
+            if (!snippet) return;
+            const selection = editor.getSelection();
+            if (!selection) return;
+            editor.executeEdits("notebook-paste-image", [
+              { range: selection, text: snippet, forceMoveMarkers: true },
+            ]);
+            editor.focus();
+          });
+        };
+        document.addEventListener("paste", handlePaste, true);
+        editor.onDidDispose(() => document.removeEventListener("paste", handlePaste, true));
+
         onReady(cellId, editor);
       }}
       options={options}
@@ -575,6 +617,32 @@ function NotebookModeView({
   const handleSave = useCallback(() => {
     void saveActiveTab(activeTab.id);
   }, [activeTab.id, saveActiveTab]);
+
+  /** 粘贴剪贴板图片：按 Jupyter 的 cell.attachments 机制存进当前 Markdown/Raw 单元格 */
+  const handlePasteImage = useCallback(
+    async (cellId: string, file: File) => {
+      if (!doc || isReadOnly) return null;
+      const cell = doc.cells.find((item) => item.id === cellId);
+      if (!cell) return null;
+      if (cell.cellType === "code") {
+        showNotification(
+          "图片只能粘贴到 Markdown / Raw 单元格：先把该单元格“转为 Markdown”再粘贴",
+          "info",
+        );
+        return null;
+      }
+
+      const mime = file.type.startsWith("image/") ? file.type : "image/png";
+      const base64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+      const name = addNotebookCellAttachment(doc, cellId, mime, base64);
+      if (!name) return null;
+
+      markTabDirty(activeTab.id);
+      bumpVersion((version) => version + 1);
+      return `![图片](attachment:${name})`;
+    },
+    [activeTab.id, doc, isReadOnly, markTabDirty, showNotification],
+  );
 
   const handleEditorFocus = useCallback((cellId: string) => {
     focusedCellIdRef.current = cellId;
@@ -1128,6 +1196,7 @@ function NotebookModeView({
                         applyTheme={applyTheme}
                         onSourceChange={handleSourceChange}
                         onSave={handleSave}
+                        onPasteImage={handlePasteImage}
                         onFocus={handleEditorFocus}
                         onBlur={handleEditorBlur}
                         onReady={handleEditorReady}
