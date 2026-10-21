@@ -204,6 +204,11 @@ use db::{
 mod sqlite;
 use sqlite::{get_sqlite_table_data, get_sqlite_tables};
 
+mod notebook;
+use notebook::{
+    notebook_kernel_run, notebook_kernel_start, notebook_kernel_status, notebook_kernel_stop,
+};
+
 mod docconv;
 use docconv::convert_doc_to_docx;
 
@@ -890,6 +895,11 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         write_to_terminal,
         resize_terminal,
         close_terminal,
+        // Notebook（.ipynb）Python 内核
+        notebook_kernel_start,
+        notebook_kernel_run,
+        notebook_kernel_stop,
+        notebook_kernel_status,
         // 项目管理数据库命令
         init_project_database,
         get_all_projects,

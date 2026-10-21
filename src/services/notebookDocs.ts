@@ -10,6 +10,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
+import { stopNotebookKernel, type NotebookCellRunResult } from "@/services/notebookKernel";
 
 export type NotebookCellType = "code" | "markdown" | "raw";
 
@@ -65,6 +66,8 @@ export interface NotebookDoc {
   metadata: Record<string, unknown>;
   nbformat: number;
   nbformatMinor: number;
+  /** 下一次执行分配的 In[n] 编号（沿用文件里已有的最大值 +1） */
+  executionSeq: number;
   /** 加载时对应的 FileTab.revision，外部修改后据此重新加载 */
   revision: number;
   /** 加载时的文件路径，另存为后随之更新 */
@@ -193,6 +196,11 @@ export async function loadNotebookDoc(
     metadata: raw.metadata as Record<string, unknown>,
     nbformat,
     nbformatMinor,
+    executionSeq:
+      cells.reduce(
+        (max, cell) => (cell.executionCount !== null && cell.executionCount > max ? cell.executionCount : max),
+        0,
+      ) + 1,
     revision,
     path,
   };
@@ -200,9 +208,10 @@ export async function loadNotebookDoc(
   return doc;
 }
 
-/** 标签关闭时释放；重复释放无副作用 */
+/** 标签关闭时释放缓存，并终止该标签的 Python 内核；重复释放无副作用 */
 export function evictNotebookDoc(tabId: string) {
   docs.delete(tabId);
+  void stopNotebookKernel(tabId).catch(() => {});
 }
 
 function readMetadataText(metadata: Record<string, unknown>, group: string, key: string) {
@@ -366,6 +375,61 @@ export function clearAllNotebookOutputs(doc: NotebookDoc): number {
     }
   }
   return cleared;
+}
+
+/** 取下一个 In[n] 编号（Jupyter 语义：每次执行 +1，跨会话沿用文件里的最大值） */
+export function nextExecutionCount(doc: NotebookDoc): number {
+  const count = doc.executionSeq;
+  doc.executionSeq += 1;
+  return count;
+}
+
+/**
+ * 把一次内核执行的结果写回单元格：替换旧输出、更新 In[n]。
+ * 输出的形状与 nbformat 4 一致，保存后 Jupyter / Tern 也能直接显示。
+ */
+export function applyNotebookCellRun(
+  doc: NotebookDoc,
+  cellId: string,
+  result: NotebookCellRunResult,
+  executionCount: number,
+): boolean {
+  const cell = findCell(doc, cellId);
+  if (!cell || cell.cellType !== "code") return false;
+
+  const outputs: NotebookOutputJson[] = [];
+  if (result.stdout) {
+    outputs.push({ output_type: "stream", name: "stdout", text: result.stdout });
+  }
+  if (result.stderr) {
+    outputs.push({ output_type: "stream", name: "stderr", text: result.stderr });
+  }
+  if (result.result !== null) {
+    outputs.push({
+      output_type: "execute_result",
+      execution_count: executionCount,
+      data: { "text/plain": result.result },
+      metadata: {},
+    });
+  }
+  if (result.error) {
+    outputs.push({
+      output_type: "error",
+      ename: result.error.ename,
+      evalue: result.error.evalue,
+      // nbformat 的 traceback 是“每行自带换行”的数组
+      traceback: result.error.traceback
+        .split("\n")
+        .filter((line, index, lines) => line !== "" || index < lines.length - 1)
+        .map((line) => `${line}\n`),
+    });
+  }
+
+  cell.outputs = outputs;
+  cell.raw.outputs = outputs;
+  cell.executionCount = executionCount;
+  cell.raw.execution_count = executionCount;
+  return true;
 }
 
 // ── ANSI 颜色 ────────────────────────────────────────────────────────────────

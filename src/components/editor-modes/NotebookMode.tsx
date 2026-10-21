@@ -1,8 +1,9 @@
 /**
- * Jupyter Notebook 模式 - 单元格列表 + Monaco 编辑 + 输出渲染
+ * Jupyter Notebook 模式 - 单元格列表 + Monaco 编辑 + 输出渲染 + 单元格执行
  *
- * 只负责读写 .ipynb 文件内容（结构、源码、已有输出），不启动 Python 内核，
- * 因此不提供“运行单元格”。单元格对象常驻 notebookDocs 缓存，切标签/分屏不丢改动。
+ * 执行走本机 Python（`src-tauri/src/notebook.rs` 每标签一个常驻进程，
+ * 只依赖标准库，不要求 ipykernel）；单元格对象常驻 notebookDocs 缓存，
+ * 切标签/分屏不丢改动。
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MonacoEditor from "@monaco-editor/react";
@@ -19,17 +20,22 @@ import {
   FileCode2,
   Info,
   Loader2,
+  Play,
   Plus,
+  RotateCcw,
+  Square,
   Trash2,
   Type,
 } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import {
+  applyNotebookCellRun,
   clearAllNotebookOutputs,
   clearNotebookOutputs,
   insertNotebookCell,
   loadNotebookDoc,
   moveNotebookCell,
+  nextExecutionCount,
   notebookKernelLabel,
   notebookLanguage,
   parseAnsi,
@@ -41,12 +47,37 @@ import {
   type NotebookDoc,
   type NotebookOutputJson,
 } from "@/services/notebookDocs";
+import {
+  executeNotebookCell,
+  startNotebookKernel,
+  stopNotebookKernel,
+  type NotebookCellRunResult,
+} from "@/services/notebookKernel";
 import type { EditorModeAdapter, EditorModeContext } from "./types";
 
 type MonacoEditorInstance = Parameters<OnMount>[0];
 type MonacoApi = Parameters<OnMount>[1];
 
 const MIN_EDITOR_HEIGHT = 34;
+
+type KernelStatus = "idle" | "starting" | "ready" | "error";
+
+interface KernelState {
+  status: KernelStatus;
+  version?: string;
+  message?: string;
+}
+
+const KERNEL_HINT =
+  "执行使用本机 Python（每标签一个常驻进程，只依赖标准库，不需要 ipykernel）：" +
+  "变量在单元格之间保留，工作目录为 Notebook 所在目录。" +
+  "“中断”会终止进程（变量丢失，下次运行重新启动）；stdin 被内核占用，用户代码里不能用 input()。";
+
+/** Notebook 所在目录，给内核当 cwd（相对路径文件、读数据文件才和 Jupyter 一致） */
+function notebookDirectory(path: string): string {
+  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return index > 0 ? path.slice(0, index) : "";
+}
 
 const NOTEBOOK_EDITOR_OPTIONS = {
   fontSize: 12.5,
@@ -85,6 +116,8 @@ interface NotebookCellEditorProps {
   applyTheme: (monaco: MonacoApi) => void;
   onSourceChange: (cellId: string, value: string) => void;
   onSave: () => void;
+  onFocus: (cellId: string) => void;
+  onBlur: (cellId: string) => void;
   onReady: (cellId: string, editor: MonacoEditorInstance) => void;
 }
 
@@ -98,6 +131,8 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
   applyTheme,
   onSourceChange,
   onSave,
+  onFocus,
+  onBlur,
   onReady,
 }: NotebookCellEditorProps) {
   const [height, setHeight] = useState(MIN_EDITOR_HEIGHT);
@@ -128,6 +163,9 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
         const disposable = editor.onDidContentSizeChange(syncHeight);
         editor.onDidDispose(() => disposable.dispose());
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSave());
+        // Monaco 自带 Ctrl+Enter（插入行）会抢走按键，运行快捷键改在窗口捕获阶段处理
+        editor.onDidFocusEditorText(() => onFocus(cellId));
+        editor.onDidBlurEditorWidget(() => onBlur(cellId));
         onReady(cellId, editor);
       }}
       options={options}
@@ -466,9 +504,23 @@ function NotebookModeView({
   const [error, setError] = useState<string | null>(null);
   const [, bumpVersion] = useState(0);
   const [editingMarkdownId, setEditingMarkdownId] = useState<string | null>(null);
+  const [kernelState, setKernelState] = useState<KernelState>({ status: "idle" });
+  const [runningCellId, setRunningCellId] = useState<string | null>(null);
+  const [runningAll, setRunningAll] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const editorsRef = useRef(new Map<string, MonacoEditorInstance>());
   const pendingFocusRef = useRef<string | null>(null);
+  /** 最近获得焦点的单元格：窗口级 Ctrl+Enter 需要知道跑哪个 */
+  const focusedCellIdRef = useRef<string | null>(null);
+  /** 最新一次渲染的运行入口（窗口级按键监听里调用） */
+  const runCellRef = useRef<(cellId: string, advance: boolean) => void>(() => {});
+  /** 窗口级按键监听里判断单元格类型（Markdown 单元格不拦截 Enter） */
+  const docRef = useRef<NotebookDoc | null>(null);
+  const kernelStateRef = useRef<KernelState>({ status: "idle" });
+  /** 串行化执行入口：按钮连点/快捷键重复触发时只跑一次 */
+  const runningRef = useRef(false);
+  /** 用户主动中断：用来区分“内核崩了”和“我按了中断” */
+  const stoppingRef = useRef(false);
   const revision = activeTab.revision ?? 0;
   const isReadOnly = Boolean(activeTab.isReadOnly);
 
@@ -477,6 +529,13 @@ function NotebookModeView({
     setError(null);
     setDoc(null);
     setEditingMarkdownId(null);
+    setRunningCellId(null);
+    setRunningAll(false);
+    runningRef.current = false;
+    stoppingRef.current = false;
+    focusedCellIdRef.current = null;
+    kernelStateRef.current = { status: "idle" };
+    setKernelState({ status: "idle" });
     editorsRef.current.clear();
 
     void loadNotebookDoc(activeTab.id, activeTab.path, revision)
@@ -517,6 +576,14 @@ function NotebookModeView({
     void saveActiveTab(activeTab.id);
   }, [activeTab.id, saveActiveTab]);
 
+  const handleEditorFocus = useCallback((cellId: string) => {
+    focusedCellIdRef.current = cellId;
+  }, []);
+
+  const handleEditorBlur = useCallback((cellId: string) => {
+    if (focusedCellIdRef.current === cellId) focusedCellIdRef.current = null;
+  }, []);
+
   const handleEditorReady = useCallback((cellId: string, editor: MonacoEditorInstance) => {
     editorsRef.current.set(cellId, editor);
     if (pendingFocusRef.current === cellId) {
@@ -532,6 +599,158 @@ function NotebookModeView({
         ?.scrollIntoView({ block: "nearest" });
     });
   }, []);
+
+  const updateKernelState = useCallback((next: KernelState) => {
+    kernelStateRef.current = next;
+    setKernelState(next);
+  }, []);
+
+  /** 首次执行时懒启动内核；已有内核时 Rust 侧直接复用 */
+  const ensureKernel = useCallback(async () => {
+    if (kernelStateRef.current.status === "ready") return true;
+    updateKernelState({ status: "starting" });
+    try {
+      const info = await startNotebookKernel(activeTab.id, notebookDirectory(activeTab.path));
+      updateKernelState({ status: "ready", version: info.version });
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      updateKernelState({ status: "error", message });
+      showNotification(`Python 内核启动失败: ${message}`, "error");
+      return false;
+    }
+  }, [activeTab.id, activeTab.path, showNotification, updateKernelState]);
+
+  const executeCell = useCallback(
+    async (cell: NotebookCell) => {
+      if (!doc || isReadOnly || cell.cellType !== "code" || !cell.source.trim()) return true;
+      if (!(await ensureKernel())) return false;
+
+      const writeResult = (result: NotebookCellRunResult) => {
+        applyNotebookCellRun(doc, cell.id, result, nextExecutionCount(doc));
+        markTabDirty(activeTab.id);
+        bumpVersion((version) => version + 1);
+      };
+
+      setRunningCellId(cell.id);
+      try {
+        writeResult(await executeNotebookCell(activeTab.id, cell.source));
+        return true;
+      } catch (err) {
+        const interrupted = stoppingRef.current;
+        stoppingRef.current = false;
+        const message = err instanceof Error ? err.message : String(err);
+        writeResult({
+          stdout: "",
+          stderr: "",
+          result: null,
+          error: { ename: "KernelError", evalue: message, traceback: `${message}\n` },
+        });
+        if (!interrupted) showNotification(`执行失败: ${message}`, "error");
+        return false;
+      } finally {
+        setRunningCellId(null);
+      }
+    },
+    [activeTab.id, doc, ensureKernel, isReadOnly, markTabDirty, showNotification],
+  );
+
+  /** 运行单个单元格；advance 为 Jupyter 的 Shift+Enter（运行后跳到下一个） */
+  const handleRunCell = useCallback(
+    (cellId: string, advance: boolean) => {
+      if (!doc || isReadOnly || runningRef.current) return;
+      const cell = doc.cells.find((item) => item.id === cellId);
+      if (!cell || cell.cellType !== "code") return;
+
+      runningRef.current = true;
+      void (async () => {
+        try {
+          await executeCell(cell);
+          if (!advance) return;
+          const index = doc.cells.findIndex((item) => item.id === cellId);
+          const existing = doc.cells[index + 1];
+          if (existing) {
+            scrollCellIntoView(existing.id);
+            editorsRef.current.get(existing.id)?.focus();
+            return;
+          }
+          // 已是最后一个单元格：按 Jupyter 习惯补一个空代码单元格
+          const created = insertNotebookCell(doc, doc.cells.length, "code");
+          pendingFocusRef.current = created.id;
+          commitChange();
+          scrollCellIntoView(created.id);
+        } finally {
+          runningRef.current = false;
+        }
+      })();
+    },
+    [commitChange, doc, executeCell, isReadOnly, scrollCellIntoView],
+  );
+
+  useEffect(() => {
+    runCellRef.current = handleRunCell;
+  }, [handleRunCell]);
+
+  useEffect(() => {
+    docRef.current = doc;
+  }, [doc]);
+
+  // Ctrl+Enter / Shift+Enter 在窗口捕获阶段处理：Monaco 自带的 Ctrl+Enter（插入行）会先吃掉按键
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter") return;
+      const withModifier = event.ctrlKey || event.metaKey || event.shiftKey;
+      if (!withModifier) return;
+      const cellId = focusedCellIdRef.current;
+      if (!cellId) return;
+      // 只有代码单元格才吞掉 Enter：Markdown/Raw 单元格仍要正常换行
+      const cell = docRef.current?.cells.find((item) => item.id === cellId);
+      if (!cell || cell.cellType !== "code") return;
+      event.preventDefault();
+      event.stopPropagation();
+      runCellRef.current(cellId, event.shiftKey && !event.ctrlKey && !event.metaKey);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
+  const handleRunAll = useCallback(() => {
+    if (!doc || isReadOnly || runningRef.current) return;
+    runningRef.current = true;
+    setRunningAll(true);
+    void (async () => {
+      try {
+        for (const cell of [...doc.cells]) {
+          if (cell.cellType !== "code" || !cell.source.trim()) continue;
+          // 单元格内的 Python 异常不算失败（输出里已有 traceback），内核错误才中断
+          if (!(await executeCell(cell))) break;
+        }
+      } finally {
+        runningRef.current = false;
+        setRunningAll(false);
+      }
+    })();
+  }, [doc, executeCell, isReadOnly]);
+
+  const handleStopKernel = useCallback(() => {
+    stoppingRef.current = true;
+    void stopNotebookKernel(activeTab.id)
+      .catch(() => {})
+      .finally(() => {
+        updateKernelState({ status: "idle" });
+        setRunningCellId(null);
+      });
+  }, [activeTab.id, updateKernelState]);
+
+  const handleRestartKernel = useCallback(async () => {
+    stoppingRef.current = true;
+    await stopNotebookKernel(activeTab.id).catch(() => {});
+    stoppingRef.current = false;
+    updateKernelState({ status: "idle" });
+    if (await ensureKernel()) {
+      showNotification("Python 内核已重启", "success");
+    }
+  }, [activeTab.id, ensureKernel, showNotification, updateKernelState]);
 
   const handleAddCell = useCallback(
     (index: number, cellType: NotebookCellType) => {
@@ -622,6 +841,22 @@ function NotebookModeView({
   const outputCount = doc
     ? doc.cells.reduce((total, cell) => total + (cell.outputs.length > 0 ? 1 : 0), 0)
     : 0;
+  const kernelChipText =
+    kernelState.status === "ready"
+      ? `Python ${kernelState.version ?? ""}`.trim()
+      : kernelState.status === "starting"
+        ? "内核启动中…"
+        : kernelState.status === "error"
+          ? "内核不可用"
+          : "内核未启动";
+  const kernelChipClass =
+    kernelState.status === "ready"
+      ? "bg-accent/10 text-accent"
+      : kernelState.status === "starting"
+        ? "bg-accent-warm/10 text-accent-warm"
+        : kernelState.status === "error"
+          ? "bg-error/10 text-error"
+          : "bg-surface/60 text-text-muted";
 
   if (error) {
     return (
@@ -660,11 +895,54 @@ function NotebookModeView({
         {isReadOnly && <span className="shrink-0 text-[10px] text-text-muted">只读</span>}
         <span
           className="shrink-0 cursor-help text-text-muted/85"
-          title="这里只读写 .ipynb 文件内容，不会启动 Python 内核；需要执行代码请用 Jupyter / Tern 打开，执行结果会随文件一起显示。"
+          title={KERNEL_HINT}
         >
           <Info size={12} />
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            disabled={isReadOnly || runningAll || runningCellId !== null}
+            onClick={handleRunAll}
+            title="顺序运行所有非空代码单元格"
+            className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-40"
+          >
+            {runningAll ? (
+              <Loader2 size={11} className="animate-spin" />
+            ) : (
+              <Play size={11} />
+            )}
+            运行全部
+          </button>
+          {runningCellId !== null || runningAll ? (
+            <button
+              type="button"
+              onClick={handleStopKernel}
+              title="中断执行（终止 Python 内核，变量会丢失）"
+              className="flex items-center gap-1 rounded border border-error/40 px-1.5 py-0.5 text-[11px] text-error transition-colors hover:bg-error/10"
+            >
+              <Square size={11} />
+              中断
+            </button>
+          ) : (
+            kernelState.status === "ready" && (
+              <button
+                type="button"
+                onClick={() => void handleRestartKernel()}
+                title="重启 Python 内核（清空全部变量）"
+                className="flex h-[22px] w-[22px] items-center justify-center rounded border border-border text-text-muted transition-colors hover:border-accent/50 hover:text-accent"
+              >
+                <RotateCcw size={11} />
+              </button>
+            )
+          )}
+          <span
+            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${kernelChipClass}`}
+            title={kernelState.message ?? KERNEL_HINT}
+          >
+            {kernelChipText}
+          </span>
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-border" />
           <button
             type="button"
             disabled={isReadOnly}
@@ -734,6 +1012,7 @@ function NotebookModeView({
           {doc.cells.map((cell, index) => {
             const isMarkdownEditing =
               cell.cellType === "markdown" && editingMarkdownId === cell.id;
+            const isRunningCell = runningCellId === cell.id;
             return (
               <div
                 key={cell.id}
@@ -741,12 +1020,27 @@ function NotebookModeView({
                 className="group/cell flex gap-2.5"
               >
                 <div className="w-11 shrink-0 select-none pt-2.5 text-right font-mono text-[11px] text-text-muted/85">
-                  {cell.cellType === "code" ? `[${cell.executionCount ?? " "}]:` : ""}
+                  {cell.cellType === "code"
+                    ? `[${isRunningCell ? "*" : cell.executionCount ?? " "}]:`
+                    : ""}
                 </div>
 
                 <div className="min-w-0 flex-1">
                   <div className="relative rounded-xl border border-border bg-surface/20 transition-colors focus-within:border-accent/50">
                     <div className="absolute -top-3 right-2 z-10 flex items-center gap-0.5 rounded-md border border-border bg-primary px-0.5 py-0.5 opacity-0 shadow-sm transition-opacity group-hover/cell:opacity-100 focus-within:opacity-100">
+                      {cell.cellType === "code" && (
+                        <ToolbarButton
+                          title="运行该单元格 (Ctrl+Enter)，Shift+Enter 运行并跳到下一个"
+                          disabled={isReadOnly || runningAll || runningCellId !== null}
+                          onClick={() => handleRunCell(cell.id, false)}
+                        >
+                          {isRunningCell ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Play size={12} />
+                          )}
+                        </ToolbarButton>
+                      )}
                       <ToolbarButton
                         title="上移单元格"
                         disabled={isReadOnly || index === 0}
@@ -834,6 +1128,8 @@ function NotebookModeView({
                         applyTheme={applyTheme}
                         onSourceChange={handleSourceChange}
                         onSave={handleSave}
+                        onFocus={handleEditorFocus}
+                        onBlur={handleEditorBlur}
                         onReady={handleEditorReady}
                       />
                     )}
