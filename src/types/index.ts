@@ -103,6 +103,8 @@ export function detectLanguage(filename: string): LanguageDetectionResult {
   if (WORD_EXTENSIONS.has(ext)) return { language: "word" };
   if (SQLITE_EXTENSIONS.has(ext)) return { language: "sqlite" };
   if (EXCEL_EXTENSIONS[ext] === true) return { language: "excel" };
+  // Jupyter Notebook：JSON 文档，由 NotebookMode 解析成单元格列表
+  if (ext === "ipynb") return { language: "notebook" };
   if (LEGACY_EXCEL_EXTENSIONS[ext] === true) {
     return {
       language: "unsupported",
@@ -121,6 +123,8 @@ export function isPreviewOnlyLanguage(language: string): boolean {
     language === "word" ||
     language === "sqlite" ||
     // Excel 的二进制内容由 ExcelMode 自行读盘解析，不预读成文本
-    language === "excel"
+    language === "excel" ||
+    // Notebook 的 JSON 由 NotebookMode 自行读盘解析，不预读成文本
+    language === "notebook"
   );
 }

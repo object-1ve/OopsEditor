@@ -2,6 +2,7 @@
 import type { FileTab } from "@/types";
 import { hexViewToBase64 } from "@/utils/hexView";
 import { saveExcelDoc } from "@/services/excelDocs";
+import { saveNotebookDoc } from "@/services/notebookDocs";
 
 type SaveTargetPath = string | undefined;
 
@@ -43,6 +44,10 @@ export async function saveTab(tab: FileTab, targetPath?: string): Promise<boolea
 
   if (tab.language === "excel") {
     return await saveExcelDoc(tab.id, targetPath);
+  }
+
+  if (tab.language === "notebook") {
+    return await saveNotebookDoc(tab.id, targetPath);
   }
 
   if (tab.viewMode === "base64") {

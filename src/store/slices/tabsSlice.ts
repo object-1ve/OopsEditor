@@ -20,6 +20,7 @@ import {
 import { scheduleAutoSave, clearAutoSaveTimer, clearAutoSaveTimers } from "@/store/services/autoSave";
 import { enforceTabLimit, formatAutoClosedTabsMessage } from "@/store/services/tabEnforcer";
 import { evictExcelDoc } from "@/services/excelDocs";
+import { evictNotebookDoc } from "@/services/notebookDocs";
 
 /**
  * 编辑后的统一收尾：开启“编辑时自动保存”时安排一次延迟落盘。
@@ -153,6 +154,7 @@ export const createTabsSlice: StateCreator<
       clearScrollMemory(id);
       clearAutoSaveTimer(id);
       evictExcelDoc(id);
+      evictNotebookDoc(id);
       persistTabsState(tabs, activeTabId);
       return { tabs, openFiles, activeTabId };
     }),
@@ -168,6 +170,7 @@ export const createTabsSlice: StateCreator<
       ids.forEach((id) => clearScrollMemory(id));
       clearAutoSaveTimers(ids);
       ids.forEach((id) => evictExcelDoc(id));
+      ids.forEach((id) => evictNotebookDoc(id));
       persistTabsState(tabs, activeTabId);
       return { tabs, openFiles, activeTabId };
     }),
@@ -523,6 +526,7 @@ export const createTabsSlice: StateCreator<
       }
       clearScrollMemory(id);
       evictExcelDoc(id);
+      evictNotebookDoc(id);
       return { secondaryTabs: tabs, secondaryActiveTabId };
     });
   },
@@ -540,6 +544,7 @@ export const createTabsSlice: StateCreator<
       }
       ids.forEach((id) => clearScrollMemory(id));
       ids.forEach((id) => evictExcelDoc(id));
+      ids.forEach((id) => evictNotebookDoc(id));
       return { secondaryTabs: tabs, secondaryActiveTabId };
     });
   },
