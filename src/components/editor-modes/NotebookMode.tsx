@@ -723,36 +723,49 @@ function NotebookModeView({
     [activeTab.id, doc, ensureKernel, isReadOnly, markTabDirty, showNotification],
   );
 
+  /** 焦点移到下一个单元格；已是最后一个就补一个空代码单元格（Jupyter 的 Shift+Enter 习惯） */
+  const focusNextCell = useCallback(
+    (cellId: string) => {
+      if (!doc) return;
+      const index = doc.cells.findIndex((item) => item.id === cellId);
+      const existing = doc.cells[index + 1];
+      if (existing) {
+        scrollCellIntoView(existing.id);
+        editorsRef.current.get(existing.id)?.focus();
+        return;
+      }
+      const created = insertNotebookCell(doc, doc.cells.length, "code");
+      pendingFocusRef.current = created.id;
+      commitChange();
+      scrollCellIntoView(created.id);
+    },
+    [commitChange, doc, scrollCellIntoView],
+  );
+
   /** 运行单个单元格；advance 为 Jupyter 的 Shift+Enter（运行后跳到下一个） */
   const handleRunCell = useCallback(
     (cellId: string, advance: boolean) => {
       if (!doc || isReadOnly || runningRef.current) return;
       const cell = doc.cells.find((item) => item.id === cellId);
       if (!cell || cell.cellType !== "code") return;
+      if (!cell.source.trim()) {
+        // 空单元格不启动内核：Shift+Enter 只移动焦点，和 Jupyter 的空格行为一致
+        if (advance) focusNextCell(cellId);
+        else showNotification("这个单元格还没有代码，写点内容再运行", "info");
+        return;
+      }
 
       runningRef.current = true;
       void (async () => {
         try {
           await executeCell(cell);
-          if (!advance) return;
-          const index = doc.cells.findIndex((item) => item.id === cellId);
-          const existing = doc.cells[index + 1];
-          if (existing) {
-            scrollCellIntoView(existing.id);
-            editorsRef.current.get(existing.id)?.focus();
-            return;
-          }
-          // 已是最后一个单元格：按 Jupyter 习惯补一个空代码单元格
-          const created = insertNotebookCell(doc, doc.cells.length, "code");
-          pendingFocusRef.current = created.id;
-          commitChange();
-          scrollCellIntoView(created.id);
+          if (advance) focusNextCell(cellId);
         } finally {
           runningRef.current = false;
         }
       })();
     },
-    [commitChange, doc, executeCell, isReadOnly, scrollCellIntoView],
+    [doc, executeCell, focusNextCell, isReadOnly, showNotification],
   );
 
   useEffect(() => {
@@ -784,6 +797,20 @@ function NotebookModeView({
 
   const handleRunAll = useCallback(() => {
     if (!doc || isReadOnly || runningRef.current) return;
+    // 全是 Markdown / 空单元格时直接提示，不要为了“跑没有”而启动内核
+    const runnable = doc.cells.some(
+      (cell) => cell.cellType === "code" && cell.source.trim().length > 0,
+    );
+    if (!runnable) {
+      const hasEmptyCode = doc.cells.some((cell) => cell.cellType === "code");
+      showNotification(
+        hasEmptyCode
+          ? "代码单元格是空的：写点代码再运行"
+          : "没有代码单元格：先用「+ 代码」新增一个",
+        "info",
+      );
+      return;
+    }
     runningRef.current = true;
     setRunningAll(true);
     void (async () => {
@@ -798,7 +825,7 @@ function NotebookModeView({
         setRunningAll(false);
       }
     })();
-  }, [doc, executeCell, isReadOnly]);
+  }, [doc, executeCell, isReadOnly, showNotification]);
 
   const handleStopKernel = useCallback(() => {
     stoppingRef.current = true;
@@ -915,8 +942,8 @@ function NotebookModeView({
       : kernelState.status === "starting"
         ? "内核启动中…"
         : kernelState.status === "error"
-          ? "内核不可用"
-          : "内核未启动";
+          ? "内核不可用 · 重试"
+          : "启动内核";
   const kernelChipClass =
     kernelState.status === "ready"
       ? "bg-accent/10 text-accent"
@@ -1004,12 +1031,35 @@ function NotebookModeView({
               </button>
             )
           )}
-          <span
-            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${kernelChipClass}`}
-            title={kernelState.message ?? KERNEL_HINT}
-          >
-            {kernelChipText}
-          </span>
+          {kernelState.status === "ready" ? (
+            <span
+              className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${kernelChipClass}`}
+              title={KERNEL_HINT}
+            >
+              {kernelChipText}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void ensureKernel()}
+              disabled={kernelState.status === "starting"}
+              title={
+                kernelState.status === "error"
+                  ? `${kernelState.message ?? "内核启动失败"}（点击重试）`
+                  : "点击启动本机 Python 内核；运行代码单元格时也会自动启动"
+              }
+              className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors disabled:cursor-default ${kernelChipClass} ${
+                kernelState.status === "starting" ? "" : "hover:brightness-95"
+              }`}
+            >
+              {kernelState.status === "starting" ? (
+                <Loader2 size={10} className="animate-spin" />
+              ) : (
+                <Play size={10} />
+              )}
+              {kernelChipText}
+            </button>
+          )}
           <span className="mx-0.5 h-4 w-px shrink-0 bg-border" />
           <button
             type="button"
