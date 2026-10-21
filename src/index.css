@@ -433,6 +433,9 @@ body {
 .markdown-preview {
   color: var(--text-primary);
   line-height: 1.45;
+  /* 长 URL / token 这类没有空格的串也要在容器内换行，否则会横向溢出被裁切 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 /* Override prose default line-height to be tighter */
 .markdown-preview.prose {
