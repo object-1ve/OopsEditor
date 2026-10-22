@@ -483,6 +483,7 @@ body {
 /* Monaco 里裸网址的装饰色（inlineClassName）；词法 token 的 string.link 在主题里配 */
 .md-url-link {
   color: #1a6fd4 !important;
+  text-decoration: underline;
 }
 .markdown-preview ul,
 .markdown-preview ol {
