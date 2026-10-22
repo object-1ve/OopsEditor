@@ -236,6 +236,50 @@ export function notebookKernelLabel(doc: NotebookDoc): string {
   );
 }
 
+/** `attachment:名字` 引用（含 URL 编码形式） */
+const ATTACHMENT_REFERENCE = /attachment:([^\s)"'`<>\]]+)/g;
+
+/**
+ * 清掉单元格里已不再被源码引用的内嵌图片，返回删除数量。
+ *
+ * Jupyter 的 `![alt](attachment:name)` 只写引用，图片本体在 `cell.attachments`；
+ * 删掉引用不会自动缩小文件，所以保存时按源码里的 `attachment:` 引用回收。
+ */
+export function pruneUnusedAttachments(doc: NotebookDoc): number {
+  let removed = 0;
+
+  for (const cell of doc.cells) {
+    const attachments = cell.raw.attachments;
+    if (!attachments || typeof attachments !== "object" || Array.isArray(attachments)) {
+      continue;
+    }
+
+    const referenced = new Set<string>();
+    for (const match of cell.source.matchAll(ATTACHMENT_REFERENCE)) {
+      referenced.add(match[1]);
+      try {
+        referenced.add(decodeURIComponent(match[1]));
+      } catch {
+        // 非法转义：保留原样比较
+      }
+    }
+
+    const entries = attachments as Record<string, unknown>;
+    let changed = false;
+    for (const name of Object.keys(entries)) {
+      if (referenced.has(name)) continue;
+      delete entries[name];
+      removed += 1;
+      changed = true;
+    }
+    if (changed && Object.keys(entries).length === 0) {
+      delete cell.raw.attachments;
+    }
+  }
+
+  return removed;
+}
+
 /**
  * 序列化写盘（targetPath 用于“保存到默认文件夹”之类的另存）。
  * 行数组等写法沿用原文件，未知字段原样保留。
@@ -244,6 +288,12 @@ export async function saveNotebookDoc(tabId: string, targetPath?: string): Promi
   const doc = docs.get(tabId);
   if (!doc) {
     throw new Error("Notebook 尚未加载完成");
+  }
+
+  // 保存时回收未被引用的内嵌图片：删掉 ![](attachment:xx) 后文件才会真的变小
+  const pruned = pruneUnusedAttachments(doc);
+  if (pruned > 0) {
+    console.info(`[Notebook] 已清理 ${pruned} 张未被引用的内嵌图片`);
   }
 
   // raw.cells 以内存中的单元格顺序为准（增删/移动都同步过）
