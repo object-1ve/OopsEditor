@@ -56,7 +56,12 @@ import {
   type NotebookCellRunResult,
 } from "@/services/notebookKernel";
 import { bytesToBase64 } from "@/utils/hexView";
-import { findUrlAtColumn } from "@/utils/markdown";
+import {
+  findMarkdownImageAtColumn,
+  findUrlAtColumn,
+  resolveMarkdownImagePath,
+  resolveMarkdownImageSrc,
+} from "@/utils/markdown";
 import type { EditorModeAdapter, EditorModeContext } from "./types";
 
 type MonacoEditorInstance = Parameters<OnMount>[0];
@@ -145,6 +150,8 @@ interface NotebookCellEditorProps {
   applyTheme: (monaco: MonacoApi) => void;
   onSourceChange: (cellId: string, value: string) => void;
   onSave: () => void;
+  /** 点击 `![](路径)`：打开和 md 一致的图片预览 */
+  onImageClick: (cellId: string, rawSrc: string, alt: string) => void;
   /** 粘贴图片：写入 cell.attachments，返回要插入的 Markdown 片段 */
   onPasteImage: (cellId: string, file: File) => Promise<string | null>;
   onFocus: (cellId: string) => void;
@@ -162,6 +169,7 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
   applyTheme,
   onSourceChange,
   onSave,
+  onImageClick,
   onPasteImage,
   onFocus,
   onBlur,
@@ -195,6 +203,23 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
         const disposable = editor.onDidContentSizeChange(syncHeight);
         editor.onDidDispose(() => disposable.dispose());
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSave());
+
+        // 图片语法 `![](路径)`：左键（或 Ctrl+Click）直接打开和 md 一致的大图预览
+        const imageClick = editor.onMouseDown((event) => {
+          if (language !== "markdown" || event.event.rightButton) return;
+          const position = event.target.position;
+          const model = editor.getModel();
+          if (!position || !model) return;
+          const hit = findMarkdownImageAtColumn(
+            model.getLineContent(position.lineNumber),
+            position.column - 1,
+          );
+          if (!hit) return;
+          event.event.preventDefault();
+          event.event.stopPropagation();
+          onImageClick(cellId, hit.src, hit.alt);
+        });
+        editor.onDidDispose(() => imageClick.dispose());
 
         // Ctrl+Click 网址：Monaco 自带的 link detector 走 window.open，在 Tauri 里静默失败，
         // 这里接管并交给系统浏览器
@@ -487,13 +512,28 @@ function readCellAttachments(cell: NotebookCell) {
   return Object.keys(attachments).length > 0 ? attachments : undefined;
 }
 
+/** cell.attachments 里的一束 mime→base64 → 可直接渲染的 data URL */
+function attachmentDataUrl(bundle: Record<string, string>): string | null {
+  const mime = Object.keys(bundle)[0];
+  if (!mime) return null;
+  return mime === "image/svg+xml"
+    ? `data:${mime};charset=utf-8,${encodeURIComponent(bundle[mime])}`
+    : `data:${mime};base64,${bundle[mime]}`;
+}
+
 /** Markdown 单元格的渲染结果（双击进入编辑） */
 function NotebookMarkdownCell({
   source,
   attachments,
+  basePath,
+  onImageClick,
 }: {
   source: string;
   attachments?: Record<string, Record<string, string>>;
+  /** Notebook 文件路径：相对图片按它的目录解析 */
+  basePath?: string;
+  /** 点击图片 → 打开和 md 一致的全屏预览 */
+  onImageClick?: (rawSrc: string, alt: string) => void;
 }) {
   const components = useMemo(
     () => ({
@@ -523,23 +563,38 @@ function NotebookMarkdownCell({
         node: _node,
         ...props
       }: React.ComponentPropsWithoutRef<"img"> & { node?: unknown }) {
-        if (src && src.startsWith("attachment:")) {
+        if (!src) return alt ? <span>{alt}</span> : null;
+
+        if (src.startsWith("attachment:")) {
           const name = decodeURIComponent(src.slice("attachment:".length));
           const bundle = attachments?.[name];
-          const mime = bundle ? Object.keys(bundle)[0] : undefined;
-          if (bundle && mime) {
-            const url =
-              mime === "image/svg+xml"
-                ? `data:${mime};charset=utf-8,${encodeURIComponent(bundle[mime])}`
-                : `data:${mime};base64,${bundle[mime]}`;
-            return <img {...props} src={url} alt={alt ?? ""} />;
-          }
-          return alt ? <span>{alt}</span> : null;
+          const url = bundle ? attachmentDataUrl(bundle) : null;
+          if (!url) return alt ? <span>{alt}</span> : null;
+          return (
+            <img
+              {...props}
+              src={url}
+              alt={alt ?? ""}
+              className="cursor-zoom-in"
+              title="点击查看大图"
+              onClick={() => onImageClick?.(src, alt ?? "")}
+            />
+          );
         }
-        return <img {...props} src={src} alt={alt ?? ""} />;
+
+        return (
+          <img
+            {...props}
+            src={resolveMarkdownImageSrc(src, basePath)}
+            alt={alt ?? ""}
+            className="cursor-zoom-in"
+            title="点击查看大图"
+            onClick={() => onImageClick?.(src, alt ?? "")}
+          />
+        );
       },
     }),
-    [attachments],
+    [attachments, basePath, onImageClick],
   );
 
   if (!source.trim()) {
@@ -1013,6 +1068,34 @@ function NotebookModeView({
     [activeTab.name, activeTab.path, openImagePreview],
   );
 
+  /** Markdown 里的图片：attachment: 取单元格附件，相对路径按 notebook 所在目录解析 */
+  const handleMarkdownImageClick = useCallback(
+    (cellId: string, rawSrc: string, alt: string) => {
+      if (rawSrc.startsWith("attachment:")) {
+        const name = decodeURIComponent(rawSrc.slice("attachment:".length));
+        const cell = doc?.cells.find((item) => item.id === cellId);
+        const bundle = cell ? readCellAttachments(cell)?.[name] : undefined;
+        const url = bundle ? attachmentDataUrl(bundle) : null;
+        if (!url) {
+          showNotification(`找不到附件图片: ${name}`, "error");
+          return;
+        }
+        openImagePreview({ path: `${activeTab.path}#attachment:${name}`, name, url });
+        return;
+      }
+
+      const absolute = resolveMarkdownImagePath(rawSrc, activeTab.path);
+      if (absolute) {
+        const name = alt || absolute.split(/[/\\]/).pop() || rawSrc;
+        openImagePreview({ path: absolute, name });
+        return;
+      }
+      // 网络图片 / data URL：直接交给预览器
+      openImagePreview({ path: rawSrc, name: alt || rawSrc, url: rawSrc });
+    },
+    [activeTab.path, doc, openImagePreview, showNotification],
+  );
+
   const handleRootKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
@@ -1324,6 +1407,10 @@ function NotebookModeView({
                         <NotebookMarkdownCell
                           source={cell.source}
                           attachments={readCellAttachments(cell)}
+                          basePath={activeTab.path}
+                          onImageClick={(rawSrc, alt) =>
+                            handleMarkdownImageClick(cell.id, rawSrc, alt)
+                          }
                         />
                       </div>
                     ) : (
@@ -1342,6 +1429,7 @@ function NotebookModeView({
                         applyTheme={applyTheme}
                         onSourceChange={handleSourceChange}
                         onSave={handleSave}
+                        onImageClick={handleMarkdownImageClick}
                         onPasteImage={handlePasteImage}
                         onFocus={handleEditorFocus}
                         onBlur={handleEditorBlur}

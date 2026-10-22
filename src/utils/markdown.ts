@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { isValidElement } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { collapsePathSegments } from "./path";
 
 export interface MarkdownHeading {
   id: string;
@@ -86,6 +88,71 @@ export function findUrlAtColumn(line: string, column: number): LineUrlHit | null
   }
 
   return null;
+}
+
+const MARKDOWN_IMAGE_PATTERN = /!\[([^\]]*)\]\(([^)\n]+)\)/g;
+
+export interface LineImageHit {
+  /** 整段 `![alt](地址)` 在行内的区间 */
+  start: number;
+  end: number;
+  alt: string;
+  /** 原样的地址（可能是相对路径、attachment:、http(s) 等） */
+  src: string;
+}
+
+/** 在一行文本里找 column（0 起）命中的 Markdown 图片语法 */
+export function findMarkdownImageAtColumn(
+  line: string,
+  column: number,
+): LineImageHit | null {
+  MARKDOWN_IMAGE_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MARKDOWN_IMAGE_PATTERN.exec(line)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (column >= start && column < end) {
+      return { start, end, alt: match[1], src: match[2].trim() };
+    }
+  }
+  return null;
+}
+
+/** Markdown 图片地址 → 本地绝对路径；http/data/asset/attachment 等非文件地址返回 null */
+export function resolveMarkdownImagePath(
+  rawSrc: string,
+  docPath?: string | null,
+): string | null {
+  let src = rawSrc.trim();
+  if (!src || /^(https?|data|blob|asset|attachment):/i.test(src)) return null;
+
+  if (src.startsWith("file://")) {
+    src = src.replace(/^file:\/\/\/?/, "");
+  }
+  try {
+    if (src.includes("%")) src = decodeURIComponent(src);
+  } catch {
+    // 保留原样，交给后面的路径拼接
+  }
+
+  // 绝对路径（Windows: C:\... / C:/...，Unix: /...）
+  if (/^(?:[A-Za-z]:[/\\]?|[/\\])/.test(src)) {
+    const absolute = /^[A-Za-z]:[^/\\]/.test(src) ? `${src.substring(0, 2)}\\${src.substring(2)}` : src;
+    return collapsePathSegments(absolute);
+  }
+
+  if (!docPath) return null;
+  const lastSeparator = Math.max(docPath.lastIndexOf("/"), docPath.lastIndexOf("\\"));
+  if (lastSeparator <= 0) return null;
+  const separator = docPath.includes("\\") ? "\\" : "/";
+  return collapsePathSegments(`${docPath.substring(0, lastSeparator)}${separator}${src}`);
+}
+
+/** 预览用的图片 src：本地文件转 asset 协议，URL / attachment: 原样返回 */
+export function resolveMarkdownImageSrc(rawSrc: string, docPath?: string | null): string {
+  if (/^(https?|data|blob|asset|attachment):/i.test(rawSrc.trim())) return rawSrc;
+  const absolute = resolveMarkdownImagePath(rawSrc, docPath);
+  return absolute ? convertFileSrc(absolute) : rawSrc;
 }
 
 export function parseMarkdownHeadings(markdown: string): MarkdownHeading[] {

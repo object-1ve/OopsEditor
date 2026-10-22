@@ -16,12 +16,14 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import { Copy, FilePenLine } from "lucide-react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getPreviewScrollTop, setPreviewScrollTop } from "@/utils/scrollMemory";
 import { copyTextToClipboard } from "@/utils/clipboard";
-import { createMarkdownHeadingIdFactory, extractTextFromReactNode } from "@/utils/markdown";
-import { collapsePathSegments } from "@/utils/path";
+import {
+  createMarkdownHeadingIdFactory,
+  extractTextFromReactNode,
+  resolveMarkdownImageSrc,
+} from "@/utils/markdown";
 import ContextMenu from "@/components/ContextMenu";
 import type { MarkdownOutlineTarget } from "@/store/types";
 import type { FileTab } from "@/types";
@@ -80,70 +82,15 @@ function useMarkdownComponents(activeTab: FileTab) {
       img: function ImgRenderer({ src: rawSrc, alt, node, ...props }: any) {
         if (!rawSrc) return alt ? createElement("span", null, alt) : null;
 
-        let src = rawSrc;
-        // 1. 处理 file:// 协议，将其转为普通路径
-        if (src.startsWith("file://")) {
-          src = src.replace(/^file:\/\/\/?/, "");
-        }
-
-        // 2. 尝试解码，处理 ![](image%20name.png)
-        try {
-          if (src.includes("%")) {
-            src = decodeURIComponent(src);
-          }
-        } catch (e) {
-          // ignore
-        }
-
         const line = node?.position?.start?.line;
-        const extraProps: any = {};
-        if (line !== undefined) {
-          extraProps["data-line"] = line;
-        }
+        const lineProps = line === undefined ? {} : { "data-line": line };
 
-        // 3. 如果已经是网络图片或 asset 协议，直接返回
-        if (/^(https?|data|asset):/.test(src)) {
-          return createElement("img", {
-            alt,
-            ...props,
-            ...extraProps,
-            src,
-            style: { maxWidth: "100%", display: "block" },
-          });
-        }
-
-        let resolvedSrc = src;
-        // 4. 判断是否为绝对路径（Windows: C:\..., D:\... 等，Unix: /...）
-        const isAbsolute = /^(?:[A-Za-z]:[/\\]?|[/\\])/.test(src);
-
-        if (isAbsolute) {
-          let absolutePath = src;
-          // 如果盘符后面缺少分隔符（可能被 Markdown 转义了），补上
-          if (/^[A-Za-z]:[^/\\]/.test(src)) {
-            absolutePath = src.substring(0, 2) + "\\" + src.substring(2);
-          }
-          resolvedSrc = convertFileSrc(collapsePathSegments(absolutePath));
-        } else if (activeTab.path) {
-          // 5. 处理相对路径：跨文件夹引用（../A/Attachment/x.png）需折叠后再转 asset URL
-          try {
-            const lastSeparatorIndex = Math.max(
-              activeTab.path.lastIndexOf("/"),
-              activeTab.path.lastIndexOf("\\"),
-            );
-            if (lastSeparatorIndex !== -1) {
-              const dir = activeTab.path.substring(0, lastSeparatorIndex);
-              const separator = activeTab.path.includes("\\") ? "\\" : "/";
-              resolvedSrc = convertFileSrc(collapsePathSegments(`${dir}${separator}${src}`));
-            }
-          } catch (e) {
-            console.error("Failed to resolve relative image path:", e);
-          }
-        }
+        const resolvedSrc = resolveMarkdownImageSrc(rawSrc, activeTab.path);
 
         return createElement("img", {
           alt: alt || "image",
           ...props,
-          ...extraProps,
+          ...lineProps,
           src: resolvedSrc,
           style: { maxWidth: "100%", display: "block" },
           onError: () => {
