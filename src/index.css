@@ -471,6 +471,19 @@ body {
 .markdown-preview p {
   margin-bottom: 0.5rem;
 }
+/* 识别到的网址统一染蓝：预览态走这里，源码态用 Monaco 的 string.link + md-url-link */
+.markdown-preview a {
+  color: #1a6fd4;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-preview a:hover {
+  color: #1459ad;
+}
+/* Monaco 里裸网址的装饰色（inlineClassName）；词法 token 的 string.link 在主题里配 */
+.md-url-link {
+  color: #1a6fd4 !important;
+}
 .markdown-preview ul,
 .markdown-preview ol {
   margin-bottom: 0.5rem;

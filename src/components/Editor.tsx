@@ -51,6 +51,8 @@ const TERRACOTTA_THEME = {
     { token: "keyword.control", foreground: "c86a4e" },
     { token: "string", foreground: "6a9a82" },
     { token: "string.quoted", foreground: "6a9a82" },
+    // Markdown 里的 [文本](网址)：链接整体染蓝，和预览态一致
+    { token: "string.link", foreground: "1a6fd4" },
     { token: "number", foreground: "b8844a" },
     { token: "type", foreground: "4a9a8a" },
     { token: "type.identifier", foreground: "4a9a8a" },

@@ -8,6 +8,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MonacoEditor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
+import type { editor as MonacoEditorNs } from "monaco-editor";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -109,6 +110,29 @@ const NOTEBOOK_EDITOR_OPTIONS = {
   suggest: { showWords: true },
 } as const;
 
+/** 源码模式里要被染成蓝色的网址：http(s):// 与 www. 开头的裸链接 */
+const URL_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"'`){}\]]+/gi;
+
+/** 用装饰器给裸网址上色（Markdown 词法只识别 [文本](地址)，裸链接需要自己找） */
+function collectUrlDecorations(
+  model: MonacoEditorNs.ITextModel,
+  monaco: MonacoApi,
+): MonacoEditorNs.IModelDeltaDecoration[] {
+  const text = model.getValue();
+  const decorations: MonacoEditorNs.IModelDeltaDecoration[] = [];
+  for (const match of text.matchAll(URL_PATTERN)) {
+    const raw = match[0].replace(/[.,;:!?]+$/, "");
+    if (!raw) continue;
+    const start = model.getPositionAt(match.index);
+    const end = model.getPositionAt(match.index + raw.length);
+    decorations.push({
+      range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
+      options: { inlineClassName: "md-url-link" },
+    });
+  }
+  return decorations;
+}
+
 interface NotebookCellEditorProps {
   cellId: string;
   initialValue: string;
@@ -207,6 +231,21 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
         };
         document.addEventListener("paste", handlePaste, true);
         editor.onDidDispose(() => document.removeEventListener("paste", handlePaste, true));
+
+        // Markdown 单元格：源码模式里把识别到的网址染蓝
+        if (language === "markdown") {
+          const model = editor.getModel();
+          if (model) {
+            const collection = editor.createDecorationsCollection();
+            const refreshUrls = () => collection.set(collectUrlDecorations(model, monaco));
+            refreshUrls();
+            const modelListener = model.onDidChangeContent(refreshUrls);
+            editor.onDidDispose(() => {
+              modelListener.dispose();
+              collection.clear();
+            });
+          }
+        }
 
         onReady(cellId, editor);
       }}
@@ -545,7 +584,10 @@ function NotebookModeView({
   const [doc, setDoc] = useState<NotebookDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, bumpVersion] = useState(0);
-  const [editingMarkdownId, setEditingMarkdownId] = useState<string | null>(null);
+  /** 已切换到渲染预览的 Markdown 单元格：默认都保持源码模式 */
+  const [previewMarkdownIds, setPreviewMarkdownIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [kernelState, setKernelState] = useState<KernelState>({ status: "idle" });
   const [runningCellId, setRunningCellId] = useState<string | null>(null);
   const [runningAll, setRunningAll] = useState(false);
@@ -570,7 +612,7 @@ function NotebookModeView({
     let cancelled = false;
     setError(null);
     setDoc(null);
-    setEditingMarkdownId(null);
+    setPreviewMarkdownIds(new Set());
     setRunningCellId(null);
     setRunningAll(false);
     runningRef.current = false;
@@ -658,6 +700,26 @@ function NotebookModeView({
       pendingFocusRef.current = null;
       editor.focus();
     }
+  }, []);
+
+  /** Markdown 单元格在源码/预览之间切换；默认源码，只有用户点「预览」才渲染 */
+  const toggleMarkdownPreview = useCallback((cellId: string) => {
+    setPreviewMarkdownIds((current) => {
+      const next = new Set(current);
+      if (next.has(cellId)) next.delete(cellId);
+      else next.add(cellId);
+      return next;
+    });
+  }, []);
+
+  /** 预览里双击回到源码模式 */
+  const showMarkdownSource = useCallback((cellId: string) => {
+    setPreviewMarkdownIds((current) => {
+      if (!current.has(cellId)) return current;
+      const next = new Set(current);
+      next.delete(cellId);
+      return next;
+    });
   }, []);
 
   const scrollCellIntoView = useCallback((cellId: string) => {
@@ -851,8 +913,7 @@ function NotebookModeView({
     (index: number, cellType: NotebookCellType) => {
       if (!doc || isReadOnly) return;
       const cell = insertNotebookCell(doc, index, cellType);
-      setEditingMarkdownId(cellType === "markdown" ? cell.id : null);
-      // 新增的单元格挂载后自动聚焦（Markdown 单元格也会先进入编辑态）
+      // 新增的 Markdown 单元格同样保持源码模式，挂载后自动聚焦
       pendingFocusRef.current = cell.id;
       commitChange();
       scrollCellIntoView(cell.id);
@@ -865,10 +926,15 @@ function NotebookModeView({
       if (!doc || isReadOnly) return;
       removeNotebookCell(doc, cellId);
       editorsRef.current.delete(cellId);
-      if (editingMarkdownId === cellId) setEditingMarkdownId(null);
+      setPreviewMarkdownIds((current) => {
+        if (!current.has(cellId)) return current;
+        const next = new Set(current);
+        next.delete(cellId);
+        return next;
+      });
       commitChange();
     },
-    [commitChange, doc, editingMarkdownId, isReadOnly],
+    [commitChange, doc, isReadOnly],
   );
 
   const handleMoveCell = useCallback(
@@ -885,10 +951,15 @@ function NotebookModeView({
       if (!doc || isReadOnly) return;
       const next: NotebookCellType = cell.cellType === "code" ? "markdown" : "code";
       if (!setNotebookCellType(doc, cell.id, next)) return;
-      if (editingMarkdownId === cell.id) setEditingMarkdownId(null);
+      setPreviewMarkdownIds((current) => {
+        if (!current.has(cell.id)) return current;
+        const entry = new Set(current);
+        entry.delete(cell.id);
+        return entry;
+      });
       commitChange();
     },
-    [commitChange, doc, editingMarkdownId, isReadOnly],
+    [commitChange, doc, isReadOnly],
   );
 
   const handleClearOutputs = useCallback(
@@ -1128,8 +1199,8 @@ function NotebookModeView({
           )}
 
           {doc.cells.map((cell, index) => {
-            const isMarkdownEditing =
-              cell.cellType === "markdown" && editingMarkdownId === cell.id;
+            const isMarkdownPreview =
+              cell.cellType === "markdown" && previewMarkdownIds.has(cell.id);
             const isRunningCell = runningCellId === cell.id;
             return (
               <div
@@ -1193,12 +1264,16 @@ function NotebookModeView({
                           <Eraser size={12} />
                         </ToolbarButton>
                       )}
-                      {isMarkdownEditing && (
+                      {cell.cellType === "markdown" && (
                         <ToolbarButton
-                          title="完成编辑（回到预览）"
-                          onClick={() => setEditingMarkdownId(null)}
+                          title={
+                            isMarkdownPreview
+                              ? "回到源码模式"
+                              : "预览渲染效果（预览里双击回到源码）"
+                          }
+                          onClick={() => toggleMarkdownPreview(cell.id)}
                         >
-                          <Eye size={12} />
+                          {isMarkdownPreview ? <FileCode2 size={12} /> : <Eye size={12} />}
                         </ToolbarButton>
                       )}
                       <ToolbarButton
@@ -1217,12 +1292,12 @@ function NotebookModeView({
                       </ToolbarButton>
                     </div>
 
-                    {cell.cellType === "markdown" && !isMarkdownEditing ? (
+                    {isMarkdownPreview ? (
                       <div
                         onDoubleClick={() => {
-                          if (!isReadOnly) setEditingMarkdownId(cell.id);
+                          if (!isReadOnly) showMarkdownSource(cell.id);
                         }}
-                        title={isReadOnly ? undefined : "双击编辑该 Markdown 单元格"}
+                        title={isReadOnly ? undefined : "双击回到源码模式"}
                         className={isReadOnly ? undefined : "cursor-text"}
                       >
                         <NotebookMarkdownCell
