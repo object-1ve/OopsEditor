@@ -44,6 +44,50 @@ export function createMarkdownHeadingIdFactory() {
   };
 }
 
+export interface LineUrlHit {
+  /** 地址本身在行内的区间（0 起、左闭右开） */
+  start: number;
+  end: number;
+  /** 可以直接交给系统浏览器打开的 http(s) 地址 */
+  url: string;
+}
+
+const MARKDOWN_LINK_PATTERN = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
+const BARE_URL_PATTERN = /https?:\/\/[^\s)<>]+/g;
+
+/**
+ * 在一行文本里找 column（0 起）命中的网址。
+ *
+ * Markdown 链接 `[文本](地址)` 优先于裸链接，避免把链接内部地址重复命中成两段；
+ * 裸链接尾部的句读（.,;:!?）不算地址的一部分。
+ */
+export function findUrlAtColumn(line: string, column: number): LineUrlHit | null {
+  const patterns: Array<{ regex: RegExp; asUrl: (match: RegExpExecArray) => string }> = [
+    { regex: MARKDOWN_LINK_PATTERN, asUrl: (match) => match[2] },
+    {
+      regex: BARE_URL_PATTERN,
+      asUrl: (match) => match[0].replace(/[.,;:!?]+$/, ""),
+    },
+  ];
+
+  for (const { regex, asUrl } of patterns) {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(line)) !== null) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (column >= start && column < end) {
+        const url = asUrl(match);
+        const startOffset = match[0].indexOf(url);
+        const urlStart = startOffset < 0 ? start : start + startOffset;
+        return { start: urlStart, end: urlStart + url.length, url };
+      }
+    }
+  }
+
+  return null;
+}
+
 export function parseMarkdownHeadings(markdown: string): MarkdownHeading[] {
   const lines = markdown.split(/\r?\n/);
   const nextId = createMarkdownHeadingIdFactory();

@@ -56,6 +56,7 @@ import {
   type NotebookCellRunResult,
 } from "@/services/notebookKernel";
 import { bytesToBase64 } from "@/utils/hexView";
+import { findUrlAtColumn } from "@/utils/markdown";
 import type { EditorModeAdapter, EditorModeContext } from "./types";
 
 type MonacoEditorInstance = Parameters<OnMount>[0];
@@ -107,6 +108,8 @@ const NOTEBOOK_EDITOR_OPTIONS = {
   },
   // 单元格是“内嵌小编辑器”，补全弹层不能被 overflow 容器裁掉
   fixedOverflowWidgets: true,
+  // Ctrl+Click 网址自己接管（Monaco 的 link detector 走 window.open，在 Tauri 里打不开）
+  links: false,
   suggest: { showWords: true },
 } as const;
 
@@ -192,6 +195,24 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
         const disposable = editor.onDidContentSizeChange(syncHeight);
         editor.onDidDispose(() => disposable.dispose());
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSave());
+
+        // Ctrl+Click 网址：Monaco 自带的 link detector 走 window.open，在 Tauri 里静默失败，
+        // 这里接管并交给系统浏览器
+        const linkClick = editor.onMouseDown((event) => {
+          if (!event.event.ctrlKey && !event.event.metaKey) return;
+          const position = event.target.position;
+          const model = editor.getModel();
+          if (!position || !model) return;
+          const hit = findUrlAtColumn(
+            model.getLineContent(position.lineNumber),
+            position.column - 1,
+          );
+          if (!hit) return;
+          event.event.preventDefault();
+          event.event.stopPropagation();
+          void openUrl(hit.url);
+        });
+        editor.onDidDispose(() => linkClick.dispose());
         // Monaco 自带 Ctrl+Enter（插入行）会抢走按键，运行快捷键改在窗口捕获阶段处理
         editor.onDidFocusEditorText(() => onFocus(cellId));
         editor.onDidBlurEditorWidget(() => onBlur(cellId));

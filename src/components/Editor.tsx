@@ -37,6 +37,7 @@ import { copyTextToClipboard } from "@/utils/clipboard";
 import { invoke } from "@tauri-apps/api/core";
 import { findMatchColumns } from "@/utils/editorJump";
 import { collapsePathSegments } from "@/utils/path";
+import { findUrlAtColumn } from "@/utils/markdown";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 
@@ -459,27 +460,13 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       const line = model.getLineContent(e.target.position.lineNumber);
       const col = e.target.position.column - 1; // 0-indexed
 
-      // Ctrl+Click on [text](https://...) or a bare https://... URL opens the system browser.
-      // 裸 URL 优先匹配 [..](..) 内部，避免把整个 markdown 链接的括号部分重复当作裸链接。
-      const linkPattern = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
-      const bareUrlPattern = /https?:\/\/[^\s)<>]+/g;
-      const urlPatterns: Array<{ regex: RegExp; urlGroup: number }> = [
-        { regex: linkPattern, urlGroup: 2 },
-        { regex: bareUrlPattern, urlGroup: 0 },
-      ];
-      for (const { regex, urlGroup } of urlPatterns) {
-        regex.lastIndex = 0;
-        let m: RegExpExecArray | null;
-        while ((m = regex.exec(line)) !== null) {
-          const startIdx = m.index;
-          const endIdx = m.index + m[0].length;
-          if (col >= startIdx && col < endIdx) {
-            e.event.preventDefault();
-            e.event.stopPropagation();
-            void openUrl(m[urlGroup]);
-            return;
-          }
-        }
+      // Ctrl+Click 落到 [文本](https://...) 或裸 https://... 上：用系统浏览器打开
+      const lineUrl = findUrlAtColumn(line, col);
+      if (lineUrl) {
+        e.event.preventDefault();
+        e.event.stopPropagation();
+        void openUrl(lineUrl.url);
+        return;
       }
 
       // Ctrl+Click on ![](path) opens the image in a new tab
