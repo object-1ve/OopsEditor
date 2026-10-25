@@ -328,8 +328,14 @@ export async function syncTabsToDatabase(tabs: FileTab[]) {
 
     await Promise.all([
       ...removedIds.map((fileId) => invoke("delete_tab", { fileId })),
-      // 一次事务批量写入，避免每个标签各开一次 SQLite 事务/fsync
-      changed.length > 0 ? invoke("sync_tabs", { tabs: changed }) : Promise.resolve(),
+      // 一次事务批量写入，避免每个标签各开一次 SQLite 事务/fsync；
+      // 批量命令异常时退回逐个写入，至少别把标签状态丢掉
+      changed.length > 0
+        ? invoke("sync_tabs", { tabs: changed }).catch((err) => {
+            console.error("批量同步标签页失败，回退到逐个写入:", err);
+            return Promise.all(changed.map((payload) => invoke("upsert_tab", { tab: payload })));
+          })
+        : Promise.resolve(),
     ]);
   } catch (err) {
     console.error("同步标签页到数据库失败:", err);

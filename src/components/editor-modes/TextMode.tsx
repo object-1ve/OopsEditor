@@ -9,6 +9,14 @@ import { MarkdownPreviewPane } from "./MarkdownMode";
 import { registerMarkdownSnippets, type MarkdownSnippetsHandle } from "./markdownSnippets";
 import type { EditorModeContext, EditorModeAdapter, SharedContextMenuItem } from "./types";
 
+/**
+ * 超过这个大小就放弃 Monaco 的 advanced 换行测量。
+ * advanced 会按真实字宽逐行测量：实测 32KB ≈ 0.45s、64KB ≈ 0.8s、128KB ≈ 1.4s、
+ * 512KB ≈ 4.4s、6MB / 4 万行要 22 秒以上（就是打开大文件卡死的原因）。
+ * simple 用等宽估算，同样的 6MB 挂载约 0.4s。
+ */
+const LARGE_DOCUMENT_WRAP_LIMIT = 64 * 1024;
+
 
 function TextModeView({
   activeTab,
@@ -131,6 +139,9 @@ function TextModeView({
     };
   }, [activeTab.isLivePreviewMode, activeTab.language, handleEditorScroll]);
 
+  const preciseWrapping =
+    editorWordWrap && activeTab.content.length <= LARGE_DOCUMENT_WRAP_LIMIT;
+
   const editor = (
     <MonacoEditor
       key={activeTab.id}
@@ -169,7 +180,8 @@ function TextModeView({
         wordWrap: editorWordWrap ? "on" : "off",
         // 换行按真实字宽计算：默认的 simple 策略用等宽字符估算列数，遇到自定义字体
         // （如 Maple Mono NF CN）或中英混排时会折得偏宽，行仍溢出 → 底部冒出横向滚动条。
-        wrappingStrategy: editorWordWrap ? "advanced" : "simple",
+        // 但大文件必须用 simple：advanced 的逐行测量会让 6MB 文本打开卡 20 秒以上。
+        wrappingStrategy: preciseWrapping ? "advanced" : "simple",
         readOnly: activeTab.isReadOnly ?? false,
         dropIntoEditor: { enabled: false },
         suggest: {
