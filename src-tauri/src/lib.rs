@@ -197,7 +197,7 @@ use db::{
     init_project_database, migrate_from_settings_json, record_project_opened,
     remove_expanded_folder, remove_pinned_file, remove_pinned_folder, search_projects,
     set_setting, sync_default_projects, sync_expanded_folders, sync_pinned_files,
-    sync_pinned_folders, sync_root_projects, toggle_pin_project, update_project,
+    sync_pinned_folders, sync_root_projects, sync_tabs, toggle_pin_project, update_project,
     update_tab_content, update_tab_order, update_upgrade_item, upsert_tab,
 };
 
@@ -919,6 +919,7 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         get_all_tabs,
         get_tab_by_file_id,
         upsert_tab,
+        sync_tabs,
         delete_tab,
         update_tab_content,
         update_tab_order,

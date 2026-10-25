@@ -18,7 +18,7 @@ import {
   sanitizeRecentFiles,
 } from "@/utils/settings";
 import { enforceTabLimit, formatAutoClosedTabsMessage } from "@/store/services/tabEnforcer";
-import { persistTabsState } from "@/utils/workspaceSession";
+import { cancelScheduledTabPersist, persistTabsState } from "@/utils/workspaceSession";
 import { clearAutoSaveTimers, getAllAutoSaveKeys } from "@/store/services/autoSave";
 import { applyCustomFont, clearCustomFont } from "@/services/customFont";
 
@@ -167,6 +167,7 @@ export const createUiSlice: StateCreator<
       openFiles: limitedTabsState.openFiles,
     });
     void saveSetting("maxOpenTabs", nextMaxOpenTabs);
+    limitedTabsState.closedTabs.forEach((closed) => cancelScheduledTabPersist(closed.id));
     persistTabsState(limitedTabsState.tabs, limitedTabsState.activeTabId);
     if (limitedTabsState.closedTabs.length > 0) {
       get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");

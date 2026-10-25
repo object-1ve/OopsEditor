@@ -7,7 +7,11 @@ import type { ChatSession } from "@/services/chat";
 import { sessionIdFromChatTabPath } from "@/components/chat/chatTab";
 import { invoke } from "@tauri-apps/api/core";
 import { loadSettings } from "@/utils/settings";
-import { persistTabsState } from "@/utils/workspaceSession";
+import {
+  cancelScheduledTabPersist,
+  hydrateRestoredTabContents,
+  persistTabsState,
+} from "@/utils/workspaceSession";
 import { base64ToHexView, parseHexView } from "@/utils/hexView";
 import { appDataDir } from "@tauri-apps/api/path";
 import { applyCustomFont } from "@/services/customFont";
@@ -59,15 +63,18 @@ const useEditorStore = create<EditorState>()((...a) => {
         return [] as ChatSession[];
       });
       const sessionTitles = new Map(chatSessions.map((s) => [s.id, s.title]));
-      const rehydratedTabs = normalizedTabs.filter(
+      const persistedTabs = normalizedTabs.filter(
         (tab) => !isChatTab(tab) || sessionTitles.has(sessionIdFromChatTabPath(tab.path) ?? NaN),
       );
-      for (const tab of rehydratedTabs) {
+      for (const tab of persistedTabs) {
         if (!isChatTab(tab)) continue;
         const sessionId = sessionIdFromChatTabPath(tab.path);
         if (sessionId === null) continue;
         tab.name = sessionTitles.get(sessionId) ?? tab.name;
       }
+
+      // 大文件内容没有写进数据库（见 MAX_PERSISTED_TAB_CONTENT），启动时按路径读回来
+      const rehydratedTabs = await hydrateRestoredTabContents(persistedTabs);
 
       let defaultFolders = settings.defaultFolders;
       if (!defaultFolders || defaultFolders.length === 0) {
@@ -160,6 +167,7 @@ const useEditorStore = create<EditorState>()((...a) => {
         persistTabsState(limitedTabsState.tabs, limitedTabsState.activeTabId);
       }
 
+      limitedTabsState.closedTabs.forEach((tab) => cancelScheduledTabPersist(tab.id));
       if (limitedTabsState.closedTabs.length > 0) {
         get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");
       }

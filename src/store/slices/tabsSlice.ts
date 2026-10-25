@@ -12,9 +12,11 @@ import { base64ToHexView } from "@/utils/hexView";
 import { isPreviewOnlyLanguage, isChatTab } from "@/types";
 import { CHAT_TAB_ID_PREFIX, chatTabId } from "@/components/chat/chatTab";
 import {
+  cancelScheduledTabPersist,
   persistActiveTabId,
   persistTabsState,
   persistSingleTabState,
+  persistSingleTabStateNow,
   persistPinnedFilesState,
 } from "@/utils/workspaceSession";
 import { scheduleAutoSave, clearAutoSaveTimer, clearAutoSaveTimers } from "@/store/services/autoSave";
@@ -97,6 +99,7 @@ export const createTabsSlice: StateCreator<
         state.maxOpenTabs,
       );
       persistTabsState(limitedTabsState.tabs, limitedTabsState.activeTabId);
+      limitedTabsState.closedTabs.forEach((closed) => cancelScheduledTabPersist(closed.id));
       if (limitedTabsState.closedTabs.length > 0) {
         queueMicrotask(() => {
           get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");
@@ -134,6 +137,7 @@ export const createTabsSlice: StateCreator<
         state.maxOpenTabs,
       );
       persistTabsState(limitedTabsState.tabs, limitedTabsState.activeTabId);
+      limitedTabsState.closedTabs.forEach((closed) => cancelScheduledTabPersist(closed.id));
       return {
         tabs: limitedTabsState.tabs,
         activeTabId: limitedTabsState.activeTabId,
@@ -153,6 +157,7 @@ export const createTabsSlice: StateCreator<
       }
       clearScrollMemory(id);
       clearAutoSaveTimer(id);
+      cancelScheduledTabPersist(id);
       evictExcelDoc(id);
       evictNotebookDoc(id);
       persistTabsState(tabs, activeTabId);
@@ -169,6 +174,7 @@ export const createTabsSlice: StateCreator<
       }
       ids.forEach((id) => clearScrollMemory(id));
       clearAutoSaveTimers(ids);
+      ids.forEach((id) => cancelScheduledTabPersist(id));
       ids.forEach((id) => evictExcelDoc(id));
       ids.forEach((id) => evictNotebookDoc(id));
       persistTabsState(tabs, activeTabId);
@@ -257,7 +263,8 @@ export const createTabsSlice: StateCreator<
       const updatedTab = newTabs.find((tab) => tab.id === id);
       const tabIndex = newTabs.findIndex((tab) => tab.id === id);
       if (updatedTab && tabIndex !== -1) {
-        void persistSingleTabState(updatedTab, tabIndex);
+        // 保存完成要立刻把 is_dirty=false（以及大文件不再存内容）落库
+        persistSingleTabStateNow(updatedTab, tabIndex);
       }
       return { tabs: newTabs, secondaryTabs: newSecondaryTabs };
     });
@@ -396,6 +403,8 @@ export const createTabsSlice: StateCreator<
       const nextOpenFiles = nextTabs.map((tab) => tab.path);
 
       clearScrollMemory(id);
+      // 标签 id 会换成新路径：别让旧 id 的去抖写入把刚删掉的行写回来
+      cancelScheduledTabPersist(id);
       persistTabsState(nextTabs, nextActiveTabId);
       persistPinnedFilesState(nextPinnedFiles);
 
@@ -419,7 +428,7 @@ export const createTabsSlice: StateCreator<
       const updatedTab = nextTabs.find((tab) => tab.id === id);
       const tabIndex = nextTabs.findIndex((tab) => tab.id === id);
       if (updatedTab && tabIndex !== -1) {
-        void persistSingleTabState(updatedTab, tabIndex);
+        persistSingleTabStateNow(updatedTab, tabIndex);
       }
       return { tabs: nextTabs };
     }),
@@ -434,7 +443,7 @@ export const createTabsSlice: StateCreator<
       const updatedTab = nextTabs.find((tab) => tab.id === id);
       const tabIndex = nextTabs.findIndex((tab) => tab.id === id);
       if (updatedTab && tabIndex !== -1) {
-        void persistSingleTabState(updatedTab, tabIndex);
+        persistSingleTabStateNow(updatedTab, tabIndex);
       }
       return { tabs: nextTabs };
     }),

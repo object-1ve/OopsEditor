@@ -967,128 +967,110 @@ pub fn get_tab_by_file_id(file_id: String) -> Result<Option<Tab>, String> {
     })
 }
 
+fn map_tab_row(row: &rusqlite::Row<'_>) -> SqlResult<Tab> {
+    Ok(Tab {
+        id: row.get(0)?,
+        file_id: row.get(1)?,
+        name: row.get(2)?,
+        path: row.get(3)?,
+        language: row.get(4)?,
+        content: row.get(5)?,
+        view_mode: row.get(6)?,
+        is_dirty: row.get::<_, i64>(7)? != 0,
+        is_read_only: row.get::<_, i64>(8)? != 0,
+        is_preview_mode: row.get::<_, i64>(9)? != 0,
+        is_live_preview: row.get::<_, i64>(10)? != 0,
+        size: row.get(11)?,
+        sort_order: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+    })
+}
+
+const SELECT_TAB_COLUMNS: &str = "SELECT id, file_id, name, path, language, content, view_mode,
+            is_dirty, is_read_only, is_preview_mode, is_live_preview,
+            size, sort_order, created_at, updated_at
+     FROM tabs";
+
+/// 写入一行标签状态：按 file_id 更新，不存在则插入。
+/// 供单标签写入和批量事务共用，避免每次先 SELECT 再决定 UPDATE/INSERT。
+fn write_tab_row(conn: &Connection, tab: &NewTab, now: &str) -> SqlResult<()> {
+    let normalized_path = tab.path.replace('\\', "/");
+    let updated = conn.execute(
+        "UPDATE tabs SET
+            name = ?1, path = ?2, language = ?3, content = ?4,
+            view_mode = ?5, is_dirty = ?6, is_read_only = ?7,
+            is_preview_mode = ?8, is_live_preview = ?9,
+            size = ?10, sort_order = ?11, updated_at = ?12
+         WHERE file_id = ?13",
+        params![
+            &tab.name,
+            &normalized_path,
+            tab.language.as_deref().unwrap_or("plaintext"),
+            tab.content.as_deref().unwrap_or(""),
+            tab.view_mode.as_deref().unwrap_or("text"),
+            tab.is_dirty.map(|v| v as i64).unwrap_or(0),
+            tab.is_read_only.map(|v| v as i64).unwrap_or(0),
+            tab.is_preview_mode.map(|v| v as i64).unwrap_or(0),
+            tab.is_live_preview.map(|v| v as i64).unwrap_or(0),
+            tab.size.unwrap_or(0),
+            tab.sort_order.unwrap_or(0),
+            now,
+            &tab.file_id,
+        ],
+    )?;
+
+    if updated == 0 {
+        conn.execute(
+            "INSERT INTO tabs (file_id, name, path, language, content, view_mode,
+                               is_dirty, is_read_only, is_preview_mode, is_live_preview,
+                               size, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+            params![
+                &tab.file_id,
+                &tab.name,
+                &normalized_path,
+                tab.language.as_deref().unwrap_or("plaintext"),
+                tab.content.as_deref().unwrap_or(""),
+                tab.view_mode.as_deref().unwrap_or("text"),
+                tab.is_dirty.map(|v| v as i64).unwrap_or(0),
+                tab.is_read_only.map(|v| v as i64).unwrap_or(0),
+                tab.is_preview_mode.map(|v| v as i64).unwrap_or(0),
+                tab.is_live_preview.map(|v| v as i64).unwrap_or(0),
+                tab.size.unwrap_or(0),
+                tab.sort_order.unwrap_or(0),
+                now,
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn upsert_tab(tab: NewTab) -> Result<Tab, String> {
     let now = Local::now().to_rfc3339();
-    let normalized_path = tab.path.replace('\\', "/");
-
     with_db(|conn| {
-        // 检查是否已存在
-        let existing: Option<(i64, String)> = conn
-            .query_row(
-                "SELECT id, updated_at FROM tabs WHERE file_id = ?1",
-                params![tab.file_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .ok();
+        write_tab_row(conn, &tab, &now)?;
+        conn.query_row(
+            &format!("{} WHERE file_id = ?1", SELECT_TAB_COLUMNS),
+            params![&tab.file_id],
+            map_tab_row,
+        )
+    })
+}
 
-        if let Some((existing_id, _old_updated)) = existing {
-            // ── 更新已有标签页 ──
-            conn.execute(
-                "UPDATE tabs SET
-                    name = ?1, path = ?2, language = ?3, content = ?4,
-                    view_mode = ?5, is_dirty = ?6, is_read_only = ?7,
-                    is_preview_mode = ?8, is_live_preview = ?9,
-                    size = ?10, sort_order = ?11, updated_at = ?12
-                 WHERE id = ?13",
-                params![
-                    tab.name,
-                    normalized_path,
-                    tab.language.unwrap_or_else(|| "plaintext".into()),
-                    tab.content.unwrap_or_default(),
-                    tab.view_mode.unwrap_or_else(|| "text".into()),
-                    tab.is_dirty.map(|v| v as i64).unwrap_or(0),
-                    tab.is_read_only.map(|v| v as i64).unwrap_or(0),
-                    tab.is_preview_mode.map(|v| v as i64).unwrap_or(0),
-                    tab.is_live_preview.map(|v| v as i64).unwrap_or(0),
-                    tab.size.unwrap_or(0),
-                    tab.sort_order.unwrap_or(0),
-                    now,
-                    existing_id,
-                ],
-            )?;
-
-            // 返回更新后的数据
-            let mut stmt = conn.prepare(
-                "SELECT id, file_id, name, path, language, content, view_mode,
-                        is_dirty, is_read_only, is_preview_mode, is_live_preview,
-                        size, sort_order, created_at, updated_at
-                 FROM tabs WHERE id = ?1",
-            )?;
-
-            stmt.query_row(params![existing_id], |row| {
-                Ok(Tab {
-                    id: row.get(0)?,
-                    file_id: row.get(1)?,
-                    name: row.get(2)?,
-                    path: row.get(3)?,
-                    language: row.get(4)?,
-                    content: row.get(5)?,
-                    view_mode: row.get(6)?,
-                    is_dirty: row.get::<_, i64>(7)? != 0,
-                    is_read_only: row.get::<_, i64>(8)? != 0,
-                    is_preview_mode: row.get::<_, i64>(9)? != 0,
-                    is_live_preview: row.get::<_, i64>(10)? != 0,
-                    size: row.get(11)?,
-                    sort_order: row.get(12)?,
-                    created_at: row.get(13)?,
-                    updated_at: row.get(14)?,
-                })
-            })
-        } else {
-            // ── 插入新标签页 ──
-            conn.execute(
-                "INSERT INTO tabs (file_id, name, path, language, content, view_mode,
-                                   is_dirty, is_read_only, is_preview_mode, is_live_preview,
-                                   size, sort_order, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
-                params![
-                    tab.file_id,
-                    tab.name,
-                    normalized_path,
-                    tab.language.unwrap_or_else(|| "plaintext".into()),
-                    tab.content.unwrap_or_default(),
-                    tab.view_mode.unwrap_or_else(|| "text".into()),
-                    tab.is_dirty.map(|v| v as i64).unwrap_or(0),
-                    tab.is_read_only.map(|v| v as i64).unwrap_or(0),
-                    tab.is_preview_mode.map(|v| v as i64).unwrap_or(0),
-                    tab.is_live_preview.map(|v| v as i64).unwrap_or(0),
-                    tab.size.unwrap_or(0),
-                    tab.sort_order.unwrap_or(0),
-                    now,
-                ],
-            )?;
-
-            let new_id = conn.last_insert_rowid();
-
-            // 返回新插入的数据
-            let mut stmt = conn.prepare(
-                "SELECT id, file_id, name, path, language, content, view_mode,
-                        is_dirty, is_read_only, is_preview_mode, is_live_preview,
-                        size, sort_order, created_at, updated_at
-                 FROM tabs WHERE id = ?1",
-            )?;
-
-            stmt.query_row(params![new_id], |row| {
-                Ok(Tab {
-                    id: row.get(0)?,
-                    file_id: row.get(1)?,
-                    name: row.get(2)?,
-                    path: row.get(3)?,
-                    language: row.get(4)?,
-                    content: row.get(5)?,
-                    view_mode: row.get(6)?,
-                    is_dirty: row.get::<_, i64>(7)? != 0,
-                    is_read_only: row.get::<_, i64>(8)? != 0,
-                    is_preview_mode: row.get::<_, i64>(9)? != 0,
-                    is_live_preview: row.get::<_, i64>(10)? != 0,
-                    size: row.get(11)?,
-                    sort_order: row.get(12)?,
-                    created_at: row.get(13)?,
-                    updated_at: row.get(14)?,
-                })
-            })
+/// 批量写入标签状态：一次事务提交，避免打开/关闭标签时每个标签各做一次 fsync。
+#[tauri::command]
+pub fn sync_tabs(tabs: Vec<NewTab>) -> Result<(), String> {
+    let now = Local::now().to_rfc3339();
+    with_db(|conn| {
+        let tx = conn.unchecked_transaction()?;
+        for tab in &tabs {
+            write_tab_row(&tx, tab, &now)?;
         }
+        tx.commit()?;
+        Ok(())
     })
 }
 

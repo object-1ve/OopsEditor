@@ -74,7 +74,12 @@ async function handleTab(tab: FileTab) {
   }
 
   const known = getFileMtime(path);
-  if (known !== undefined && known === current) return;
+  if (known === undefined) {
+    // 刚打开、还没记下基准 mtime：先记录，别把它当成“外部修改”重新读一遍大文件
+    setFileMtime(path, current);
+    return;
+  }
+  if (known === current) return;
   setFileMtime(path, current);
 
   const state = useEditorStore.getState();
