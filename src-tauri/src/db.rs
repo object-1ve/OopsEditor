@@ -233,8 +233,12 @@ pub fn init_project_database(app: AppHandle) -> Result<(), String> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pinned_files_sort ON pinned_files(sort_order)", [])
         .map_err(|e| format!("创建 pinned_files.sort_order 索引失败: {}", e))?;
 
-    // 会话面板表（chat_sessions / chat_messages）
+    // 会话面板表（chat_sessions / chat_messages）：仅用于把旧数据迁移到 JSONL
     crate::chat::init_chat_schema(&conn).map_err(|e| format!("创建会话表失败: {}", e))?;
+    // 旧版会话/消息 → 应用数据目录下的 chat-sessions/*.jsonl（幂等，失败不阻塞启动）
+    if let Err(err) = crate::chat::migrate_chat_to_jsonl(&app, &conn) {
+        eprintln!("迁移会话到 JSONL 失败: {}", err);
+    }
 
     let mut guard = DB.lock();
     *guard = Some(conn);

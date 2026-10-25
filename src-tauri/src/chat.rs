@@ -1,22 +1,26 @@
-//! 会话面板数据层：会话 / 消息 CRUD 与聊天图片附件落盘。
+//! 会话面板数据层：会话 / 消息以 JSONL 文件存储，聊天图片附件落盘。
+//!
+//! 每个会话一个 `<id>.jsonl`（应用数据目录 `chat-sessions/`）：
+//! 第一行是会话元数据（`{"type":"session",...}`），之后每行一条消息。
+//! 消息写盘时整文件原子替换（临时文件 + rename），崩溃不会留下半个会话。
 //!
 //! - 会话按「最近编辑时间」(updated_at) 倒序展示，消息按写入顺序正序展示；
-//! - 消息文本可编辑，编辑后 `edited = 1` 且 `updated_at` 前进，`created_at` 保持不变；
+//! - 消息文本可编辑，编辑后 `edited = true` 且 `updated_at` 前进，`created_at` 保持不变；
 //! - 发送的**文件**只记录其本地路径（不复制、不读内容），始终指回原文件；
 //!   只有**图片**需要落盘一份副本——webview 要通过 asset 协议渲染缩略图，
 //!   而原始文件可能随时被移动/删除，缓存一份才能保证历史消息里的图仍在。
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
-use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
+use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
-
-use crate::db::with_db;
 
 /// 聊天图片目录名（位于应用数据目录下）
 const CHAT_ATTACHMENT_DIR: &str = "chat-attachments";
@@ -184,178 +188,380 @@ fn normalized_role(raw: Option<&str>) -> String {
         _ => "me".to_string(),
     }
 }
-// ── 会话 CRUD ──────────────────────────────────────────────────
+// ── JSONL 会话存储 ─────────────────────────────────────────────
 
-/// 会话列表查询：附带消息条数与最近一条消息预览
-const SESSION_SELECT: &str = "SELECT s.id, s.title, s.created_at, s.updated_at,
-        (SELECT COUNT(*) FROM chat_messages m WHERE m.session_id = s.id),
-        COALESCE((
-            SELECT CASE m.kind WHEN 'text' THEN m.content ELSE COALESCE(m.file_name, '') END
-            FROM chat_messages m WHERE m.session_id = s.id ORDER BY m.id DESC LIMIT 1
-        ), '')";
+/// 会话目录名（位于应用数据目录下）
+const CHAT_SESSION_DIR: &str = "chat-sessions";
+/// 会话文件首行的类型标记
+const SESSION_RECORD_TYPE: &str = "session";
+/// 旧库迁移完成标记：有了它就不再回读 SQLite，避免删掉的会话被旧库重新“复活”
+const SQLITE_MIGRATION_MARKER: &str = ".migrated-from-sqlite";
+/// 自增 id 状态：会话/消息删除后也不复用 id
+const STORE_STATE_FILE: &str = ".state.json";
 
-fn map_session(row: &rusqlite::Row<'_>) -> SqlResult<ChatSession> {
-    Ok(ChatSession {
-        id: row.get(0)?,
-        title: row.get(1)?,
-        created_at: row.get(2)?,
-        updated_at: row.get(3)?,
-        message_count: row.get(4)?,
-        last_message: row.get(5)?,
+/// 所有会话文件操作串行化：同一时刻只允许一个读-改-写，避免互相覆盖
+static CHAT_SESSION_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// 会话文件首行：会话元数据（后续每行一条消息）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct SessionHeader {
+    #[serde(rename = "type")]
+    record_type: String,
+    id: i64,
+    title: String,
+    created_at: String,
+    updated_at: String,
+    #[serde(default)]
+    message_count: i64,
+    #[serde(default)]
+    last_message: String,
+    /// 历史上出现过的最大消息 id（删除消息后也不回退，避免 id 复用）
+    #[serde(default)]
+    max_message_id: i64,
+}
+
+struct SessionFile {
+    header: SessionHeader,
+    messages: Vec<ChatMessage>,
+}
+
+fn chat_session_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取应用数据目录: {}", e))?;
+    let dir = app_dir.join(CHAT_SESSION_DIR);
+    fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败: {}", e))?;
+    Ok(dir)
+}
+
+/// 加锁后执行一次会话目录操作（读改写必须串行）
+fn with_chat_store<T>(
+    app: &AppHandle,
+    action: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let dir = chat_session_dir(app)?;
+    let _guard = CHAT_SESSION_LOCK.lock();
+    action(&dir)
+}
+
+fn session_file_path(dir: &Path, id: i64) -> PathBuf {
+    dir.join(format!("{id}.jsonl"))
+}
+
+fn session_id_from_path(path: &Path) -> Result<i64, String> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| stem.parse::<i64>().ok())
+        .ok_or_else(|| format!("会话文件名无效: {}", path.display()))
+}
+
+/// 会话列表里的「最近一条消息」预览：文字取正文，文件/图片取文件名
+fn message_preview(message: &ChatMessage) -> String {
+    if message.kind == "text" {
+        message.content.clone()
+    } else {
+        message.file_name.clone().unwrap_or_default()
+    }
+}
+
+fn refresh_header(header: &mut SessionHeader, messages: &[ChatMessage]) {
+    header.message_count = messages.len() as i64;
+    header.last_message = messages
+        .last()
+        .map(message_preview)
+        .unwrap_or_default();
+}
+
+fn session_from_header(header: &SessionHeader) -> ChatSession {
+    ChatSession {
+        id: header.id,
+        title: header.title.clone(),
+        created_at: header.created_at.clone(),
+        updated_at: header.updated_at.clone(),
+        message_count: header.message_count,
+        last_message: header.last_message.clone(),
+    }
+}
+
+fn read_session_header(path: &Path) -> Result<SessionHeader, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("读取会话文件失败 {}: {}", path.display(), e))?;
+    let line = content
+        .lines()
+        .next()
+        .ok_or_else(|| format!("会话文件为空: {}", path.display()))?;
+    let mut header: SessionHeader = serde_json::from_str(line)
+        .map_err(|e| format!("会话文件头解析失败 {}: {}", path.display(), e))?;
+    if header.record_type != SESSION_RECORD_TYPE {
+        return Err(format!("会话文件头类型无效: {}", path.display()));
+    }
+    // 文件名才是会话 id 的依据，避免手工改过文件内容后错位
+    header.id = session_id_from_path(path)?;
+    Ok(header)
+}
+
+fn load_session_file(path: &Path) -> Result<SessionFile, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("读取会话文件失败 {}: {}", path.display(), e))?;
+    let mut lines = content.lines();
+    let first = lines
+        .next()
+        .ok_or_else(|| format!("会话文件为空: {}", path.display()))?;
+    let mut header: SessionHeader = serde_json::from_str(first)
+        .map_err(|e| format!("会话文件头解析失败 {}: {}", path.display(), e))?;
+    if header.record_type != SESSION_RECORD_TYPE {
+        return Err(format!("会话文件头类型无效: {}", path.display()));
+    }
+    header.id = session_id_from_path(path)?;
+
+    let mut messages = Vec::new();
+    for (index, line) in lines.enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let message: ChatMessage = serde_json::from_str(line).map_err(|e| {
+            format!(
+                "会话文件第 {} 行解析失败 {}: {}",
+                index + 2,
+                path.display(),
+                e
+            )
+        })?;
+        messages.push(message);
+    }
+    messages.sort_by_key(|message| message.id);
+    refresh_header(&mut header, &messages);
+    Ok(SessionFile { header, messages })
+}
+
+/// 临时文件 + rename 原子替换，避免崩溃时留下半个会话
+fn write_session_atomic(path: &Path, content: &str) -> Result<(), String> {
+    let temp = path.with_extension("jsonl.tmp");
+    fs::write(&temp, content)
+        .map_err(|e| format!("写入会话文件失败 {}: {}", temp.display(), e))?;
+    fs::rename(&temp, path).map_err(|e| {
+        let _ = fs::remove_file(&temp);
+        format!("替换会话文件失败 {}: {}", path.display(), e)
     })
 }
 
-fn list_sessions(conn: &Connection) -> SqlResult<Vec<ChatSession>> {
-    let sql = format!(
-        "{} FROM chat_sessions s ORDER BY s.updated_at DESC, s.id DESC",
-        SESSION_SELECT
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let sessions = stmt
-        .query_map([], map_session)?
-        .collect::<SqlResult<Vec<ChatSession>>>()?;
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct StoreState {
+    #[serde(default)]
+    max_session_id: i64,
+    #[serde(default)]
+    max_message_id: i64,
+}
+
+fn read_store_state(dir: &Path) -> Result<StoreState, String> {
+    let path = dir.join(STORE_STATE_FILE);
+    if !path.exists() {
+        return Ok(StoreState::default());
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("读取会话状态失败 {}: {}", path.display(), e))?;
+    serde_json::from_str(&content).map_err(|e| format!("会话状态解析失败: {}", e))
+}
+
+fn write_store_state(dir: &Path, state: &StoreState) -> Result<(), String> {
+    let path = dir.join(STORE_STATE_FILE);
+    let temp = dir.join(format!("{}.tmp", STORE_STATE_FILE));
+    let content = serde_json::to_string(state).map_err(|e| format!("序列化会话状态失败: {}", e))?;
+    fs::write(&temp, content).map_err(|e| format!("写入会话状态失败: {}", e))?;
+    fs::rename(&temp, &path).map_err(|e| {
+        let _ = fs::remove_file(&temp);
+        format!("替换会话状态失败: {}", e)
+    })
+}
+
+fn save_session_file(
+    dir: &Path,
+    header: &SessionHeader,
+    messages: &[ChatMessage],
+) -> Result<(), String> {
+    let mut next = header.clone();
+    refresh_header(&mut next, messages);
+
+    let mut output = serde_json::to_string(&next)
+        .map_err(|e| format!("序列化会话失败: {}", e))?;
+    output.push('\n');
+    for message in messages {
+        output.push_str(
+            &serde_json::to_string(message).map_err(|e| format!("序列化消息失败: {}", e))?,
+        );
+        output.push('\n');
+    }
+    write_session_atomic(&session_file_path(dir, next.id), &output)
+}
+
+fn session_ids(dir: &Path) -> Result<Vec<i64>, String> {
+    let mut ids = Vec::new();
+    let entries = fs::read_dir(dir).map_err(|e| format!("读取会话目录失败: {}", e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取会话目录失败: {}", e))?;
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        ids.push(session_id_from_path(&path)?);
+    }
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+fn next_session_id(dir: &Path) -> Result<i64, String> {
+    let state = read_store_state(dir)?;
+    let max_on_disk = session_ids(dir)?.last().copied().unwrap_or(0);
+    Ok(state.max_session_id.max(max_on_disk) + 1)
+}
+
+/// 消息 id 全局递增（和旧 SQLite AUTOINCREMENT 一致）：编辑/删除只带 id，不带 session。
+/// 头里的 `max_message_id` 记录历史最大值，删除最后一条消息后也不会复用 id。
+fn next_message_id(dir: &Path) -> Result<i64, String> {
+    let mut max = read_store_state(dir)?.max_message_id;
+    for id in session_ids(dir)? {
+        let file = load_session_file(&session_file_path(dir, id))?;
+        max = max.max(file.header.max_message_id);
+        for message in file.messages {
+            max = max.max(message.id);
+        }
+    }
+    Ok(max + 1)
+}
+
+fn list_sessions(dir: &Path) -> Result<Vec<ChatSession>, String> {
+    let mut sessions = Vec::new();
+    for id in session_ids(dir)? {
+        let header = read_session_header(&session_file_path(dir, id))?;
+        sessions.push(session_from_header(&header));
+    }
+    sessions.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
     Ok(sessions)
 }
 
-fn read_session(conn: &Connection, id: i64) -> SqlResult<Option<ChatSession>> {
-    let sql = format!("{} FROM chat_sessions s WHERE s.id = ?1", SESSION_SELECT);
-    conn.query_row(&sql, params![id], map_session).optional()
+fn read_session(dir: &Path, id: i64) -> Result<Option<ChatSession>, String> {
+    let path = session_file_path(dir, id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(session_from_header(&read_session_header(&path)?)))
 }
 
-fn insert_session(conn: &Connection, title: &str) -> SqlResult<ChatSession> {
-    let title = new_session_title(title);
+fn insert_session(dir: &Path, raw_title: &str) -> Result<ChatSession, String> {
+    let id = next_session_id(dir)?;
+    let title = new_session_title(raw_title);
     let now = now();
-    conn.execute(
-        "INSERT INTO chat_sessions (title, created_at, updated_at) VALUES (?1, ?2, ?2)",
-        params![title, now],
-    )?;
-
-    Ok(ChatSession {
-        id: conn.last_insert_rowid(),
+    let header = SessionHeader {
+        record_type: SESSION_RECORD_TYPE.to_string(),
+        id,
         title,
         created_at: now.clone(),
         updated_at: now,
         message_count: 0,
         last_message: String::new(),
-    })
+        max_message_id: 0,
+    };
+    save_session_file(dir, &header, &[])?;
+
+    let mut state = read_store_state(dir)?;
+    state.max_session_id = state.max_session_id.max(id);
+    write_store_state(dir, &state)?;
+    Ok(session_from_header(&header))
 }
 
-fn rename_session(conn: &Connection, id: i64, title: &str) -> SqlResult<Option<ChatSession>> {
-    // 重命名属于元数据变更，不推进 updated_at（「最近编辑时间」只反映消息变化）
-    let affected = conn.execute(
-        "UPDATE chat_sessions SET title = ?1 WHERE id = ?2",
-        params![normalized_title(title), id],
-    )?;
-    if affected == 0 {
+fn rename_session(dir: &Path, id: i64, title: &str) -> Result<Option<ChatSession>, String> {
+    let path = session_file_path(dir, id);
+    if !path.exists() {
         return Ok(None);
     }
-    read_session(conn, id)
+    // 重命名属于元数据变更，不推进 updated_at（「最近编辑时间」只反映消息变化）
+    let mut file = load_session_file(&path)?;
+    file.header.title = normalized_title(title);
+    save_session_file(dir, &file.header, &file.messages)?;
+    read_session(dir, id)
 }
 
-fn remove_session(conn: &Connection, id: i64) -> SqlResult<bool> {
-    // 不依赖 PRAGMA foreign_keys（默认关闭），显式清理消息
-    conn.execute("DELETE FROM chat_messages WHERE session_id = ?1", params![id])?;
-    let affected = conn.execute("DELETE FROM chat_sessions WHERE id = ?1", params![id])?;
-    Ok(affected > 0)
-}
-
-/// 推进会话的最近编辑时间
-fn touch_session(conn: &Connection, id: i64) -> SqlResult<()> {
-    conn.execute(
-        "UPDATE chat_sessions SET updated_at = ?1 WHERE id = ?2",
-        params![now(), id],
-    )?;
-    Ok(())
-}
-
-// ── 消息 CRUD ──────────────────────────────────────────────────
-
-const MESSAGE_SELECT: &str = "SELECT id, session_id, role, kind, content, file_name, file_path, file_size,
-        created_at, updated_at, edited, favorited FROM chat_messages";
-
-fn map_message(row: &rusqlite::Row<'_>) -> SqlResult<ChatMessage> {
-    Ok(ChatMessage {
-        id: row.get(0)?,
-        session_id: row.get(1)?,
-        role: row.get(2)?,
-        kind: row.get(3)?,
-        content: row.get(4)?,
-        file_name: row.get(5)?,
-        file_path: row.get(6)?,
-        file_size: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
-        edited: row.get::<_, i64>(10)? != 0,
-        favorited: row.get::<_, i64>(11)? != 0,
-    })
-}
-
-fn list_messages(conn: &Connection, session_id: i64) -> SqlResult<Vec<ChatMessage>> {
-    let sql = format!(
-        "{} WHERE session_id = ?1 ORDER BY id ASC",
-        MESSAGE_SELECT
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let messages = stmt
-        .query_map(params![session_id], map_message)?
-        .collect::<SqlResult<Vec<ChatMessage>>>()?;
-    Ok(messages)
-}
-
-fn read_message(conn: &Connection, id: i64) -> SqlResult<Option<ChatMessage>> {
-    let sql = format!("{} WHERE id = ?1", MESSAGE_SELECT);
-    conn.query_row(&sql, params![id], map_message).optional()
+fn remove_session(dir: &Path, id: i64) -> Result<bool, String> {
+    let path = session_file_path(dir, id);
+    if !path.exists() {
+        return Ok(false);
+    }
+    fs::remove_file(&path).map_err(|e| format!("删除会话失败 {}: {}", path.display(), e))?;
+    Ok(true)
 }
 
 /// 插入消息并推进所属会话的最近编辑时间；会话不存在时返回 None
-fn insert_message(conn: &Connection, input: NewChatMessage) -> SqlResult<Option<ChatMessage>> {
-    if read_session(conn, input.session_id)?.is_none() {
+fn insert_message(dir: &Path, input: NewChatMessage) -> Result<Option<ChatMessage>, String> {
+    let path = session_file_path(dir, input.session_id);
+    if !path.exists() {
         return Ok(None);
     }
-
+    let mut file = load_session_file(&path)?;
     let now = now();
-    conn.execute(
-        "INSERT INTO chat_messages
-            (session_id, role, kind, content, file_name, file_path, file_size, created_at, updated_at, edited)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 0)",
-        params![
-            input.session_id,
-            normalized_role(input.role.as_deref()),
-            normalized_kind(input.kind.as_deref()),
-            input.content.unwrap_or_default(),
-            input.file_name,
-            input.file_path,
-            input.file_size.unwrap_or(0),
-            now,
-        ],
-    )?;
+    let message = ChatMessage {
+        id: next_message_id(dir)?,
+        session_id: input.session_id,
+        role: normalized_role(input.role.as_deref()),
+        kind: normalized_kind(input.kind.as_deref()),
+        content: input.content.unwrap_or_default(),
+        file_name: input.file_name,
+        file_path: input.file_path,
+        file_size: input.file_size.unwrap_or(0),
+        created_at: now.clone(),
+        updated_at: now.clone(),
+        edited: false,
+        favorited: false,
+    };
+    file.header.max_message_id = file.header.max_message_id.max(message.id);
+    file.messages.push(message.clone());
+    file.header.updated_at = now;
+    save_session_file(dir, &file.header, &file.messages)?;
 
-    touch_session(conn, input.session_id)?;
-    read_message(conn, conn.last_insert_rowid())
+    let mut state = read_store_state(dir)?;
+    state.max_message_id = state.max_message_id.max(message.id);
+    write_store_state(dir, &state)?;
+    Ok(Some(message))
+}
+
+fn locate_message(dir: &Path, id: i64) -> Result<Option<(i64, SessionFile, usize)>, String> {
+    for session_id in session_ids(dir)? {
+        let file = load_session_file(&session_file_path(dir, session_id))?;
+        if let Some(index) = file.messages.iter().position(|message| message.id == id) {
+            return Ok(Some((session_id, file, index)));
+        }
+    }
+    Ok(None)
 }
 
 /// 编辑消息文字；消息不存在时返回 None
-fn update_message(conn: &Connection, id: i64, content: &str) -> SqlResult<Option<ChatMessage>> {
-    let Some(existing) = read_message(conn, id)? else {
+fn update_message(dir: &Path, id: i64, content: &str) -> Result<Option<ChatMessage>, String> {
+    let Some((_session_id, mut file, index)) = locate_message(dir, id)? else {
         return Ok(None);
     };
-
-    conn.execute(
-        "UPDATE chat_messages SET content = ?1, updated_at = ?2, edited = 1 WHERE id = ?3",
-        params![content, now(), id],
-    )?;
-    touch_session(conn, existing.session_id)?;
-    read_message(conn, id)
+    let now = now();
+    let message = &mut file.messages[index];
+    message.content = content.to_string();
+    message.updated_at = now.clone();
+    message.edited = true;
+    let updated = message.clone();
+    file.header.updated_at = now;
+    save_session_file(dir, &file.header, &file.messages)?;
+    Ok(Some(updated))
 }
 
 /// 删除消息并推进所属会话的最近编辑时间；返回是否存在该消息
-fn remove_message(conn: &Connection, id: i64) -> SqlResult<bool> {
-    let Some(existing) = read_message(conn, id)? else {
+fn remove_message(dir: &Path, id: i64) -> Result<bool, String> {
+    let Some((_session_id, mut file, index)) = locate_message(dir, id)? else {
         return Ok(false);
     };
-
-    conn.execute("DELETE FROM chat_messages WHERE id = ?1", params![id])?;
-    touch_session(conn, existing.session_id)?;
+    file.messages.remove(index);
+    file.header.updated_at = now();
+    save_session_file(dir, &file.header, &file.messages)?;
     Ok(true)
 }
 
@@ -363,16 +569,18 @@ fn remove_message(conn: &Connection, id: i64) -> SqlResult<bool> {
 ///
 /// 只改展示标记：既不写 `updated_at`（否则会显示成"已编辑"），
 /// 也不推进会话的最近编辑时间（收藏不是内容变更，不该让会话在列表里往前走）。
-fn set_message_favorite(conn: &Connection, id: i64, favorited: bool) -> SqlResult<Option<ChatMessage>> {
-    if read_message(conn, id)?.is_none() {
+fn set_message_favorite(
+    dir: &Path,
+    id: i64,
+    favorited: bool,
+) -> Result<Option<ChatMessage>, String> {
+    let Some((_session_id, mut file, index)) = locate_message(dir, id)? else {
         return Ok(None);
-    }
-
-    conn.execute(
-        "UPDATE chat_messages SET favorited = ?1 WHERE id = ?2",
-        params![favorited as i64, id],
-    )?;
-    read_message(conn, id)
+    };
+    file.messages[index].favorited = favorited;
+    let updated = file.messages[index].clone();
+    save_session_file(dir, &file.header, &file.messages)?;
+    Ok(Some(updated))
 }
 
 // ── 搜索 ───────────────────────────────────────────────────────
@@ -400,18 +608,6 @@ pub struct ChatMessageSearchResult {
     pub truncated: bool,
 }
 
-/// LIKE 通配符转义：用户输入里的 `%` `_` `\` 按字面匹配
-fn escape_like(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for ch in raw.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
-}
-
 /// RFC3339 时间转 Unix 毫秒；解析失败返回 None（按不命中处理）
 fn parse_ms(rfc3339: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(rfc3339)
@@ -431,71 +627,150 @@ fn match_preview(text: &str, query: &str) -> String {
     line.chars().take(120).collect()
 }
 
-/// 消息搜索：按关键词匹配正文或文件名，可按会话集合与创建时间范围收窄。
-///
-/// 关键词走 SQL（LIKE 对 ASCII 大小写不敏感，正文里的中文不受影响）；
-/// 会话与时间范围都在 Rust 侧比较 —— 会话是可多选的集合（避免拼 SQL 的 IN 列表），
-/// `created_at` 带本地时区偏移、字符串比较不可靠。
+/// 消息搜索：按关键词匹配正文或文件名（大小写不敏感），可按会话集合与创建时间范围收窄。
 fn search_messages(
-    conn: &Connection,
+    dir: &Path,
     query: &str,
-    session_ids: &[i64],
+    session_filter: &[i64],
     created_after_ms: Option<i64>,
     created_before_ms: Option<i64>,
-) -> SqlResult<ChatMessageSearchResult> {
-    let pattern = format!("%{}%", escape_like(query));
-    let mut stmt = conn.prepare(
-        "SELECT m.id, m.session_id, s.title, m.role, m.kind,
-                CASE WHEN m.content <> '' THEN m.content ELSE COALESCE(m.file_name, '') END,
-                m.created_at
-         FROM chat_messages m
-         JOIN chat_sessions s ON s.id = m.session_id
-         WHERE (m.content LIKE ?1 ESCAPE '\\' OR COALESCE(m.file_name, '') LIKE ?1 ESCAPE '\\')
-         ORDER BY m.id DESC",
-    )?;
-
-    let rows = stmt.query_map(params![pattern], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?,
-            row.get::<_, String>(6)?,
-        ))
-    })?;
-
+) -> Result<ChatMessageSearchResult, String> {
+    let needle = query.to_lowercase();
     let mut matches = Vec::new();
-    let mut truncated = false;
-    for row in rows {
-        let (id, sid, session_title, role, kind, content, created_at) = row?;
+
+    for session_id in session_ids(dir)? {
         // 空集合表示不限会话
-        if !session_ids.is_empty() && !session_ids.contains(&sid) {
+        if !session_filter.is_empty() && !session_filter.contains(&session_id) {
             continue;
         }
-        let Some(ms) = parse_ms(&created_at) else { continue };
-        if created_after_ms.map_or(false, |after| ms < after) {
-            continue;
+        let file = load_session_file(&session_file_path(dir, session_id))?;
+        for message in &file.messages {
+            let file_name = message.file_name.as_deref().unwrap_or("");
+            if !message.content.to_lowercase().contains(&needle)
+                && !file_name.to_lowercase().contains(&needle)
+            {
+                continue;
+            }
+            let Some(ms) = parse_ms(&message.created_at) else {
+                continue;
+            };
+            if created_after_ms.is_some_and(|after| ms < after) {
+                continue;
+            }
+            if created_before_ms.is_some_and(|before| ms > before) {
+                continue;
+            }
+            let preview_source = if message.content.is_empty() {
+                file_name
+            } else {
+                message.content.as_str()
+            };
+            matches.push(ChatMessageMatch {
+                message_id: message.id,
+                session_id,
+                session_title: file.header.title.clone(),
+                role: message.role.clone(),
+                kind: message.kind.clone(),
+                content: match_preview(preview_source, query),
+                created_at: message.created_at.clone(),
+            });
         }
-        if created_before_ms.map_or(false, |before| ms > before) {
-            continue;
-        }
-        if matches.len() >= MESSAGE_SEARCH_MAX {
-            truncated = true;
-            break;
-        }
-        matches.push(ChatMessageMatch {
-            message_id: id,
-            session_id: sid,
-            session_title,
-            role,
-            kind,
-            content: match_preview(&content, query),
-            created_at,
-        });
     }
+
+    matches.sort_by(|a, b| b.message_id.cmp(&a.message_id));
+    let truncated = matches.len() > MESSAGE_SEARCH_MAX;
+    matches.truncate(MESSAGE_SEARCH_MAX);
     Ok(ChatMessageSearchResult { matches, truncated })
+}
+
+/// 把旧版 SQLite 里的会话/消息导出成 JSONL。
+///
+/// 幂等：目标文件已存在就跳过，不覆盖用户后来改过的会话；旧表保留不删，方便回退。
+pub fn migrate_chat_to_jsonl(app: &AppHandle, conn: &Connection) -> Result<(), String> {
+    let dir = chat_session_dir(app)?;
+    migrate_chat_to_jsonl_in(&dir, conn)
+}
+
+fn migrate_chat_to_jsonl_in(dir: &Path, conn: &Connection) -> Result<(), String> {
+    let _guard = CHAT_SESSION_LOCK.lock();
+    let marker = dir.join(SQLITE_MIGRATION_MARKER);
+    if marker.exists() {
+        return Ok(());
+    }
+
+    let mut state = read_store_state(dir)?;
+    let legacy_sessions = {
+        let mut stmt = conn
+            .prepare("SELECT id, title, created_at, updated_at FROM chat_sessions ORDER BY id ASC")
+            .map_err(|e| format!("读取旧会话失败: {}", e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| format!("读取旧会话失败: {}", e))?;
+        rows.collect::<SqlResult<Vec<_>>>()
+            .map_err(|e| format!("读取旧会话失败: {}", e))?
+    };
+
+    for (id, title, created_at, updated_at) in legacy_sessions {
+        let path = session_file_path(&dir, id);
+        if path.exists() {
+            continue;
+        }
+        let messages = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, session_id, role, kind, content, file_name, file_path,
+                            file_size, created_at, updated_at, edited, favorited
+                     FROM chat_messages WHERE session_id = ?1 ORDER BY id ASC",
+                )
+                .map_err(|e| format!("读取旧消息失败: {}", e))?;
+            let rows = stmt
+                .query_map(params![id], |row| {
+                    Ok(ChatMessage {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        role: row.get(2)?,
+                        kind: row.get(3)?,
+                        content: row.get(4)?,
+                        file_name: row.get(5)?,
+                        file_path: row.get(6)?,
+                        file_size: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                        edited: row.get::<_, i64>(10)? != 0,
+                        favorited: row.get::<_, i64>(11)? != 0,
+                    })
+                })
+                .map_err(|e| format!("读取旧消息失败: {}", e))?;
+            rows.collect::<SqlResult<Vec<_>>>()
+                .map_err(|e| format!("读取旧消息失败: {}", e))?
+        };
+        let header = SessionHeader {
+            record_type: SESSION_RECORD_TYPE.to_string(),
+            id,
+            title,
+            created_at,
+            updated_at,
+            message_count: 0,
+            last_message: String::new(),
+            max_message_id: messages.last().map(|message| message.id).unwrap_or(0),
+        };
+        save_session_file(&dir, &header, &messages)?;
+        state.max_session_id = state.max_session_id.max(id);
+        if let Some(last) = messages.last() {
+            state.max_message_id = state.max_message_id.max(last.id);
+        }
+    }
+
+    write_store_state(&dir, &state)?;
+    fs::write(&marker, b"1").map_err(|e| format!("写入会话迁移标记失败: {}", e))?;
+    Ok(())
 }
 
 // ── 图片落盘 ───────────────────────────────────────────────────
@@ -633,25 +908,29 @@ fn store_image_bytes(
 
 /// 全部会话，按最近编辑时间倒序
 #[tauri::command]
-pub fn get_chat_sessions() -> Result<Vec<ChatSession>, String> {
-    with_db(list_sessions)
+pub fn get_chat_sessions(app: AppHandle) -> Result<Vec<ChatSession>, String> {
+    with_chat_store(&app, list_sessions)
 }
 
 /// 新建会话；标题缺省为时间戳（与前端「新建文件」同名口径）
 #[tauri::command]
-pub fn add_chat_session(title: Option<String>) -> Result<ChatSession, String> {
-    with_db(|conn| insert_session(conn, title.as_deref().unwrap_or("")))
+pub fn add_chat_session(app: AppHandle, title: Option<String>) -> Result<ChatSession, String> {
+    with_chat_store(&app, |dir| insert_session(dir, title.as_deref().unwrap_or("")))
 }
 
 #[tauri::command]
-pub fn rename_chat_session(id: i64, title: String) -> Result<ChatSession, String> {
-    with_db(|conn| rename_session(conn, id, &title))?
+pub fn rename_chat_session(
+    app: AppHandle,
+    id: i64,
+    title: String,
+) -> Result<ChatSession, String> {
+    with_chat_store(&app, |dir| rename_session(dir, id, &title))?
         .ok_or_else(|| format!("会话不存在: {}", id))
 }
 
 #[tauri::command]
-pub fn delete_chat_session(id: i64) -> Result<(), String> {
-    if with_db(|conn| remove_session(conn, id))? {
+pub fn delete_chat_session(app: AppHandle, id: i64) -> Result<(), String> {
+    if with_chat_store(&app, |dir| remove_session(dir, id))? {
         Ok(())
     } else {
         Err(format!("会话不存在: {}", id))
@@ -659,25 +938,34 @@ pub fn delete_chat_session(id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_chat_messages(session_id: i64) -> Result<Vec<ChatMessage>, String> {
-    with_db(|conn| list_messages(conn, session_id))
+pub fn get_chat_messages(app: AppHandle, session_id: i64) -> Result<Vec<ChatMessage>, String> {
+    with_chat_store(&app, |dir| {
+        let path = session_file_path(dir, session_id);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        Ok(load_session_file(&path)?.messages)
+    })
 }
 
 #[tauri::command]
-pub fn add_chat_message(message: NewChatMessage) -> Result<ChatMessage, String> {
-    with_db(|conn| insert_message(conn, message))?
+pub fn add_chat_message(
+    app: AppHandle,
+    message: NewChatMessage,
+) -> Result<ChatMessage, String> {
+    with_chat_store(&app, |dir| insert_message(dir, message))?
         .ok_or_else(|| "会话不存在，无法发送消息".to_string())
 }
 
 #[tauri::command]
-pub fn update_chat_message(id: i64, content: String) -> Result<ChatMessage, String> {
-    with_db(|conn| update_message(conn, id, &content))?
+pub fn update_chat_message(app: AppHandle, id: i64, content: String) -> Result<ChatMessage, String> {
+    with_chat_store(&app, |dir| update_message(dir, id, &content))?
         .ok_or_else(|| format!("消息不存在: {}", id))
 }
 
 #[tauri::command]
-pub fn delete_chat_message(id: i64) -> Result<(), String> {
-    if with_db(|conn| remove_message(conn, id))? {
+pub fn delete_chat_message(app: AppHandle, id: i64) -> Result<(), String> {
+    if with_chat_store(&app, |dir| remove_message(dir, id))? {
         Ok(())
     } else {
         Err(format!("消息不存在: {}", id))
@@ -686,14 +974,19 @@ pub fn delete_chat_message(id: i64) -> Result<(), String> {
 
 /// 收藏 / 取消收藏消息；返回收藏后的消息
 #[tauri::command]
-pub fn set_chat_message_favorite(id: i64, favorited: bool) -> Result<ChatMessage, String> {
-    with_db(|conn| set_message_favorite(conn, id, favorited))?
+pub fn set_chat_message_favorite(
+    app: AppHandle,
+    id: i64,
+    favorited: bool,
+) -> Result<ChatMessage, String> {
+    with_chat_store(&app, |dir| set_message_favorite(dir, id, favorited))?
         .ok_or_else(|| format!("消息不存在: {}", id))
 }
 
 /// 搜索会话消息（正文或文件名），可按会话集合与创建时间范围收窄（时间戳为 Unix 毫秒，含端点）
 #[tauri::command]
 pub fn search_chat_messages(
+    app: AppHandle,
     query: String,
     session_ids: Vec<i64>,
     created_after_ms: Option<i64>,
@@ -703,7 +996,9 @@ pub fn search_chat_messages(
     if query.is_empty() {
         return Ok(ChatMessageSearchResult { matches: Vec::new(), truncated: false });
     }
-    with_db(|conn| search_messages(conn, query, &session_ids, created_after_ms, created_before_ms))
+    with_chat_store(&app, |dir| {
+        search_messages(dir, query, &session_ids, created_after_ms, created_before_ms)
+    })
 }
 
 /// 发送文件：只做一次 stat 校验并**记录其本地路径**，不复制内容。
@@ -712,6 +1007,7 @@ pub fn search_chat_messages(
 /// 打开时直接用原路径（见前端 openChatFile），所以这里只保证路径当下存在。
 #[tauri::command]
 pub fn add_chat_file_message(
+    app: AppHandle,
     source_path: String,
     session_id: i64,
     role: Option<String>,
@@ -729,9 +1025,9 @@ pub fn add_chat_file_message(
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| to_slash(path));
 
-    with_db(|conn| {
+    with_chat_store(&app, |dir| {
         insert_message(
-            conn,
+            dir,
             NewChatMessage {
                 session_id,
                 role,
@@ -773,9 +1069,9 @@ pub fn add_chat_image_message(
     let bytes = fs::read(&source_path).map_err(|e| format!("读取图片失败: {}", e))?;
     let stored = store_image_bytes(&attachment_dir(&app)?, &bytes, &raw_name)?;
 
-    with_db(|conn| {
+    with_chat_store(&app, |dir| {
         insert_message(
-            conn,
+            dir,
             NewChatMessage {
                 session_id,
                 role,
@@ -809,9 +1105,9 @@ pub fn add_chat_image_message_base64(
         .unwrap_or_else(|| format!("{}.{}", FALLBACK_STEM, FALLBACK_EXT));
     let stored = store_image_bytes(&attachment_dir(&app)?, &bytes, &raw_name)?;
 
-    with_db(|conn| {
+    with_chat_store(&app, |dir| {
         insert_message(
-            conn,
+            dir,
             NewChatMessage {
                 session_id,
                 role,
@@ -834,14 +1130,7 @@ mod tests {
 
     static FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
 
-    /// 内存库 + 建表
-    fn db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_chat_schema(&conn).unwrap();
-        conn
-    }
-
-    /// 附件落盘用的临时目录（并行测试需 pid + 线程 + 序列号隔离）
+    /// 临时目录（并行测试需 pid + 线程 + 序列号隔离）
     fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "oops-chat-test-{}-{}-{:?}-{}",
@@ -852,6 +1141,11 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// 会话存储目录就是临时目录本身（测试里不经过 AppHandle）
+    fn store() -> PathBuf {
+        temp_dir()
     }
 
     fn text_message(session_id: i64, content: &str) -> NewChatMessage {
@@ -866,15 +1160,23 @@ mod tests {
         }
     }
 
+    fn read_jsonl(dir: &Path, session_id: i64) -> Vec<String> {
+        fs::read_to_string(session_file_path(dir, session_id))
+            .unwrap()
+            .lines()
+            .map(|line| line.to_string())
+            .collect()
+    }
+
     #[test]
     fn sessions_list_newest_edit_first() {
-        let conn = db();
-        let first = insert_session(&conn, "甲").unwrap();
-        let second = insert_session(&conn, "乙").unwrap();
+        let dir = store();
+        let first = insert_session(&dir, "甲").unwrap();
+        let second = insert_session(&dir, "乙").unwrap();
 
-        insert_message(&conn, text_message(first.id, "最新")).unwrap();
+        insert_message(&dir, text_message(first.id, "最新")).unwrap();
 
-        let sessions = list_sessions(&conn).unwrap();
+        let sessions = list_sessions(&dir).unwrap();
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].id, first.id, "最后被编辑的会话排最前");
         assert_eq!(sessions[1].id, second.id);
@@ -882,20 +1184,21 @@ mod tests {
         assert_eq!(sessions[0].message_count, 1);
         assert_eq!(sessions[1].last_message, "");
         assert_eq!(sessions[1].message_count, 0);
-        // 创建时间不动，最近编辑时间随消息前进
         assert_eq!(sessions[0].created_at, first.created_at, "创建时间应保留");
         assert!(sessions[0].updated_at > sessions[0].created_at, "最近编辑时间应前进");
         assert_eq!(sessions[1].created_at, sessions[1].updated_at, "无消息时两者相同");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn insert_message_bumps_session_and_defaults() {
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
+        let dir = store();
+        let session = insert_session(&dir, "会话").unwrap();
         let created = session.updated_at.clone();
 
         let message = insert_message(
-            &conn,
+            &dir,
             NewChatMessage {
                 session_id: session.id,
                 role: Some("other".into()),
@@ -916,7 +1219,7 @@ mod tests {
         assert!(!message.edited);
         assert_eq!(message.created_at, message.updated_at);
 
-        let reloaded = read_session(&conn, session.id).unwrap().unwrap();
+        let reloaded = read_session(&dir, session.id).unwrap().unwrap();
         assert!(
             reloaded.updated_at > created,
             "发送消息应推进最近编辑时间: {} -> {}",
@@ -925,14 +1228,16 @@ mod tests {
         );
         assert_eq!(reloaded.last_message, "a-1234abcd.png", "非文字消息预览取文件名");
         assert_eq!(reloaded.message_count, 1);
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn unknown_kind_and_role_fall_back_to_text_me() {
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
+        let dir = store();
+        let session = insert_session(&dir, "会话").unwrap();
         let message = insert_message(
-            &conn,
+            &dir,
             NewChatMessage {
                 session_id: session.id,
                 role: Some("robot".into()),
@@ -948,25 +1253,30 @@ mod tests {
 
         assert_eq!(message.role, "me");
         assert_eq!(message.kind, "text");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn message_and_session_reject_missing_targets() {
-        let conn = db();
-        assert!(insert_message(&conn, text_message(999, "无会话")).unwrap().is_none());
-        assert!(update_message(&conn, 999, "x").unwrap().is_none());
-        assert!(!remove_message(&conn, 999).unwrap());
-        assert!(!remove_session(&conn, 999).unwrap());
-        assert!(rename_session(&conn, 999, "x").unwrap().is_none());
+        let dir = store();
+        assert!(insert_message(&dir, text_message(999, "无会话")).unwrap().is_none());
+        assert!(update_message(&dir, 999, "x").unwrap().is_none());
+        assert!(!remove_message(&dir, 999).unwrap());
+        assert!(!remove_session(&dir, 999).unwrap());
+        assert!(rename_session(&dir, 999, "x").unwrap().is_none());
+        assert!(read_session(&dir, 999).unwrap().is_none());
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn editing_message_keeps_created_at_and_marks_edited() {
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
-        let message = insert_message(&conn, text_message(session.id, "原文")).unwrap().unwrap();
+        let dir = store();
+        let session = insert_session(&dir, "会话").unwrap();
+        let message = insert_message(&dir, text_message(session.id, "原文")).unwrap().unwrap();
 
-        let edited = update_message(&conn, message.id, "改后").unwrap().unwrap();
+        let edited = update_message(&dir, message.id, "改后").unwrap().unwrap();
 
         assert_eq!(edited.content, "改后");
         assert!(edited.edited, "编辑后应打上已编辑标记");
@@ -974,16 +1284,372 @@ mod tests {
         assert!(edited.updated_at > message.updated_at, "编辑时间前进");
         assert_eq!(edited.id, message.id);
 
-        // 会话的最近编辑时间也随之推进
-        let session_after = read_session(&conn, session.id).unwrap().unwrap();
+        let session_after = read_session(&dir, session.id).unwrap().unwrap();
         assert!(session_after.updated_at > message.updated_at);
-        assert_eq!(list_sessions(&conn).unwrap()[0].last_message, "改后");
+        assert_eq!(list_sessions(&dir).unwrap()[0].last_message, "改后");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn legacy_database_gains_favorited_column() {
+    fn favoriting_message_only_changes_the_flag() {
+        let dir = store();
+        let session = insert_session(&dir, "会话").unwrap();
+        let message = insert_message(&dir, text_message(session.id, "原文")).unwrap().unwrap();
+        let session_after_insert = read_session(&dir, session.id).unwrap().unwrap();
+        assert!(!message.favorited, "新消息默认未收藏");
+
+        let starred = set_message_favorite(&dir, message.id, true).unwrap().unwrap();
+
+        assert!(starred.favorited, "收藏后标记应为真");
+        assert_eq!(starred.updated_at, message.updated_at, "收藏不写编辑时间");
+        assert!(!starred.edited, "收藏不算已编辑");
+        assert_eq!(
+            read_session(&dir, session.id).unwrap().unwrap().updated_at,
+            session_after_insert.updated_at,
+            "收藏不推进会话的最近编辑时间"
+        );
+        let (_, file, index) = locate_message(&dir, message.id).unwrap().unwrap();
+        assert!(file.messages[index].favorited, "重新读取仍是收藏态");
+
+        let unstarred = set_message_favorite(&dir, message.id, false).unwrap().unwrap();
+        assert!(!unstarred.favorited, "取消收藏后标记应为假");
+        assert!(set_message_favorite(&dir, 9999, true).unwrap().is_none(), "消息不存在时返回 None");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn messages_are_scoped_to_their_session() {
+        let dir = store();
+        let a = insert_session(&dir, "甲").unwrap();
+        let b = insert_session(&dir, "乙").unwrap();
+        insert_message(&dir, text_message(a.id, "甲的1")).unwrap();
+        insert_message(&dir, text_message(b.id, "乙的1")).unwrap();
+        let third = insert_message(&dir, text_message(a.id, "甲的2")).unwrap().unwrap();
+
+        let a_messages = load_session_file(&session_file_path(&dir, a.id)).unwrap().messages;
+        assert_eq!(a_messages.len(), 2);
+        assert_eq!(a_messages[0].content, "甲的1", "消息按插入顺序正序");
+        assert_eq!(a_messages[1].content, "甲的2");
+        assert!(a_messages.iter().all(|m| m.session_id == a.id));
+        assert_eq!(
+            load_session_file(&session_file_path(&dir, b.id)).unwrap().messages.len(),
+            1
+        );
+        assert_eq!(third.session_id, a.id);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_message_keeps_session_and_bumps_edit_time() {
+        let dir = store();
+        let session = insert_session(&dir, "会话").unwrap();
+        let first = insert_message(&dir, text_message(session.id, "第一条")).unwrap().unwrap();
+        let second = insert_message(&dir, text_message(session.id, "第二条")).unwrap().unwrap();
+        let before = read_session(&dir, session.id).unwrap().unwrap();
+
+        assert!(remove_message(&dir, first.id).unwrap());
+
+        let after = read_session(&dir, session.id).unwrap().unwrap();
+        assert_eq!(after.message_count, 1);
+        let messages = load_session_file(&session_file_path(&dir, session.id)).unwrap().messages;
+        assert_eq!(messages[0].id, second.id);
+        assert!(after.updated_at > before.updated_at, "删除消息也应推进最近编辑时间");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_session_removes_its_messages() {
+        let dir = store();
+        let session = insert_session(&dir, "会话").unwrap();
+        let other = insert_session(&dir, "保留").unwrap();
+        insert_message(&dir, text_message(session.id, "会被删掉")).unwrap();
+        insert_message(&dir, text_message(other.id, "保留的消息")).unwrap();
+
+        assert!(remove_session(&dir, session.id).unwrap());
+
+        assert!(list_sessions(&dir).unwrap().iter().all(|s| s.id != session.id));
+        assert!(!session_file_path(&dir, session.id).exists());
+        assert_eq!(
+            load_session_file(&session_file_path(&dir, other.id)).unwrap().messages.len(),
+            1,
+            "不牵连其它会话"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn renaming_session_keeps_edit_time() {
+        let dir = store();
+        let session = insert_session(&dir, "旧标题").unwrap();
+        insert_message(&dir, text_message(session.id, "消息")).unwrap();
+        let before = read_session(&dir, session.id).unwrap().unwrap();
+
+        let renamed = rename_session(&dir, session.id, "  新标题  ").unwrap().unwrap();
+
+        assert_eq!(renamed.title, "新标题", "标题应去空白");
+        assert_eq!(renamed.created_at, session.created_at);
+        assert_eq!(renamed.updated_at, before.updated_at, "重命名不算编辑");
+        assert_eq!(renamed.message_count, 1);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 消息搜索：正文与文件名都参与匹配，预览取命中行而不是消息首行
+    #[test]
+    fn message_search_matches_content_and_file_name() {
+        let dir = store();
+        let alpha = insert_session(&dir, "甲会话").unwrap();
+        let beta = insert_session(&dir, "乙会话").unwrap();
+        insert_message(&dir, text_message(alpha.id, "第一行\n这里提到 报表导出 功能")).unwrap();
+        insert_message(&dir, text_message(beta.id, "无关内容")).unwrap();
+        insert_message(
+            &dir,
+            NewChatMessage {
+                session_id: beta.id,
+                role: Some("other".to_string()),
+                kind: Some("file".to_string()),
+                content: None,
+                file_name: Some("报表导出说明.pdf".to_string()),
+                file_path: Some("/tmp/report.pdf".to_string()),
+                file_size: Some(12),
+            },
+        )
+        .unwrap();
+
+        let result = search_messages(&dir, "报表导出", &[], None, None).unwrap();
+        assert!(!result.truncated);
+        assert_eq!(result.matches.len(), 2, "matches: {:?}", result.matches);
+        assert_eq!(result.matches[0].session_title, "乙会话");
+        assert_eq!(result.matches[0].kind, "file");
+        assert_eq!(result.matches[0].content, "报表导出说明.pdf");
+        assert_eq!(result.matches[1].session_id, alpha.id);
+        assert_eq!(result.matches[1].content, "这里提到 报表导出 功能", "应取命中行");
+        assert_eq!(result.matches[1].role, "me");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 消息搜索可按会话集合与创建时间范围收窄（毫秒时间戳，含端点）
+    #[test]
+    fn message_search_scopes_session_and_time() {
+        let dir = store();
+        let first = insert_session(&dir, "甲").unwrap();
+        let second = insert_session(&dir, "乙").unwrap();
+        let third = insert_session(&dir, "丙").unwrap();
+        insert_message(&dir, text_message(first.id, "关键词 A")).unwrap();
+        let old = insert_message(&dir, text_message(second.id, "关键词 B")).unwrap().unwrap();
+        insert_message(&dir, text_message(second.id, "关键词 C")).unwrap();
+        insert_message(&dir, text_message(third.id, "关键词 D")).unwrap();
+
+        let scoped = search_messages(&dir, "关键词", &[second.id], None, None).unwrap();
+        assert_eq!(scoped.matches.len(), 2, "matches: {:?}", scoped.matches);
+        assert!(scoped.matches.iter().all(|m| m.session_id == second.id));
+
+        let multi = search_messages(&dir, "关键词", &[first.id, second.id], None, None).unwrap();
+        assert_eq!(multi.matches.len(), 3, "matches: {:?}", multi.matches);
+        assert!(multi.matches.iter().any(|m| m.session_id == first.id));
+        assert!(multi.matches.iter().any(|m| m.session_id == second.id));
+        assert!(multi.matches.iter().all(|m| m.session_id != third.id));
+
+        // B 的创建时间挪到很久以前：按时间下界应把它过滤掉
+        let path = session_file_path(&dir, second.id);
+        let mut file = load_session_file(&path).unwrap();
+        let index = file.messages.iter().position(|m| m.id == old.id).unwrap();
+        file.messages[index].created_at = "2001-01-01T00:00:00+08:00".to_string();
+        save_session_file(&dir, &file.header, &file.messages).unwrap();
+
+        let cut = parse_ms("2002-01-01T00:00:00+08:00").unwrap();
+        let recent = search_messages(&dir, "关键词", &[], Some(cut), None).unwrap();
+        assert_eq!(recent.matches.len(), 3, "matches: {:?}", recent.matches);
+        assert!(recent.matches.iter().all(|m| m.content != "关键词 B"));
+
+        let past = search_messages(&dir, "关键词", &[], None, Some(cut)).unwrap();
+        assert_eq!(past.matches.len(), 1, "matches: {:?}", past.matches);
+        assert_eq!(past.matches[0].content, "关键词 B");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 关键词按字面匹配：`%` / `_` 不是通配符
+    #[test]
+    fn message_search_matches_wildcards_literally() {
+        let dir = store();
+        let session = insert_session(&dir, "会话").unwrap();
+        insert_message(&dir, text_message(session.id, "覆盖率 80%")).unwrap();
+        insert_message(&dir, text_message(session.id, "纯中文内容")).unwrap();
+
+        let percent = search_messages(&dir, "80%", &[], None, None).unwrap();
+        assert_eq!(percent.matches.len(), 1, "matches: {:?}", percent.matches);
+        let underscore = search_messages(&dir, "覆_率", &[], None, None).unwrap();
+        assert!(underscore.matches.is_empty(), "下划线应作为字面量: {:?}", underscore.matches);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 命中预览限长 120 字符
+    #[test]
+    fn message_search_preview_is_limited() {
+        let dir = store();
+        let session = insert_session(&dir, "长消息").unwrap();
+        insert_message(
+            &dir,
+            text_message(session.id, &format!("前缀 关键词 {}", "x".repeat(300))),
+        )
+        .unwrap();
+
+        let result = search_messages(&dir, "关键词", &[], None, None).unwrap();
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].content.chars().count(), 120);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 命中超过上限时截断并置位 truncated
+    #[test]
+    fn message_search_truncates_beyond_limit() {
+        let dir = store();
+        let session = insert_session(&dir, "很多").unwrap();
+        for index in 0..MESSAGE_SEARCH_MAX + 5 {
+            insert_message(&dir, text_message(session.id, &format!("关键词 {index}"))).unwrap();
+        }
+
+        let result = search_messages(&dir, "关键词", &[], None, None).unwrap();
+        assert!(result.truncated);
+        assert_eq!(result.matches.len(), MESSAGE_SEARCH_MAX);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn blank_title_on_create_falls_back_to_timestamp() {
+        let dir = store();
+        for raw in ["", "   "] {
+            let auto = insert_session(&dir, raw).unwrap().title;
+            assert!(
+                is_timestamp_title(&auto),
+                "留空新建的标题应为时间戳，实际: {auto}"
+            );
+        }
+        assert_eq!(insert_session(&dir, "  真标题 ").unwrap().title, "真标题");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 时间戳标题的严格形状：`2026-09-27_10-30-15`（分隔符必须落在固定位置，其余必须为数字）
+    fn is_timestamp_title(title: &str) -> bool {
+        let bytes = title.as_bytes();
+        if bytes.len() != 19 {
+            return false;
+        }
+        bytes.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 | 13 | 16 => *byte == b'-',
+            10 => *byte == b'_',
+            _ => byte.is_ascii_digit(),
+        })
+    }
+
+    #[test]
+    fn blank_title_on_rename_keeps_default_instead_of_timestamp() {
+        let dir = store();
+        let session = insert_session(&dir, "会话").unwrap();
+        assert_eq!(
+            rename_session(&dir, session.id, "  ").unwrap().unwrap().title,
+            "新会话"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 文件格式：首行会话头，之后一行一条消息；内容里的换行不会拆成多行
+    #[test]
+    fn jsonl_file_has_header_and_one_line_per_message() {
+        let dir = store();
+        let session = insert_session(&dir, "会话").unwrap();
+        insert_message(&dir, text_message(session.id, "第一行\n第二行")).unwrap();
+
+        let lines = read_jsonl(&dir, session.id);
+        assert_eq!(lines.len(), 2, "1 行头 + 1 条消息");
+        let header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(header["type"], "session");
+        assert_eq!(header["message_count"], 1);
+        let message: ChatMessage = serde_json::from_str(&lines[1]).unwrap();
+        assert_eq!(message.content, "第一行\n第二行");
+        assert!(
+            !session_file_path(&dir, session.id)
+                .with_extension("jsonl.tmp")
+                .exists(),
+            "临时文件应在替换后消失"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 消息 id 跨会话全局递增（编辑/删除接口只带 id）
+    #[test]
+    fn message_ids_are_unique_across_sessions() {
+        let dir = store();
+        let a = insert_session(&dir, "甲").unwrap();
+        let b = insert_session(&dir, "乙").unwrap();
+        let first = insert_message(&dir, text_message(a.id, "a")).unwrap().unwrap();
+        let second = insert_message(&dir, text_message(b.id, "b")).unwrap().unwrap();
+        assert!(second.id > first.id);
+
+        // 删除后不复用 id
+        remove_message(&dir, second.id).unwrap();
+        let third = insert_message(&dir, text_message(b.id, "c")).unwrap().unwrap();
+        assert!(third.id > second.id);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 旧库迁移：会话/消息/收藏状态都写进 JSONL，重复执行不覆盖
+    #[test]
+    fn migrates_legacy_sqlite_to_jsonl() {
         let conn = Connection::open_in_memory().unwrap();
-        // 旧库结构：chat_messages 没有 favorited 列（CREATE TABLE IF NOT EXISTS 不会补列）
+        init_chat_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO chat_sessions (id, title, created_at, updated_at)
+             VALUES (7, '旧会话', '2026-01-01T00:00:00+08:00', '2026-01-02T00:00:00+08:00')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO chat_messages
+                (id, session_id, role, kind, content, file_name, file_path, file_size,
+                 created_at, updated_at, edited, favorited)
+             VALUES (42, 7, 'me', 'text', '旧消息', NULL, NULL, 0,
+                     '2026-01-01T00:00:00+08:00', '2026-01-01T00:00:00+08:00', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let dir = store();
+        migrate_chat_to_jsonl_in(&dir, &conn).unwrap();
+
+        let file = load_session_file(&session_file_path(&dir, 7)).unwrap();
+        assert_eq!(file.header.title, "旧会话");
+        assert_eq!(file.header.message_count, 1);
+        assert_eq!(file.messages.len(), 1);
+        assert_eq!(file.messages[0].id, 42);
+        assert!(file.messages[0].edited);
+        assert!(file.messages[0].favorited);
+
+        // 幂等：再跑一次不报错，也不覆盖已有文件
+        migrate_chat_to_jsonl_in(&dir, &conn).unwrap();
+        assert_eq!(list_sessions(&dir).unwrap().len(), 1);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 很旧的库没有 favorited 列：init_chat_schema 补列后迁移不报错
+    #[test]
+    fn migrates_legacy_schema_without_favorited_column() {
+        let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE chat_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
@@ -1011,259 +1677,14 @@ mod tests {
         .unwrap();
 
         init_chat_schema(&conn).unwrap();
+        let dir = store();
+        migrate_chat_to_jsonl_in(&dir, &conn).unwrap();
 
-        let messages = list_messages(&conn, 1).unwrap();
-        assert_eq!(messages.len(), 1, "迁移不应丢旧数据");
-        assert!(!messages[0].favorited, "旧消息补列后默认未收藏");
-        assert!(set_message_favorite(&conn, messages[0].id, true).unwrap().unwrap().favorited);
-    }
+        let file = load_session_file(&session_file_path(&dir, 1)).unwrap();
+        assert_eq!(file.messages.len(), 1, "迁移不应丢旧数据");
+        assert!(!file.messages[0].favorited, "旧消息默认未收藏");
 
-    #[test]
-    fn favoriting_message_only_changes_the_flag() {
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
-        let message = insert_message(&conn, text_message(session.id, "原文")).unwrap().unwrap();
-        // 基线取「插入消息之后」的会话状态：insert_message 本身会推进会话的最近编辑时间
-        let session_after_insert = read_session(&conn, session.id).unwrap().unwrap();
-        assert!(!message.favorited, "新消息默认未收藏");
-
-        let starred = set_message_favorite(&conn, message.id, true).unwrap().unwrap();
-
-        assert!(starred.favorited, "收藏后标记应为真");
-        assert_eq!(starred.updated_at, message.updated_at, "收藏不写编辑时间");
-        assert!(!starred.edited, "收藏不算已编辑");
-        assert_eq!(
-            read_session(&conn, session.id).unwrap().unwrap().updated_at,
-            session_after_insert.updated_at,
-            "收藏不推进会话的最近编辑时间"
-        );
-        let listed = list_messages(&conn, session.id).unwrap();
-        assert!(listed[0].favorited, "重新查询仍是收藏态");
-
-        let unstarred = set_message_favorite(&conn, message.id, false).unwrap().unwrap();
-        assert!(!unstarred.favorited, "取消收藏后标记应为假");
-        assert!(set_message_favorite(&conn, 9999, true).unwrap().is_none(), "消息不存在时返回 None");
-    }
-
-    #[test]
-    fn messages_are_scoped_to_their_session() {
-        let conn = db();
-        let a = insert_session(&conn, "甲").unwrap();
-        let b = insert_session(&conn, "乙").unwrap();
-        insert_message(&conn, text_message(a.id, "甲的1")).unwrap();
-        insert_message(&conn, text_message(b.id, "乙的1")).unwrap();
-        let third = insert_message(&conn, text_message(a.id, "甲的2")).unwrap().unwrap();
-
-        let a_messages = list_messages(&conn, a.id).unwrap();
-        assert_eq!(a_messages.len(), 2);
-        assert_eq!(a_messages[0].content, "甲的1", "消息按插入顺序正序");
-        assert_eq!(a_messages[1].content, "甲的2");
-        assert!(a_messages.iter().all(|m| m.session_id == a.id));
-        assert_eq!(list_messages(&conn, b.id).unwrap().len(), 1);
-        assert_eq!(third.session_id, a.id);
-    }
-
-    #[test]
-    fn deleting_message_keeps_session_and_bumps_edit_time() {
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
-        let first = insert_message(&conn, text_message(session.id, "第一条")).unwrap().unwrap();
-        let second = insert_message(&conn, text_message(session.id, "第二条")).unwrap().unwrap();
-        let before = read_session(&conn, session.id).unwrap().unwrap();
-
-        assert!(remove_message(&conn, first.id).unwrap());
-
-        let after = read_session(&conn, session.id).unwrap().unwrap();
-        assert_eq!(after.message_count, 1);
-        assert_eq!(list_messages(&conn, session.id).unwrap()[0].id, second.id);
-        assert!(after.updated_at > before.updated_at, "删除消息也应推进最近编辑时间");
-    }
-
-    #[test]
-    fn deleting_session_removes_its_messages() {
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
-        let other = insert_session(&conn, "保留").unwrap();
-        insert_message(&conn, text_message(session.id, "会被删掉")).unwrap();
-        insert_message(&conn, text_message(other.id, "保留的消息")).unwrap();
-
-        assert!(remove_session(&conn, session.id).unwrap());
-
-        assert!(list_sessions(&conn).unwrap().iter().all(|s| s.id != session.id));
-        assert!(list_messages(&conn, session.id).unwrap().is_empty());
-        assert_eq!(list_messages(&conn, other.id).unwrap().len(), 1, "不牵连其它会话");
-    }
-
-    #[test]
-    fn renaming_session_keeps_edit_time() {
-        let conn = db();
-        let session = insert_session(&conn, "旧标题").unwrap();
-        insert_message(&conn, text_message(session.id, "消息")).unwrap();
-        let before = read_session(&conn, session.id).unwrap().unwrap();
-
-        let renamed = rename_session(&conn, session.id, "  新标题  ").unwrap().unwrap();
-
-        assert_eq!(renamed.title, "新标题", "标题应去空白");
-        assert_eq!(renamed.created_at, session.created_at);
-        assert_eq!(renamed.updated_at, before.updated_at, "重命名不算编辑");
-        assert_eq!(renamed.message_count, 1);
-    }
-
-    /// 消息搜索：正文与文件名都参与匹配，预览取命中行而不是消息首行
-    #[test]
-    fn message_search_matches_content_and_file_name() {
-        let conn = db();
-        let alpha = insert_session(&conn, "甲会话").unwrap();
-        let beta = insert_session(&conn, "乙会话").unwrap();
-        insert_message(&conn, text_message(alpha.id, "第一行\n这里提到 报表导出 功能")).unwrap();
-        insert_message(&conn, text_message(beta.id, "无关内容")).unwrap();
-        insert_message(
-            &conn,
-            NewChatMessage {
-                session_id: beta.id,
-                role: Some("other".to_string()),
-                kind: Some("file".to_string()),
-                content: None,
-                file_name: Some("报表导出说明.pdf".to_string()),
-                file_path: Some("/tmp/report.pdf".to_string()),
-                file_size: Some(12),
-            },
-        )
-        .unwrap();
-
-        let result = search_messages(&conn, "报表导出", &[], None, None).unwrap();
-        assert!(!result.truncated);
-        assert_eq!(result.matches.len(), 2, "matches: {:?}", result.matches);
-        // 最新的排前面：文件消息后插入，排第一
-        assert_eq!(result.matches[0].session_title, "乙会话");
-        assert_eq!(result.matches[0].kind, "file");
-        assert_eq!(result.matches[0].content, "报表导出说明.pdf");
-        assert_eq!(result.matches[1].session_id, alpha.id);
-        assert_eq!(result.matches[1].content, "这里提到 报表导出 功能", "应取命中行");
-        assert_eq!(result.matches[1].role, "me");
-    }
-
-    /// 消息搜索可按会话集合与创建时间范围收窄（毫秒时间戳，含端点）
-    #[test]
-    fn message_search_scopes_session_and_time() {
-        let conn = db();
-        let first = insert_session(&conn, "甲").unwrap();
-        let second = insert_session(&conn, "乙").unwrap();
-        let third = insert_session(&conn, "丙").unwrap();
-        insert_message(&conn, text_message(first.id, "关键词 A")).unwrap();
-        let old = insert_message(&conn, text_message(second.id, "关键词 B"))
-            .unwrap()
-            .unwrap();
-        insert_message(&conn, text_message(second.id, "关键词 C")).unwrap();
-        insert_message(&conn, text_message(third.id, "关键词 D")).unwrap();
-
-        let scoped = search_messages(&conn, "关键词", &[second.id], None, None).unwrap();
-        assert_eq!(scoped.matches.len(), 2, "matches: {:?}", scoped.matches);
-        assert!(scoped.matches.iter().all(|m| m.session_id == second.id));
-
-        // 多选会话：甲、乙都在范围内（各取自己的命中），丙被排除
-        let multi = search_messages(&conn, "关键词", &[first.id, second.id], None, None).unwrap();
-        assert_eq!(multi.matches.len(), 3, "matches: {:?}", multi.matches);
-        assert!(multi.matches.iter().any(|m| m.session_id == first.id), "matches: {:?}", multi.matches);
-        assert!(multi.matches.iter().any(|m| m.session_id == second.id), "matches: {:?}", multi.matches);
-        assert!(multi.matches.iter().all(|m| m.session_id != third.id));
-
-        // B 的创建时间挪到很久以前：按时间下界应把它过滤掉
-        conn.execute(
-            "UPDATE chat_messages SET created_at = ?1 WHERE id = ?2",
-            params!["2001-01-01T00:00:00+08:00", old.id],
-        )
-        .unwrap();
-        let cut = parse_ms("2002-01-01T00:00:00+08:00").unwrap();
-        let recent = search_messages(&conn, "关键词", &[], Some(cut), None).unwrap();
-        assert_eq!(recent.matches.len(), 3, "matches: {:?}", recent.matches);
-        assert!(recent.matches.iter().all(|m| m.content != "关键词 B"));
-
-        let past = search_messages(&conn, "关键词", &[], None, Some(cut)).unwrap();
-        assert_eq!(past.matches.len(), 1, "matches: {:?}", past.matches);
-        assert_eq!(past.matches[0].content, "关键词 B");
-    }
-
-    /// 关键词里的 LIKE 通配符按字面匹配（`%` / `_` 不会匹配一切）
-    #[test]
-    fn message_search_escapes_like_wildcards() {
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
-        insert_message(&conn, text_message(session.id, "覆盖率 80%")).unwrap();
-        insert_message(&conn, text_message(session.id, "纯中文内容")).unwrap();
-
-        let percent = search_messages(&conn, "80%", &[], None, None).unwrap();
-        assert_eq!(percent.matches.len(), 1, "matches: {:?}", percent.matches);
-        let underscore = search_messages(&conn, "覆_率", &[], None, None).unwrap();
-        assert!(underscore.matches.is_empty(), "下划线应作为字面量: {:?}", underscore.matches);
-    }
-
-    /// 命中预览限长 120 字符
-    #[test]
-    fn message_search_preview_is_limited() {
-        let conn = db();
-        let session = insert_session(&conn, "长消息").unwrap();
-        insert_message(
-            &conn,
-            text_message(session.id, &format!("前缀 关键词 {}", "x".repeat(300))),
-        )
-        .unwrap();
-
-        let result = search_messages(&conn, "关键词", &[], None, None).unwrap();
-        assert_eq!(result.matches.len(), 1);
-        assert_eq!(result.matches[0].content.chars().count(), 120);
-    }
-
-    /// 命中超过上限时截断并置位 truncated
-    #[test]
-    fn message_search_truncates_beyond_limit() {
-        let conn = db();
-        let session = insert_session(&conn, "很多").unwrap();
-        for index in 0..MESSAGE_SEARCH_MAX + 5 {
-            insert_message(&conn, text_message(session.id, &format!("关键词 {index}"))).unwrap();
-        }
-
-        let result = search_messages(&conn, "关键词", &[], None, None).unwrap();
-        assert!(result.truncated);
-        assert_eq!(result.matches.len(), MESSAGE_SEARCH_MAX);
-    }
-
-    #[test]
-    fn blank_title_on_create_falls_back_to_timestamp() {
-        let conn = db();
-        // 新建：留空（含纯空白）→ 时间戳，形状为 YYYY-MM-DD_HH-MM-SS（不含冒号，可作文件名）
-        for raw in ["", "   "] {
-            let auto = insert_session(&conn, raw).unwrap().title;
-            assert!(
-                is_timestamp_title(&auto),
-                "留空新建的标题应为时间戳，实际: {auto}"
-            );
-        }
-        assert_eq!(insert_session(&conn, "  真标题 ").unwrap().title, "真标题");
-    }
-
-    /// 时间戳标题的严格形状：`2026-09-27_10-30-15`（分隔符必须落在固定位置，其余必须为数字）
-    fn is_timestamp_title(title: &str) -> bool {
-        let bytes = title.as_bytes();
-        if bytes.len() != 19 {
-            return false;
-        }
-        bytes.iter().enumerate().all(|(index, byte)| match index {
-            4 | 7 | 13 | 16 => *byte == b'-',
-            10 => *byte == b'_',
-            _ => byte.is_ascii_digit(),
-        })
-    }
-
-    #[test]
-    fn blank_title_on_rename_keeps_default_instead_of_timestamp() {
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
-        // 重命名留空不是「新建」，不该被静默改成时间戳
-        assert_eq!(
-            rename_session(&conn, session.id, "  ").unwrap().unwrap().title,
-            "新会话"
-        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// 图片：同内容只缓存一份，路径为正斜杠，可被 asset 协议使用
@@ -1304,12 +1725,10 @@ mod tests {
         assert!(stored.name.starts_with("会议纪要-"), "name: {}", stored.name);
         assert!(stored.name.ends_with(".png"), "name: {}", stored.name);
 
-        // 无扩展名时回退 png；空内容被拒绝
         let plain = store_image_bytes(&dir, b"Y", "截图").unwrap();
         assert!(plain.name.ends_with(".png"), "name: {}", plain.name);
         assert!(store_image_bytes(&dir, b"", "empty.png").is_err());
 
-        // 重复发送同一份已落盘图片时文件名保持稳定（不叠加哈希）
         let again =
             store_image_bytes(&dir, b"X", &Path::new(&stored.path).to_string_lossy()).unwrap();
         assert_eq!(again.name, stored.name);
@@ -1342,21 +1761,17 @@ mod tests {
     /// 发送文件：只记录路径，不复制内容、不读入内存，且大小来自 stat
     #[test]
     fn file_message_records_source_path_without_copying() {
-        let dir = temp_dir();
+        let dir = store();
         let source = dir.join("季度报告.txt");
-        // 故意造一个大文件：若实现仍整块读入内存，这个用例会明显变慢而非失败
         let payload = vec![b'x'; 8 * 1024 * 1024];
         fs::write(&source, &payload).unwrap();
         let before = fs::read_dir(&dir).unwrap().count();
 
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
+        let session = insert_session(&dir, "会话").unwrap();
         let source_slash = to_slash(&source);
-
-        // 走与命令相同的落库逻辑（命令层只多一次 stat 校验）
         let metadata = fs::metadata(&source).unwrap();
         let message = insert_message(
-            &conn,
+            &dir,
             NewChatMessage {
                 session_id: session.id,
                 role: None,
@@ -1374,11 +1789,13 @@ mod tests {
         assert_eq!(message.file_path.as_deref(), Some(source_slash.as_str()));
         assert_eq!(message.file_name.as_deref(), Some("季度报告.txt"));
         assert_eq!(message.file_size, payload.len() as i64);
-        // 原文件未被改动，目录里也没多出副本
         assert_eq!(fs::read(&source).unwrap().len(), payload.len());
-        assert_eq!(fs::read_dir(&dir).unwrap().count(), before, "不应复制出副本");
-        // 会话预览显示文件名而非路径
-        assert_eq!(list_sessions(&conn).unwrap()[0].last_message, "季度报告.txt");
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            before + 2,
+            "会话文件 + 自增状态文件，不应复制出副本"
+        );
+        assert_eq!(list_sessions(&dir).unwrap()[0].last_message, "季度报告.txt");
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1386,14 +1803,13 @@ mod tests {
     /// 发送的文件被移动/删除后，记录仍在（打开时会由前端提示），不静默改数据
     #[test]
     fn file_message_survives_source_removal() {
-        let dir = temp_dir();
+        let dir = store();
         let source = dir.join("临时.txt");
         fs::write(&source, b"data").unwrap();
-        let conn = db();
-        let session = insert_session(&conn, "会话").unwrap();
+        let session = insert_session(&dir, "会话").unwrap();
 
         let message = insert_message(
-            &conn,
+            &dir,
             NewChatMessage {
                 session_id: session.id,
                 role: None,
@@ -1409,9 +1825,9 @@ mod tests {
 
         fs::remove_file(&source).unwrap();
 
-        let reloaded = read_message(&conn, message.id).unwrap().unwrap();
-        assert_eq!(reloaded.file_path, message.file_path, "路径记录保持不变");
-        assert_eq!(reloaded.kind, "file");
+        let (_, file, index) = locate_message(&dir, message.id).unwrap().unwrap();
+        assert_eq!(file.messages[index].file_path, message.file_path, "路径记录保持不变");
+        assert_eq!(file.messages[index].kind, "file");
 
         fs::remove_dir_all(&dir).unwrap();
     }
