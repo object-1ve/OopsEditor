@@ -485,6 +485,20 @@ body {
   color: #1a6fd4 !important;
   text-decoration: underline;
 }
+/* Markdown 图片 `![alt](地址)` 的 alt：词法只给 ![ 和 ](地址) 上色，alt 补同款链接色 */
+.md-image-alt-link {
+  color: #1a6fd4 !important;
+  text-decoration: underline;
+}
+/* Notebook 全文件查找：全部命中 + 当前命中（Monaco 装饰器 inlineClassName） */
+.notebook-find-match {
+  background: rgba(200, 106, 78, 0.18);
+  border-radius: 2px;
+}
+.notebook-find-match-current {
+  background: rgba(200, 106, 78, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(200, 106, 78, 0.7);
+}
 .markdown-preview ul,
 .markdown-preview ol {
   margin-bottom: 0.5rem;

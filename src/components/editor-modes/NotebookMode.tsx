@@ -27,6 +27,7 @@ import {
   Square,
   Trash2,
   Type,
+  X,
 } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import {
@@ -56,6 +57,11 @@ import {
   type NotebookCellRunResult,
 } from "@/services/notebookKernel";
 import { bytesToBase64 } from "@/utils/hexView";
+import {
+  findNotebookMatches,
+  notebookMatchKey,
+  type NotebookFindMatch,
+} from "@/utils/notebookFind";
 import {
   findMarkdownImageAtColumn,
   findUrlAtColumn,
@@ -141,6 +147,30 @@ function collectUrlDecorations(
   return decorations;
 }
 
+/** Markdown 图片语法里的 alt 文字：词法只给 `![` 和 `](地址)` 上色，alt 需要自己补 */
+const IMAGE_SYNTAX_PATTERN = /!\[([^\]\n]*)\]\(([^)\n]*)\)/g;
+
+function collectImageAltDecorations(
+  model: MonacoEditorNs.ITextModel,
+  monaco: MonacoApi,
+): MonacoEditorNs.IModelDeltaDecoration[] {
+  const text = model.getValue();
+  const decorations: MonacoEditorNs.IModelDeltaDecoration[] = [];
+  for (const match of text.matchAll(IMAGE_SYNTAX_PATTERN)) {
+    const alt = match[1];
+    if (!alt) continue;
+    // match[0] 从 `!` 开始，alt 前面固定是 `![`
+    const altStart = (match.index ?? 0) + 2;
+    const start = model.getPositionAt(altStart);
+    const end = model.getPositionAt(altStart + alt.length);
+    decorations.push({
+      range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
+      options: { inlineClassName: "md-image-alt-link" },
+    });
+  }
+  return decorations;
+}
+
 interface NotebookCellEditorProps {
   cellId: string;
   initialValue: string;
@@ -150,13 +180,15 @@ interface NotebookCellEditorProps {
   applyTheme: (monaco: MonacoApi) => void;
   onSourceChange: (cellId: string, value: string) => void;
   onSave: () => void;
-  /** 点击 `![](路径)`：打开和 md 一致的图片预览 */
+  /** Ctrl+点击 `![](路径)`：打开和 md 一致的图片预览 */
   onImageClick: (cellId: string, rawSrc: string, alt: string) => void;
   /** 粘贴图片：写入 cell.attachments，返回要插入的 Markdown 片段 */
   onPasteImage: (cellId: string, file: File) => Promise<string | null>;
   onFocus: (cellId: string) => void;
   onBlur: (cellId: string) => void;
   onReady: (cellId: string, editor: MonacoEditorInstance) => void;
+  /** 编辑器卸载（切到 Markdown 预览 / 单元格被删）：把实例从缓存里摘掉 */
+  onDispose: (cellId: string) => void;
 }
 
 /** 单个单元格的 Monaco 编辑器：按内容行数自动增高，不出现内部滚动条 */
@@ -174,6 +206,7 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
   onFocus,
   onBlur,
   onReady,
+  onDispose,
 }: NotebookCellEditorProps) {
   const [height, setHeight] = useState(MIN_EDITOR_HEIGHT);
 
@@ -204,9 +237,11 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
         editor.onDidDispose(() => disposable.dispose());
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSave());
 
-        // 图片语法 `![](路径)`：左键（或 Ctrl+Click）直接打开和 md 一致的大图预览
+        // 图片语法 `![](路径)`：只有 Ctrl+Click 才打开大图预览，普通点击留给定位光标
         const imageClick = editor.onMouseDown((event) => {
-          if (language !== "markdown" || event.event.rightButton) return;
+          if (language !== "markdown") return;
+          if (!event.event.ctrlKey && !event.event.metaKey) return;
+          if (event.event.rightButton) return;
           const position = event.target.position;
           const model = editor.getModel();
           if (!position || !model) return;
@@ -228,10 +263,10 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
           const position = event.target.position;
           const model = editor.getModel();
           if (!position || !model) return;
-          const hit = findUrlAtColumn(
-            model.getLineContent(position.lineNumber),
-            position.column - 1,
-          );
+          const lineText = model.getLineContent(position.lineNumber);
+          // 图片语法里的地址归图片预览处理，别再当普通链接打开系统浏览器
+          if (findMarkdownImageAtColumn(lineText, position.column - 1)) return;
+          const hit = findUrlAtColumn(lineText, position.column - 1);
           if (!hit) return;
           event.event.preventDefault();
           event.event.stopPropagation();
@@ -278,14 +313,18 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
         document.addEventListener("paste", handlePaste, true);
         editor.onDidDispose(() => document.removeEventListener("paste", handlePaste, true));
 
-        // Markdown 单元格：源码模式里把识别到的网址染蓝
+        // Markdown 单元格：源码模式里把识别到的网址、图片 alt 染蓝
         if (language === "markdown") {
           const model = editor.getModel();
           if (model) {
             const collection = editor.createDecorationsCollection();
-            const refreshUrls = () => collection.set(collectUrlDecorations(model, monaco));
-            refreshUrls();
-            const modelListener = model.onDidChangeContent(refreshUrls);
+            const refreshLinks = () =>
+              collection.set([
+                ...collectUrlDecorations(model, monaco),
+                ...collectImageAltDecorations(model, monaco),
+              ]);
+            refreshLinks();
+            const modelListener = model.onDidChangeContent(refreshLinks);
             editor.onDidDispose(() => {
               modelListener.dispose();
               collection.clear();
@@ -294,11 +333,329 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
         }
 
         onReady(cellId, editor);
+        // 预览态会卸载编辑器：父组件缓存里的实例必须同步移除，否则查找跳转会对已销毁实例操作
+        editor.onDidDispose(() => onDispose(cellId));
       }}
       options={options}
     />
   );
 });
+
+interface NotebookFindBarProps {
+  /** 当前单元格列表（doc 是可变对象，用 getter 拿最新内容） */
+  getCells: () => readonly NotebookCell[];
+  getEditors: () => Map<string, MonacoEditorInstance>;
+  /** 命中在 Markdown 预览单元格里时先切回源码，否则没有编辑器可高亮 */
+  ensureSourceView: (cellId: string) => void;
+  scrollToCellLine: (cellId: string, line: number) => void;
+  /** 父组件在源码变化 / 编辑器挂载/卸载时调用，重新扫描并补跳 */
+  refreshRef: { current: (() => void) | null };
+  /** 每次 Ctrl+F（含重复按）自增，用来把焦点抢回输入框 */
+  focusSignal: number;
+  /** 结构变化（增删/移动单元格）后重新扫描 */
+  revision: number;
+  onClose: (cellId?: string) => void;
+}
+
+/**
+ * Notebook 全文件查找框。
+ *
+ * 单元格各自是独立的 Monaco 实例，自带的 Ctrl+F 只能命中当前单元格；
+ * 这里统一扫描所有单元格源码，用装饰器标出全部命中，回车 / Shift+回车跨单元格跳转。
+ */
+function NotebookFindBar({
+  getCells,
+  getEditors,
+  ensureSourceView,
+  scrollToCellLine,
+  refreshRef,
+  focusSignal,
+  revision,
+  onClose,
+}: NotebookFindBarProps) {
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState<NotebookFindMatch[]>([]);
+  const [index, setIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const queryRef = useRef("");
+  const matchesRef = useRef<NotebookFindMatch[]>([]);
+  const indexRef = useRef(0);
+  /** 当前命中的身份：内容编辑后靠它把光标留在同一处 */
+  const currentKeyRef = useRef<string | null>(null);
+  /** 预览态切回源码时编辑器还没挂载，记下待跳转命中，等 onReady 再补 */
+  const pendingRevealRef = useRef<string | null>(null);
+  const decorationsRef = useRef(
+    new Map<
+      string,
+      { editor: MonacoEditorInstance; collection: MonacoEditorNs.IEditorDecorationsCollection }
+    >(),
+  );
+
+  const getEditor = useCallback(
+    (cellId: string) => {
+      const editor = getEditors().get(cellId);
+      if (!editor) return null;
+      try {
+        return editor.getModel() ? editor : null;
+      } catch {
+        // 实例已销毁
+        return null;
+      }
+    },
+    [getEditors],
+  );
+
+  const applyDecorations = useCallback(
+    (list: NotebookFindMatch[], currentIndex: number) => {
+      const currentKey = list[currentIndex] ? notebookMatchKey(list[currentIndex]) : null;
+      const byCell = new Map<string, NotebookFindMatch[]>();
+      for (const match of list) {
+        const bucket = byCell.get(match.cellId);
+        if (bucket) bucket.push(match);
+        else byCell.set(match.cellId, [match]);
+      }
+
+      const cellIds = new Set([...byCell.keys(), ...decorationsRef.current.keys()]);
+      for (const cellId of cellIds) {
+        const editor = getEditor(cellId);
+        if (!editor) {
+          decorationsRef.current.delete(cellId);
+          continue;
+        }
+        const cached = decorationsRef.current.get(cellId);
+        let collection = cached?.editor === editor ? cached.collection : null;
+        if (!collection) {
+          try {
+            cached?.collection.clear();
+          } catch {
+            // 旧编辑器已销毁
+          }
+          collection = editor.createDecorationsCollection();
+          decorationsRef.current.set(cellId, { editor, collection });
+        }
+        collection.set(
+          (byCell.get(cellId) ?? []).map((match) => ({
+            range: {
+              startLineNumber: match.startLine,
+              startColumn: match.startColumn,
+              endLineNumber: match.endLine,
+              endColumn: match.endColumn,
+            },
+            options: {
+              inlineClassName:
+                notebookMatchKey(match) === currentKey
+                  ? "notebook-find-match notebook-find-match-current"
+                  : "notebook-find-match",
+              zIndex: notebookMatchKey(match) === currentKey ? 3 : 2,
+            },
+          })),
+        );
+      }
+    },
+    [getEditor],
+  );
+
+  const revealMatch = useCallback(
+    (match: NotebookFindMatch, allowSourceSwitch: boolean) => {
+      if (allowSourceSwitch) ensureSourceView(match.cellId);
+      scrollToCellLine(match.cellId, match.startLine);
+      const editor = getEditor(match.cellId);
+      if (!editor) {
+        pendingRevealRef.current = notebookMatchKey(match);
+        return;
+      }
+      pendingRevealRef.current = null;
+      // 跨单元格跳转时收起上一个单元格的选区，避免两处同时像“当前命中”
+      for (const [id, other] of getEditors()) {
+        if (id === match.cellId) continue;
+        try {
+          const selection = other.getSelection();
+          if (!selection) continue;
+          other.setSelection({
+            startLineNumber: selection.startLineNumber,
+            startColumn: selection.startColumn,
+            endLineNumber: selection.startLineNumber,
+            endColumn: selection.startColumn,
+          });
+        } catch {
+          // 编辑器正在销毁：忽略
+        }
+      }
+      try {
+        editor.setSelection({
+          startLineNumber: match.startLine,
+          startColumn: match.startColumn,
+          endLineNumber: match.endLine,
+          endColumn: match.endColumn,
+        });
+      } catch {
+        // 编辑器正在销毁：忽略
+      }
+    },
+    [ensureSourceView, getEditor, getEditors, scrollToCellLine],
+  );
+
+  /** 重新定位当前下标：内容编辑后优先跟住同一命中，否则夹紧到有效范围 */
+  const syncIndex = useCallback((list: NotebookFindMatch[], keepCurrent: boolean) => {
+    let next = 0;
+    if (keepCurrent) {
+      const key = currentKeyRef.current;
+      const found = key ? list.findIndex((match) => notebookMatchKey(match) === key) : -1;
+      next = found >= 0 ? found : Math.min(indexRef.current, Math.max(0, list.length - 1));
+    }
+    indexRef.current = next;
+    currentKeyRef.current = list[next] ? notebookMatchKey(list[next]) : null;
+    setIndex(next);
+    return next;
+  }, []);
+
+  /** 编辑源码 / 编辑器挂载后重扫：保持当前命中，不主动滚屏（避免打字时页面乱跳） */
+  const refresh = useCallback(() => {
+    const list = findNotebookMatches(getCells(), queryRef.current);
+    matchesRef.current = list;
+    setMatches(list);
+    const next = syncIndex(list, true);
+    applyDecorations(list, next);
+
+    const pending = pendingRevealRef.current;
+    if (!pending) return;
+    const target = list.find((match) => notebookMatchKey(match) === pending);
+    if (!target) {
+      pendingRevealRef.current = null;
+      return;
+    }
+    if (getEditor(target.cellId)) revealMatch(target, false);
+  }, [applyDecorations, getCells, getEditor, revealMatch, syncIndex]);
+
+  useEffect(() => {
+    refreshRef.current = refresh;
+    refresh();
+    return () => {
+      refreshRef.current = null;
+    };
+  }, [refresh, refreshRef, revision]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusSignal]);
+
+  useEffect(
+    () => () => {
+      for (const { collection } of decorationsRef.current.values()) {
+        try {
+          collection.clear();
+        } catch {
+          // 编辑器已销毁
+        }
+      }
+      decorationsRef.current.clear();
+    },
+    [],
+  );
+
+  const handleQueryChange = (value: string) => {
+    queryRef.current = value;
+    setQuery(value);
+    const list = findNotebookMatches(getCells(), value);
+    matchesRef.current = list;
+    setMatches(list);
+    const next = syncIndex(list, false);
+    applyDecorations(list, next);
+    if (list[next]) revealMatch(list[next], true);
+    else pendingRevealRef.current = null;
+  };
+
+  const step = (direction: 1 | -1) => {
+    const list = matchesRef.current;
+    if (list.length === 0) return;
+    const next = (indexRef.current + direction + list.length) % list.length;
+    indexRef.current = next;
+    currentKeyRef.current = notebookMatchKey(list[next]);
+    setIndex(next);
+    applyDecorations(list, next);
+    revealMatch(list[next], true);
+  };
+
+  const close = () => {
+    const target = matchesRef.current[indexRef.current];
+    onClose(target?.cellId);
+  };
+
+  const current = matches[index];
+  const status = query.trim()
+    ? matches.length === 0
+      ? "无匹配"
+      : `${index + 1} / ${matches.length}`
+    : "";
+
+  return (
+    <div className="absolute right-4 top-11 z-30 w-[360px] rounded-lg border border-border bg-surface p-2 shadow-xl">
+      <div className="flex items-center gap-1">
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(event) => handleQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              step(event.shiftKey ? -1 : 1);
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+            } else if (
+              (event.ctrlKey || event.metaKey) &&
+              event.key.toLowerCase() === "f"
+            ) {
+              event.preventDefault();
+              event.currentTarget.select();
+            }
+          }}
+          placeholder="在 Notebook 中搜索"
+          spellCheck={false}
+          className="min-w-0 flex-1 rounded border border-border bg-primary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
+        />
+        <span className="w-14 shrink-0 text-center text-[10px] tabular-nums text-text-muted">
+          {status}
+        </span>
+        <button
+          type="button"
+          title="上一个匹配 (Shift+Enter)"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => step(-1)}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-hover hover:text-accent"
+        >
+          <ArrowUp size={12} />
+        </button>
+        <button
+          type="button"
+          title="下一个匹配 (Enter)"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => step(1)}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-hover hover:text-accent"
+        >
+          <ArrowDown size={12} />
+        </button>
+        <button
+          type="button"
+          title="关闭 (Esc)"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={close}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-hover hover:text-accent"
+        >
+          <X size={13} />
+        </button>
+      </div>
+      <div className="mt-1 flex items-center gap-1 px-0.5 text-[10px] text-text-muted">
+        <span className="truncate">
+          {current
+            ? `第 ${current.cellIndex + 1} 个单元格 · ${current.preview || "（空行）"}`
+            : "搜索全部单元格的源码（代码 + Markdown）"}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 /** 渲染 traceback / stdout 里的 ANSI 颜色 */
 function AnsiText({ text, className }: { text: string; className?: string }) {
@@ -532,7 +889,7 @@ function NotebookMarkdownCell({
   attachments?: Record<string, Record<string, string>>;
   /** Notebook 文件路径：相对图片按它的目录解析 */
   basePath?: string;
-  /** 点击图片 → 打开和 md 一致的全屏预览 */
+  /** Ctrl+点击图片 → 打开和 md 一致的全屏预览 */
   onImageClick?: (rawSrc: string, alt: string) => void;
 }) {
   const components = useMemo(
@@ -576,8 +933,11 @@ function NotebookMarkdownCell({
               src={url}
               alt={alt ?? ""}
               className="cursor-zoom-in"
-              title="点击查看大图"
-              onClick={() => onImageClick?.(src, alt ?? "")}
+              title="Ctrl+点击查看大图"
+              onClick={(event) => {
+                if (!event.ctrlKey && !event.metaKey) return;
+                onImageClick?.(src, alt ?? "");
+              }}
             />
           );
         }
@@ -588,8 +948,11 @@ function NotebookMarkdownCell({
             src={resolveMarkdownImageSrc(src, basePath)}
             alt={alt ?? ""}
             className="cursor-zoom-in"
-            title="点击查看大图"
-            onClick={() => onImageClick?.(src, alt ?? "")}
+            title="Ctrl+点击查看大图"
+            onClick={(event) => {
+              if (!event.ctrlKey && !event.metaKey) return;
+              onImageClick?.(src, alt ?? "");
+            }}
           />
         );
       },
@@ -657,9 +1020,13 @@ function NotebookModeView({
 >) {
   const markTabDirty = useEditorStore((state) => state.markTabDirty);
   const openImagePreview = useEditorStore((state) => state.openImagePreview);
+  const isSplit = useEditorStore((state) => state.isSplit);
   const [doc, setDoc] = useState<NotebookDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [, bumpVersion] = useState(0);
+  const [docVersion, bumpVersion] = useState(0);
+  /** 全文件查找框（Ctrl+F）：跨所有单元格，而不是当前 Monaco 实例 */
+  const [findOpen, setFindOpen] = useState(false);
+  const [findSignal, setFindSignal] = useState(0);
   /** 已切换到渲染预览的 Markdown 单元格：默认都保持源码模式 */
   const [previewMarkdownIds, setPreviewMarkdownIds] = useState<Set<string>>(
     () => new Set(),
@@ -668,7 +1035,15 @@ function NotebookModeView({
   const [runningCellId, setRunningCellId] = useState<string | null>(null);
   const [runningAll, setRunningAll] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  /** 单元格滚动容器：查找跳转按行像素定位，比 scrollIntoView 更准 */
+  const scrollRef = useRef<HTMLDivElement>(null);
   const editorsRef = useRef(new Map<string, MonacoEditorInstance>());
+  /** 查找框注册的重扫入口：源码变化 / 编辑器挂载后调用 */
+  const findRefreshRef = useRef<(() => void) | null>(null);
+  /** Ctrl+F 打开查找前正在编辑的单元格，Esc 关闭后把焦点还回去 */
+  const findReturnCellRef = useRef<string | null>(null);
+  /** 最近一次按下鼠标是否落在 Notebook 内：点到渲染预览/输出这类不可聚焦区域时 activeElement 是 body */
+  const notebookPointerRef = useRef(false);
   const pendingFocusRef = useRef<string | null>(null);
   /** 最近获得焦点的单元格：窗口级 Ctrl+Enter 需要知道跑哪个 */
   const focusedCellIdRef = useRef<string | null>(null);
@@ -691,6 +1066,8 @@ function NotebookModeView({
     setPreviewMarkdownIds(new Set());
     setRunningCellId(null);
     setRunningAll(false);
+    setFindOpen(false);
+    findReturnCellRef.current = null;
     runningRef.current = false;
     stoppingRef.current = false;
     focusedCellIdRef.current = null;
@@ -722,14 +1099,21 @@ function NotebookModeView({
     bumpVersion((version) => version + 1);
   }, [activeTab.id, markTabDirty]);
 
+  /** 源码编辑 / 结构变化 / 编辑器挂载后，让查找框重扫（框没开时是空操作） */
+  const notifyFindRefresh = useCallback(() => {
+    findRefreshRef.current?.();
+  }, []);
+
   const handleSourceChange = useCallback(
     (cellId: string, value: string) => {
       if (!doc) return;
       // 每个按键都会走到这里：只更新缓存 + 标脏，不触发整页重绘（Monaco 自己持有文本）
       if (!updateNotebookCellSource(doc, cellId, value)) return;
       markTabDirty(activeTab.id);
+      // 查找框开着时同步命中位置：只重绘查找框自己
+      notifyFindRefresh();
     },
-    [activeTab.id, doc, markTabDirty],
+    [activeTab.id, doc, markTabDirty, notifyFindRefresh],
   );
 
   const handleSave = useCallback(() => {
@@ -770,13 +1154,26 @@ function NotebookModeView({
     if (focusedCellIdRef.current === cellId) focusedCellIdRef.current = null;
   }, []);
 
-  const handleEditorReady = useCallback((cellId: string, editor: MonacoEditorInstance) => {
-    editorsRef.current.set(cellId, editor);
-    if (pendingFocusRef.current === cellId) {
-      pendingFocusRef.current = null;
-      editor.focus();
-    }
-  }, []);
+  const handleEditorReady = useCallback(
+    (cellId: string, editor: MonacoEditorInstance) => {
+      editorsRef.current.set(cellId, editor);
+      if (pendingFocusRef.current === cellId) {
+        pendingFocusRef.current = null;
+        editor.focus();
+      }
+      // 预览切回源码后：补上查找高亮 / 待跳转命中
+      notifyFindRefresh();
+    },
+    [notifyFindRefresh],
+  );
+
+  const handleEditorDispose = useCallback(
+    (cellId: string) => {
+      editorsRef.current.delete(cellId);
+      notifyFindRefresh();
+    },
+    [notifyFindRefresh],
+  );
 
   /** Markdown 单元格在源码/预览之间切换；默认源码，只有用户点「预览」才渲染 */
   const toggleMarkdownPreview = useCallback((cellId: string) => {
@@ -805,6 +1202,88 @@ function NotebookModeView({
         ?.scrollIntoView({ block: "nearest" });
     });
   }, []);
+
+  /**
+   * 命中行滚到视口上方 1/3。
+   * 单元格编辑器按内容自动增高、没有内部滚动条，Monaco 的 reveal 不会产出滚动，
+   * 所以用「行在编辑器内容里的像素位置 + 编辑器在滚动容器里的偏移」算目标。
+   */
+  const scrollToCellLine = useCallback((cellId: string, line: number) => {
+    requestAnimationFrame(() => {
+      const scroll = scrollRef.current;
+      const cellEl = rootRef.current?.querySelector(`[data-cell-id="${cellId}"]`);
+      if (!scroll) return;
+      const editor = editorsRef.current.get(cellId);
+      if (!editor || !cellEl) {
+        cellEl?.scrollIntoView({ block: "center" });
+        return;
+      }
+      try {
+        const dom = editor.getDomNode();
+        if (!dom) return;
+        const top =
+          dom.getBoundingClientRect().top -
+          scroll.getBoundingClientRect().top +
+          scroll.scrollTop;
+        const target = top + editor.getTopForLineNumber(line) - scroll.clientHeight * 0.33;
+        scroll.scrollTo({ top: Math.max(0, target) });
+      } catch {
+        cellEl.scrollIntoView({ block: "center" });
+      }
+    });
+  }, []);
+
+  const openFind = useCallback(() => {
+    // 还没解析完（docRef 为空）时不开框：交给 Monaco 自己的默认行为
+    if (!docRef.current) return;
+    // 只在第一次打开时记住来源单元格；重复 Ctrl+F 只是把焦点抢回输入框
+    if (!findOpen) findReturnCellRef.current = focusedCellIdRef.current;
+    setFindOpen(true);
+    setFindSignal((signal) => signal + 1);
+  }, [findOpen]);
+
+  const closeFind = useCallback((cellId?: string) => {
+    setFindOpen(false);
+    const target = cellId ?? findReturnCellRef.current;
+    findReturnCellRef.current = null;
+    if (!target) return;
+    requestAnimationFrame(() => {
+      editorsRef.current.get(target)?.focus();
+    });
+  }, []);
+
+  // 传给查找框的 getter 必须稳定：否则每次父组件渲染都会触发一遍重扫
+  const getFindCells = useCallback(() => docRef.current?.cells ?? [], []);
+  const getFindEditors = useCallback(() => editorsRef.current, []);
+
+  // Ctrl+F 在窗口捕获阶段接管：否则 Monaco 会在当前单元格打开它自己的查找框
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      notebookPointerRef.current = Boolean(rootRef.current?.contains(event.target as Node));
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "f") return;
+      const active = document.activeElement;
+      if (!rootRef.current || !active) return;
+      // 点到 Markdown 预览 / 输出这类不可聚焦区域后 activeElement 是 body：
+      // 指针最后落在 Notebook 内就按“在 Notebook 里”处理；没分屏时 body 焦点也归它
+      const engaged =
+        rootRef.current.contains(active) ||
+        (active === document.body && (notebookPointerRef.current || !isSplit));
+      if (!engaged) return;
+      if (!docRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openFind();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [isSplit, openFind]);
 
   const updateKernelState = useCallback((next: KernelState) => {
     kernelStateRef.current = next;
@@ -1152,8 +1631,20 @@ function NotebookModeView({
       ref={rootRef}
       tabIndex={0}
       onKeyDown={handleRootKeyDown}
-      className="flex h-full min-h-0 flex-col bg-primary outline-none"
+      className="relative flex h-full min-h-0 flex-col bg-primary outline-none"
     >
+      {findOpen && (
+        <NotebookFindBar
+          getCells={getFindCells}
+          getEditors={getFindEditors}
+          ensureSourceView={showMarkdownSource}
+          scrollToCellLine={scrollToCellLine}
+          refreshRef={findRefreshRef}
+          focusSignal={findSignal}
+          revision={docVersion}
+          onClose={closeFind}
+        />
+      )}
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-surface/20 px-3 py-1.5">
         <FileCode2 size={14} className="shrink-0 text-accent" />
         <span className="max-w-[220px] truncate text-xs font-medium text-text-primary">
@@ -1273,7 +1764,7 @@ function NotebookModeView({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-4">
           {doc.cells.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
@@ -1434,6 +1925,7 @@ function NotebookModeView({
                         onFocus={handleEditorFocus}
                         onBlur={handleEditorBlur}
                         onReady={handleEditorReady}
+                        onDispose={handleEditorDispose}
                       />
                     )}
                   </div>
