@@ -8,6 +8,8 @@ import MaterialFileIcon from "./MaterialFileIcon";
 import { MessagesSquare } from "lucide-react";
 import { detectLanguage, isChatTab, type FileTab } from "@/types";
 import { saveTab } from "@/services/editorSave";
+import { formatTimestampName } from "@/utils/format";
+import { getFileExtension } from "@/utils/path";
 
 const buildChildPath = (basePath: string, fileName: string) => {
   if (/[\\/]$/.test(basePath)) {
@@ -324,16 +326,10 @@ const tabs = useEditorStore(s => s.tabs);
       },
     ];
   }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, isSecondary, revealPathInSidebar]);
-  const handleDoubleClick = useCallback(async () => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
-
-    const fileName = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}.md`;
+  const handleDoubleClick = useCallback(async (tab: FileTab) => {
+    // 与点击的标签页保持同一文件类型：聊天标签页没有文件后缀，仍按 md 新建
+    const extension = isChatTab(tab) ? ".md" : getFileExtension(tab.name);
+    const fileName = `${formatTimestampName()}${extension}`;
     const savePath = defaultSavePath || defaultFolders[0]?.path || "";
     if (!savePath) {
       showNotification("请先在设置中配置默认文件保存路径", "error");
@@ -385,7 +381,7 @@ const tabs = useEditorStore(s => s.tabs);
                   : "bg-secondary text-text-muted hover:text-text-secondary hover:bg-surface/50"
               } ${hideClose ? "tab-no-close" : ""} ${hideName ? "tab-icon-only" : ""}`}
               onClick={() => setActive(tab.id)}
-              onDoubleClick={handleDoubleClick}
+              onDoubleClick={() => handleDoubleClick(tab)}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
               onMouseEnter={() => !isChatTab(tab) && setHoveredPath(tab.path)}
               onMouseLeave={() => setHoveredPath(null)}

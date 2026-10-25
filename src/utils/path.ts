@@ -17,6 +17,17 @@ export const normalizeUniquePaths = (paths: string[]) =>
   Array.from(new Set(paths.map(normalizePath).filter(Boolean)));
 
 /**
+ * 取文件名最后一段扩展名（含前导点）。没有有效扩展名时返回空字符串：
+ * `.gitignore` 这类隐藏文件、`name.` 这类结尾无字符的名字都按无扩展名处理。
+ */
+export function getFileExtension(fileName: string): string {
+  const baseName = fileName.split(/[/\\]/).pop() ?? "";
+  const dotIndex = baseName.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === baseName.length - 1) return "";
+  return baseName.slice(dotIndex);
+}
+
+/**
  * 折叠路径里的 `.` 与 `..` 段（纯字符串处理，不访问文件系统）。
  *
  * markdown 里跨文件夹引用是 `../A/Attachment/x.png` 这种形式，而 Tauri 的 asset 协议
