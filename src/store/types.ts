@@ -99,6 +99,8 @@ export interface EditorState {
   customFontApplyToUi: boolean;
   /** 会话面板数据（侧边栏标签与主区视图共享） */
   chatSessions: ChatSession[];
+  /** 会话 JSONL 所在目录（工作区 `.oops/sessions` 或应用数据回退目录） */
+  chatSessionDir: string;
   chatActiveSessionId: number | null;
   chatMessages: ChatMessage[];
   chatIsLoading: boolean;

@@ -95,6 +95,16 @@ export function getChatSessions(): Promise<ChatSession[]> {
   return invoke("get_chat_sessions");
 }
 
+/** 同步工作区根目录；后端据此把会话存进 `<root>/.oops/sessions/` */
+export function setChatRoots(roots: string[]): Promise<string> {
+  return invoke("set_chat_roots", { roots });
+}
+
+/** 当前会话文件所在目录（正斜杠），用于刷新文件树 */
+export function getChatSessionDir(): Promise<string> {
+  return invoke("get_chat_session_dir");
+}
+
 export function createChatSession(title?: string): Promise<ChatSession> {
   return invoke("add_chat_session", { title: title ?? null });
 }
@@ -105,6 +115,16 @@ export function renameChatSession(id: number, title: string): Promise<ChatSessio
 
 export function deleteChatSession(id: number): Promise<void> {
   return invoke("delete_chat_session", { id });
+}
+
+/** 导出单个会话到指定路径（自动补 .jsonl），返回实际写入路径 */
+export function exportChatSession(id: number, targetPath: string): Promise<string> {
+  return invoke("export_chat_session", { id, targetPath });
+}
+
+/** 导出全部会话到指定目录，返回导出数量 */
+export function exportAllChatSessions(targetDir: string): Promise<number> {
+  return invoke("export_all_chat_sessions", { targetDir });
 }
 
 export function getChatMessages(sessionId: number): Promise<ChatMessage[]> {

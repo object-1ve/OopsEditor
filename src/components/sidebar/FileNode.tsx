@@ -2,12 +2,13 @@
  * FileNode - Recursive file/directory entry in the sidebar
  */
 import { useState, useEffect, useCallback, useMemo, memo, useRef } from "react";
-import { ChevronRight, ChevronDown } from "lucide-react";
+import { ChevronRight, ChevronDown, MessagesSquare } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "@/store/editor";
 import { normalizePath, sortTreeEntries, getRenameSelectionEnd, revealFlashClass } from "./sidebarUtils";
 import type { DirEntry, SidebarRevealHighlight } from "./sidebarUtils";
 import MaterialFileIcon from "../MaterialFileIcon";
+import { chatTabId, sessionIdFromSessionFilePath } from "@/components/chat/chatTab";
 
 /** 缩进引导线：depth 为祖先层级，hasMore 表示该层级是否还有后续兄弟 */
 interface GuideLevel {
@@ -53,6 +54,14 @@ const FileNode = memo(function FileNode({
   const sidebarSortOrder = useEditorStore((s) => s.sidebarSortOrder);
   const tabs = useEditorStore((s) => s.tabs);
   const secondaryTabs = useEditorStore((s) => s.secondaryTabs);
+  const sessionId = !is_dir ? sessionIdFromSessionFilePath(path) : null;
+  const sessionTitle = useEditorStore((s) =>
+    sessionId === null
+      ? undefined
+      : s.chatSessions.find((item) => item.id === sessionId)?.title,
+  );
+  const displayName = sessionTitle ?? name;
+  const isSessionFile = sessionId !== null;
   const isOpen = expandedFolders.includes(path);
   const isCutSource = !!cutSourcePaths?.includes(path);
   const isSelected = selectedPaths.includes(path);
@@ -89,14 +98,24 @@ const FileNode = memo(function FileNode({
   }, [isOpen, refreshChildren]);
 
   useEffect(() => {
+    if (!isRenaming) setNewName(displayName);
+  }, [displayName, isRenaming]);
+
+  useEffect(() => {
     if (isRenaming && inputRef.current) {
       inputRef.current.focus();
-      inputRef.current.setSelectionRange(0, getRenameSelectionEnd(name, is_dir));
+      inputRef.current.setSelectionRange(0, getRenameSelectionEnd(displayName, is_dir || isSessionFile));
     }
-  }, [isRenaming, is_dir, name]);
+  }, [isRenaming, is_dir, displayName, isSessionFile]);
 
   const handleRename = useCallback(async () => {
-    if (newName === name || !newName.trim()) {
+    if (newName === displayName || !newName.trim()) {
+      setIsRenaming(false);
+      return;
+    }
+    // 会话文件只改会话标题（JSONL 文件名是 id，改了会丢失会话）
+    if (sessionId !== null) {
+      await useEditorStore.getState().renameChatSession(sessionId, newName.trim());
       setIsRenaming(false);
       return;
     }
@@ -121,15 +140,16 @@ const FileNode = memo(function FileNode({
     } catch (err) {
       showNotification(`重命名失败: ${err}`, "error");
     }
-  }, [newName, name, path, is_dir, onRefresh, rebasePinnedFilePath, rebasePinnedFolderPaths, replaceTabFileLocation, showNotification, tabs, secondaryTabs]);
+  }, [newName, displayName, name, sessionId, path, is_dir, onRefresh, rebasePinnedFilePath, rebasePinnedFolderPaths, replaceTabFileLocation, showNotification, tabs, secondaryTabs]);
 
   const isActive = useMemo(() => {
+    if (isSessionFile) return activeTabId === chatTabId(sessionId);
     if (!activeTabId) return false;
     const activePath = activeTabId.endsWith("#base64")
       ? activeTabId.slice(0, -7)
       : activeTabId;
     return normalizePath(activePath) === normalizePath(path);
-  }, [activeTabId, path]);
+  }, [activeTabId, path, isSessionFile, sessionId]);
 
   useEffect(() => {
     registerEntry({ path, name, is_dir, size, modified_at });
@@ -174,7 +194,7 @@ const FileNode = memo(function FileNode({
           ...(isCutSource ? { boxShadow: "inset 0 -1px 0 0 rgba(184,90,62,0.55)" } : {}),
         }}
         data-sidebar-path={path}
-        draggable
+        draggable={!isSessionFile}
         onClick={(e) => onRowClick(e, { path, name, is_dir, size, modified_at })}
         onDragStart={(e) => onItemDragStart(e, { path, name, is_dir, size, modified_at })}
         onDragEnd={onItemDragEnd}
@@ -220,7 +240,11 @@ const FileNode = memo(function FileNode({
         ) : (
           <>
             <div className="w-[14px] shrink-0" />
-            <MaterialFileIcon name={name} path={path} size={16} className="shrink-0" />
+            {isSessionFile ? (
+              <MessagesSquare size={14} className="shrink-0 text-accent/80" />
+            ) : (
+              <MaterialFileIcon name={name} path={path} size={16} className="shrink-0" />
+            )}
           </>
         )}
 
@@ -234,7 +258,7 @@ const FileNode = memo(function FileNode({
             onKeyDown={(e) => {
               if (e.key === "Enter") handleRename();
               if (e.key === "Escape") {
-                setNewName(name);
+                setNewName(displayName);
                 setIsRenaming(false);
               }
             }}
@@ -243,7 +267,7 @@ const FileNode = memo(function FileNode({
           />
         ) : (
           <div className="flex min-w-0 flex-1 items-center gap-1">
-            <span className="truncate">{name}</span>
+            <span className="truncate" title={isSessionFile ? path : undefined}>{displayName}</span>
             {isPinned && (
               <span className="shrink-0 rounded bg-accent/10 px-1 py-0.5 text-[9px] leading-none text-accent">置顶</span>
             )}

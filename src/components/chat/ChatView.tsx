@@ -5,7 +5,7 @@
  * 不再依赖全局视图开关；消息在标签激活时按需加载。
  */
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Copy, MessagesSquare, Trash2, X } from "lucide-react";
+import { Copy, Download, MessagesSquare, Trash2, X } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import { getChatMessages } from "@/services/chat";
 import { formatChatDateTime, formatDayDivider, needsTimeDivider } from "@/utils/chatTime";
@@ -15,6 +15,7 @@ import MessageBubble from "./MessageBubble";
 import type { ChatMessageActions } from "./MessageBubble";
 import { openChatFile, previewChatImage, revealChatFile } from "./chatOpen";
 import { chatTabId, sessionIdFromChatTabPath } from "./chatTab";
+import { exportSessionToJsonl } from "./chatExport";
 
 export default function ChatView() {
   const sessions = useEditorStore((s) => s.chatSessions);
@@ -111,7 +112,7 @@ export default function ChatView() {
           <MessagesSquare size={22} />
         </div>
         <p className="text-sm text-text-secondary">
-          {isLoading ? "正在加载会话..." : "从左侧会话列表选择或新建会话"}
+          {isLoading ? "正在加载会话..." : "从左侧文件树打开会话，或新建会话"}
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -138,6 +139,13 @@ export default function ChatView() {
             {formatChatDateTime(activeSession.updated_at)} · {activeSession.message_count} 条消息
           </div>
         </div>
+        <button
+          onClick={() => void exportSessionToJsonl(activeSession, showNotification)}
+          title="导出为 JSONL"
+          className="p-1.5 rounded-lg text-text-muted hover:text-accent hover:bg-surface transition-colors cursor-pointer"
+        >
+          <Download size={13} />
+        </button>
         <button
           onClick={() => void copyConversation()}
           title="复制整个会话"

@@ -1,8 +1,9 @@
 //! 会话面板数据层：会话 / 消息以 JSONL 文件存储，聊天图片附件落盘。
 //!
-//! 每个会话一个 `<id>.jsonl`（应用数据目录 `chat-sessions/`）：
-//! 第一行是会话元数据（`{"type":"session",...}`），之后每行一条消息。
-//! 消息写盘时整文件原子替换（临时文件 + rename），崩溃不会留下半个会话。
+//! 每个会话一个 `<id>.jsonl`：第一行是会话元数据（`{"type":"session",...}`），
+//! 之后每行一条消息。有工作区根目录时存到 `<root>/.oops/sessions/`，会话因此
+//! 作为真实文件出现在左侧文件树；尚未添加工作区时回退到应用数据目录
+//! `chat-sessions/`。消息写盘时整文件原子替换（临时文件 + rename），崩溃不会留下半个会话。
 //!
 //! - 会话按「最近编辑时间」(updated_at) 倒序展示，消息按写入顺序正序展示；
 //! - 消息文本可编辑，编辑后 `edited = true` 且 `updated_at` 前进，`created_at` 保持不变；
@@ -190,8 +191,13 @@ fn normalized_role(raw: Option<&str>) -> String {
 }
 // ── JSONL 会话存储 ─────────────────────────────────────────────
 
-/// 会话目录名（位于应用数据目录下）
+/// 会话目录名（无工作区时位于应用数据目录下）
 const CHAT_SESSION_DIR: &str = "chat-sessions";
+/// 工作区内的会话目录：`<root>/.oops/sessions/`
+const WORKSPACE_META_DIR: &str = ".oops";
+const WORKSPACE_SESSION_DIR: &str = "sessions";
+/// 记住当前选定的工作区会话根，避免根目录换序时搬动已有会话
+const CHAT_SESSION_ROOT_FILE: &str = "chat-session-root";
 /// 会话文件首行的类型标记
 const SESSION_RECORD_TYPE: &str = "session";
 /// 旧库迁移完成标记：有了它就不再回读 SQLite，避免删掉的会话被旧库重新“复活”
@@ -201,6 +207,9 @@ const STORE_STATE_FILE: &str = ".state.json";
 
 /// 所有会话文件操作串行化：同一时刻只允许一个读-改-写，避免互相覆盖
 static CHAT_SESSION_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// 当前工作区根目录，由前端在启动和根目录变化时同步
+static CHAT_ROOTS: Lazy<Mutex<Vec<PathBuf>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 /// 会话文件首行：会话元数据（后续每行一条消息）
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -225,14 +234,75 @@ struct SessionFile {
     messages: Vec<ChatMessage>,
 }
 
-fn chat_session_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_dir = app
-        .path()
+fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
         .app_data_dir()
-        .map_err(|e| format!("无法获取应用数据目录: {}", e))?;
-    let dir = app_dir.join(CHAT_SESSION_DIR);
+        .map_err(|e| format!("无法获取应用数据目录: {}", e))
+}
+
+/// 旧版/无工作区时的会话目录（应用数据目录下）
+fn legacy_chat_session_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app_data_dir(app)?.join(CHAT_SESSION_DIR);
     fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败: {}", e))?;
     Ok(dir)
+}
+
+/// 工作区内的会话目录：`<root>/.oops/sessions/`
+fn workspace_chat_session_dir(root: &Path) -> PathBuf {
+    root.join(WORKSPACE_META_DIR).join(WORKSPACE_SESSION_DIR)
+}
+
+fn normalized_path_string(path: &Path) -> String {
+    to_slash(path).trim_end_matches('/').to_lowercase()
+}
+
+fn same_fs_path(a: &Path, b: &Path) -> bool {
+    normalized_path_string(a) == normalized_path_string(b)
+}
+
+fn read_session_root(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    let path = app_data_dir(app)?.join(CHAT_SESSION_ROOT_FILE);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("读取会话存储位置失败 {}: {}", path.display(), e))?;
+    let root = raw.trim();
+    if root.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(PathBuf::from(root)))
+}
+
+fn write_session_root(app: &AppHandle, root: &Path) -> Result<(), String> {
+    let path = app_data_dir(app)?.join(CHAT_SESSION_ROOT_FILE);
+    fs::write(&path, to_slash(root))
+        .map_err(|e| format!("保存会话存储位置失败 {}: {}", path.display(), e))
+}
+
+/// 会话文件当前所在目录：
+/// - 已选定的工作区根目录仍在工作区里时，使用 `<root>/.oops/sessions/`；
+/// - 否则使用第一个有效的工作区根目录；
+/// - 还没有工作区时回退到应用数据目录，保证聊天仍可用。
+fn chat_session_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let roots = CHAT_ROOTS.lock().clone();
+
+    if let Some(root) = read_session_root(app)? {
+        let root_is_known = roots.is_empty() || roots.iter().any(|r| same_fs_path(r, &root));
+        if root_is_known && root.is_dir() {
+            let dir = workspace_chat_session_dir(&root);
+            fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败: {}", e))?;
+            return Ok(dir);
+        }
+    }
+
+    if let Some(root) = roots.iter().find(|root| root.is_dir()) {
+        let dir = workspace_chat_session_dir(root);
+        fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败: {}", e))?;
+        return Ok(dir);
+    }
+
+    legacy_chat_session_dir(app)
 }
 
 /// 加锁后执行一次会话目录操作（读改写必须串行）
@@ -240,9 +310,224 @@ fn with_chat_store<T>(
     app: &AppHandle,
     action: impl FnOnce(&Path) -> Result<T, String>,
 ) -> Result<T, String> {
-    let dir = chat_session_dir(app)?;
+    // 先拿锁再解析目录：避免 set_chat_roots 迁移到一半时读到旧目录
     let _guard = CHAT_SESSION_LOCK.lock();
+    let dir = chat_session_dir(app)?;
     action(&dir)
+}
+
+/// 跨盘/跨目录移动文件；目标已存在时保留目标，不覆盖用户文件。
+fn move_file_if_absent(source: &Path, target: &Path) -> Result<bool, String> {
+    if target.exists() {
+        return Ok(false);
+    }
+    match fs::rename(source, target) {
+        Ok(()) => Ok(true),
+        Err(_) => {
+            fs::copy(source, target)
+                .map_err(|e| format!("迁移会话文件失败 {}: {}", source.display(), e))?;
+            fs::remove_file(source)
+                .map_err(|e| format!("清理旧会话文件失败 {}: {}", source.display(), e))?;
+            Ok(true)
+        }
+    }
+}
+
+/// 把一个会话目录里的 JSONL 和自增状态合并到目标目录（用于旧数据迁移 / 换工作区）。
+/// 返回实际迁移的会话文件数；旧 SQLite 迁移标记会一并搬到目标目录，避免旧会话被重新导入。
+fn migrate_sessions_to(source: &Path, target: &Path) -> Result<usize, String> {
+    if !source.is_dir() || same_fs_path(source, target) {
+        return Ok(0);
+    }
+    fs::create_dir_all(target).map_err(|e| format!("创建会话目录失败: {}", e))?;
+
+    let mut moved = 0;
+    let entries = fs::read_dir(source).map_err(|e| format!("读取会话目录失败: {}", e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取会话目录失败: {}", e))?;
+        let path = entry.path();
+        if !path.is_file()
+            || path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
+        {
+            continue;
+        }
+        let file_name = entry.file_name();
+        if move_file_if_absent(&path, &target.join(file_name))? {
+            moved += 1;
+        }
+    }
+
+    let source_state = read_store_state(source)?;
+    if source_state.max_session_id > 0 || source_state.max_message_id > 0 {
+        let mut target_state = read_store_state(target)?;
+        target_state.max_session_id = target_state.max_session_id.max(source_state.max_session_id);
+        target_state.max_message_id = target_state.max_message_id.max(source_state.max_message_id);
+        write_store_state(target, &target_state)?;
+    }
+    let source_state_path = source.join(STORE_STATE_FILE);
+    if source_state_path.exists() {
+        fs::remove_file(&source_state_path)
+            .map_err(|e| format!("清理旧会话状态失败 {}: {}", source_state_path.display(), e))?;
+    }
+
+    // 旧 SQLite 迁移标记必须跟着会话走，否则下次启动会把已删除的旧会话重新导回来
+    let source_marker = source.join(SQLITE_MIGRATION_MARKER);
+    if source_marker.exists() {
+        let target_marker = target.join(SQLITE_MIGRATION_MARKER);
+        if !target_marker.exists() {
+            move_file_if_absent(&source_marker, &target_marker)?;
+        }
+    }
+
+    Ok(moved)
+}
+
+/// 前端同步工作区根目录：选定/保留会话存储根，并把旧目录里的会话迁进去。
+/// 返回当前实际使用的会话目录（正斜杠）。
+#[tauri::command]
+pub fn set_chat_roots(app: AppHandle, roots: Vec<String>) -> Result<String, String> {
+    let roots: Vec<PathBuf> = roots
+        .into_iter()
+        .filter(|root| !root.trim().is_empty())
+        .map(|root| PathBuf::from(root.trim()))
+        .collect();
+
+    let previous = read_session_root(&app)?;
+    let selected = previous
+        .clone()
+        .filter(|root| root.is_dir() && roots.iter().any(|item| same_fs_path(item, root)))
+        .or_else(|| roots.iter().find(|root| root.is_dir()).cloned());
+
+    *CHAT_ROOTS.lock() = roots;
+    let Some(root) = selected else {
+        return Ok(to_slash(&chat_session_dir(&app)?));
+    };
+
+    let target = workspace_chat_session_dir(&root);
+    fs::create_dir_all(&target).map_err(|e| format!("创建会话目录失败: {}", e))?;
+
+    let _guard = CHAT_SESSION_LOCK.lock();
+    // 旧版应用数据目录 → 工作区
+    migrate_sessions_to(&legacy_chat_session_dir(&app)?, &target)?;
+    // 原会话根不再属于工作区时，把会话一起搬到新根
+    if let Some(previous_root) = previous {
+        if !same_fs_path(&previous_root, &root) {
+            migrate_sessions_to(&workspace_chat_session_dir(&previous_root), &target)?;
+        }
+    }
+    write_session_root(&app, &root)?;
+    Ok(to_slash(&target))
+}
+
+/// 当前会话文件目录（正斜杠）；没有工作区时返回应用数据目录。
+#[tauri::command]
+pub fn get_chat_session_dir(app: AppHandle) -> Result<String, String> {
+    let _guard = CHAT_SESSION_LOCK.lock();
+    Ok(to_slash(&chat_session_dir(&app)?))
+}
+
+/// 导出文件名统一以 `.jsonl` 结尾；用户没写扩展名时补上，已有其他扩展名时保留原名再追加。
+fn ensure_jsonl_extension(path: &Path) -> PathBuf {
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+    {
+        return path.to_path_buf();
+    }
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".jsonl");
+    PathBuf::from(name)
+}
+
+/// 批量导出的可读文件名：`session-<id>-<清洗后的标题>.jsonl`
+fn export_session_stem(title: &str, id: i64) -> String {
+    let cleaned: String = title
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.').trim();
+    let stem: String = trimmed.chars().take(60).collect();
+    let stem = stem.trim();
+    if stem.is_empty() {
+        format!("session-{id}")
+    } else {
+        format!("session-{id}-{stem}")
+    }
+}
+
+fn export_session_file(source: &Path, target: &Path) -> Result<PathBuf, String> {
+    if !source.is_file() {
+        return Err(format!("会话文件不存在: {}", source.display()));
+    }
+    let target = ensure_jsonl_extension(target);
+    if same_fs_path(source, &target) {
+        return Ok(target);
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("创建导出目录失败 {}: {}", parent.display(), e))?;
+    }
+    fs::copy(source, &target)
+        .map_err(|e| format!("导出会话失败 {}: {}", target.display(), e))?;
+    Ok(target)
+}
+
+fn export_all_sessions_to(source_dir: &Path, target_dir: &Path) -> Result<usize, String> {
+    if same_fs_path(source_dir, target_dir) {
+        return Err("导出目录不能是会话存储目录本身".to_string());
+    }
+    fs::create_dir_all(target_dir)
+        .map_err(|e| format!("创建导出目录失败 {}: {}", target_dir.display(), e))?;
+
+    let mut exported = 0usize;
+    for id in session_ids(source_dir)? {
+        let source = session_file_path(source_dir, id);
+        let header = read_session_header(&source)?;
+        let base = export_session_stem(&header.title, id);
+        let mut target = target_dir.join(format!("{base}.jsonl"));
+        let mut suffix = 2;
+        while target.exists() {
+            target = target_dir.join(format!("{base}-{suffix}.jsonl"));
+            suffix += 1;
+        }
+        fs::copy(&source, &target)
+            .map_err(|e| format!("导出会话失败 {}: {}", target.display(), e))?;
+        exported += 1;
+    }
+    Ok(exported)
+}
+
+/// 导出单个会话为 JSONL；返回实际写入路径。
+#[tauri::command]
+pub fn export_chat_session(
+    app: AppHandle,
+    id: i64,
+    target_path: String,
+) -> Result<String, String> {
+    let _guard = CHAT_SESSION_LOCK.lock();
+    let dir = chat_session_dir(&app)?;
+    Ok(to_slash(&export_session_file(
+        &session_file_path(&dir, id),
+        Path::new(&target_path),
+    )?))
+}
+
+/// 导出全部会话到指定目录，每个会话一个 JSONL；返回导出数量。
+#[tauri::command]
+pub fn export_all_chat_sessions(
+    app: AppHandle,
+    target_dir: String,
+) -> Result<usize, String> {
+    let _guard = CHAT_SESSION_LOCK.lock();
+    let dir = chat_session_dir(&app)?;
+    export_all_sessions_to(&dir, Path::new(&target_dir))
 }
 
 fn session_file_path(dir: &Path, id: i64) -> PathBuf {
@@ -1587,6 +1872,94 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 旧应用数据目录里的会话迁进工作区：文件、状态一起走，id 不复用
+    #[test]
+    fn migrates_sessions_into_workspace_directory() {
+        let legacy = store();
+        let workspace = temp_dir();
+        let target = workspace_chat_session_dir(&workspace);
+
+        let session = insert_session(&legacy, "旧会话").unwrap();
+        insert_message(&legacy, text_message(session.id, "旧消息")).unwrap();
+        fs::write(legacy.join(SQLITE_MIGRATION_MARKER), b"1").unwrap();
+
+        let moved = migrate_sessions_to(&legacy, &target).unwrap();
+        assert_eq!(moved, 1);
+        assert!(!session_file_path(&legacy, session.id).exists());
+        assert!(!legacy.join(STORE_STATE_FILE).exists());
+        assert!(!legacy.join(SQLITE_MIGRATION_MARKER).exists());
+        assert!(target.join(SQLITE_MIGRATION_MARKER).exists());
+        assert_eq!(list_sessions(&target).unwrap().len(), 1);
+        assert_eq!(
+            load_session_file(&session_file_path(&target, session.id))
+                .unwrap()
+                .messages
+                .len(),
+            1
+        );
+
+        // 状态合并后新建会话继续用更大的 id
+        let next = insert_session(&target, "新会话").unwrap();
+        assert!(next.id > session.id);
+        // 幂等：再迁移不会产生重复文件
+        assert_eq!(migrate_sessions_to(&legacy, &target).unwrap(), 0);
+
+        fs::remove_dir_all(&legacy).unwrap();
+        fs::remove_dir_all(&workspace).unwrap();
+    }
+
+    /// 导出单个会话：自动补 .jsonl，内容与原文件逐字节一致
+    #[test]
+    fn exports_single_session_as_jsonl() {
+        let source_dir = store();
+        let session = insert_session(&source_dir, "导出验证").unwrap();
+        insert_message(&source_dir, text_message(session.id, "消息")).unwrap();
+        let source = session_file_path(&source_dir, session.id);
+
+        let target = temp_dir().join("backup").join("我的会话");
+        let exported = export_session_file(&source, &target).unwrap();
+
+        assert_eq!(exported.extension().and_then(|ext| ext.to_str()), Some("jsonl"));
+        assert_eq!(
+            fs::read_to_string(&exported).unwrap(),
+            fs::read_to_string(&source).unwrap()
+        );
+
+        fs::remove_dir_all(&source_dir).unwrap();
+        fs::remove_dir_all(exported.parent().unwrap().parent().unwrap()).unwrap();
+    }
+
+    /// 批量导出：每个会话一个带标题的文件，重名会话自动加序号
+    #[test]
+    fn exports_all_sessions_with_readable_unique_names() {
+        let source_dir = store();
+        let first = insert_session(&source_dir, "同名会话").unwrap();
+        let second = insert_session(&source_dir, "同名会话").unwrap();
+        insert_message(&source_dir, text_message(first.id, "a")).unwrap();
+
+        let target_dir = temp_dir();
+        assert_eq!(export_all_sessions_to(&source_dir, &target_dir).unwrap(), 2);
+
+        let names: Vec<String> = fs::read_dir(&target_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.iter().all(|name| name.ends_with(".jsonl")));
+        assert!(
+            names.iter().any(|name| name.contains(&format!("session-{}-", first.id))),
+            "names: {names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name.contains(&format!("session-{}-", second.id))),
+            "names: {names:?}"
+        );
+        assert!(export_all_sessions_to(&source_dir, &source_dir).is_err());
+
+        fs::remove_dir_all(&source_dir).unwrap();
+        fs::remove_dir_all(&target_dir).unwrap();
     }
 
     /// 消息 id 跨会话全局递增（编辑/删除接口只带 id）

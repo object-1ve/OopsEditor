@@ -7,6 +7,8 @@ import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
 import { buildTabId } from "@/utils/path";
 import { normalizePath } from "@/utils/path";
 import type { DefaultFolder } from "@/store/types";
+import { useEditorStore } from "@/store/editor";
+import { sessionIdFromSessionFilePath } from "@/components/chat/chatTab";
 
 export { normalizePath };
 
@@ -150,6 +152,13 @@ export async function openFileTab(
   mode: OpenMode = "text",
 ) {
   try {
+    // `.oops/sessions/*.jsonl` 是会话的落盘形态，点击应打开会话视图而不是原始 JSONL
+    const chatSessionId = sessionIdFromSessionFilePath(filePath);
+    if (chatSessionId !== null) {
+      await useEditorStore.getState().selectChatSession(chatSessionId);
+      return;
+    }
+
     const fileName = filePath.split(/[/\\]/).pop() ?? filePath;
     const detection = mode === "base64" ? { language: "plaintext" } : detectLanguage(fileName);
     const { language, unsupportedReason } = detection;
