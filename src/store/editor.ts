@@ -4,7 +4,6 @@
 import { create } from "zustand";
 import { type FileTab, isChatTab } from "@/types";
 import type { ChatSession } from "@/services/chat";
-import { getChatSessionDir, setChatRoots } from "@/services/chat";
 import { sessionIdFromChatTabPath } from "@/components/chat/chatTab";
 import { invoke } from "@tauri-apps/api/core";
 import { loadSettings } from "@/utils/settings";
@@ -59,21 +58,10 @@ const useEditorStore = create<EditorState>()((...a) => {
       // 会话已删除的标签直接丢弃。
       // 这份列表同时用于恢复文件树中的会话文件：cold start 时活动标签可能是普通文件，
       // 若不在此落库则 chatIsLoading 永远停在 true（表现为「正在加载会话...」）。
-      // 会话文件存进工作区 `.oops/sessions/`；先同步根目录，后端会顺带迁移旧数据
-      let chatSessionDir = "";
-      try {
-        chatSessionDir = await setChatRoots(settings.rootPaths || []);
-      } catch (err) {
-        console.error("同步会话存储位置失败:", err);
-      }
-
       const chatSessions = await invoke<ChatSession[]>("get_chat_sessions").catch((err) => {
         console.error("恢复会话标签失败:", err);
         return [] as ChatSession[];
       });
-      if (!chatSessionDir) {
-        chatSessionDir = await getChatSessionDir().catch(() => "");
-      }
       const sessionTitles = new Map(chatSessions.map((s) => [s.id, s.title]));
       const persistedTabs = normalizedTabs.filter(
         (tab) => !isChatTab(tab) || sessionTitles.has(sessionIdFromChatTabPath(tab.path) ?? NaN),
@@ -139,7 +127,6 @@ const useEditorStore = create<EditorState>()((...a) => {
         defaultSavePath: settings.defaultSavePath,
         captureProtection: settings.captureProtection,
         chatSessions,
-        chatSessionDir,
         chatIsLoading: false,
         maxRecentFolders: settings.maxRecentFolders,
         recentFiles: settings.recentFiles,

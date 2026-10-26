@@ -13,7 +13,6 @@ import {
   deleteChatSession,
   editChatMessage,
   getChatMessages,
-  getChatSessionDir,
   getChatSessions,
   renameChatSession,
   sendChatFileMessage,
@@ -24,7 +23,7 @@ import {
   type ChatMessage,
   type ChatSession,
 } from "@/services/chat";
-import { chatSessionParentDir, chatTabId, isWorkspaceChatSessionDir } from "@/components/chat/chatTab";
+import { chatTabId } from "@/components/chat/chatTab";
 import { formatTimestampName } from "@/utils/format";
 
 export const createChatSlice: StateCreator<
@@ -34,7 +33,6 @@ export const createChatSlice: StateCreator<
   Pick<
     EditorState,
     | "chatSessions"
-    | "chatSessionDir"
     | "chatActiveSessionId"
     | "chatMessages"
     | "chatIsLoading"
@@ -54,7 +52,6 @@ export const createChatSlice: StateCreator<
   >
 > = (set, get) => ({
   chatSessions: [],
-  chatSessionDir: "",
   chatActiveSessionId: null,
   chatMessages: [],
   chatIsLoading: true,
@@ -63,14 +60,8 @@ export const createChatSlice: StateCreator<
   loadChatSessions: async () => {
     set({ chatIsLoading: true });
     try {
-      const [sessions, sessionDir] = await Promise.all([
-        getChatSessions(),
-        getChatSessionDir().catch(() => ""),
-      ]);
-      set({
-        chatSessions: sessions,
-        chatSessionDir: sessionDir || get().chatSessionDir,
-      });
+      const sessions = await getChatSessions();
+      set({ chatSessions: sessions });
       return sessions;
     } catch (err) {
       get().showNotification(`加载会话失败: ${String(err)}`, "error");
@@ -105,15 +96,6 @@ export const createChatSlice: StateCreator<
         chatMessages: [],
       }));
       get().openChatSessionTab(session.id);
-
-      // 会话现在就是工作区里的真实文件：展开并刷新 `.oops/sessions`
-      const sessionDir = get().chatSessionDir;
-      if (sessionDir && isWorkspaceChatSessionDir(sessionDir)) {
-        get().expandFolders([chatSessionParentDir(sessionDir), sessionDir]);
-        window.dispatchEvent(
-          new CustomEvent("file-refresh", { detail: { path: sessionDir } }),
-        );
-      }
       return session;
     } catch (err) {
       get().showNotification(`新建会话失败: ${String(err)}`, "error");
@@ -153,13 +135,6 @@ export const createChatSlice: StateCreator<
         chatMessages: wasActive ? [] : get().chatMessages,
       });
       get().showNotification(`已删除会话「${target?.title ?? id}」`, "success");
-
-      const sessionDir = get().chatSessionDir;
-      if (sessionDir) {
-        window.dispatchEvent(
-          new CustomEvent("file-refresh", { detail: { path: sessionDir } }),
-        );
-      }
     } catch (err) {
       get().showNotification(`删除会话失败: ${String(err)}`, "error");
     }

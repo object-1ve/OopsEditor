@@ -112,7 +112,7 @@ export default function ChatView() {
           <MessagesSquare size={22} />
         </div>
         <p className="text-sm text-text-secondary">
-          {isLoading ? "正在加载会话..." : "从左侧文件树打开会话，或新建会话"}
+          {isLoading ? "正在加载会话..." : "从左侧「会话」分组打开会话，或新建会话"}
         </p>
         <div className="flex items-center gap-2">
           <button

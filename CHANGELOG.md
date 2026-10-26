@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- 会话改用应用私有目录（`chat-sessions/`）存储，不再写进工作区 `.oops/sessions/`；
+  文件名是时间戳 + 随机后缀，会话 id 存在内容里，首次启动自动把旧工作区会话搬进私有目录
+- 会话文件改为**事件日志追加写**（`session` / `title` / `message` / `message-edit` /
+  `message-favorite` / `message-delete`），读取时按序 fold；坏行与杂物文件跳过，
+  一个坏文件不再让整个会话列表或搜索失败
+- 会话列表改用 `chat_index` 派生索引（按 mtime + size 增量刷新，索引丢失只影响速度）
+- 侧边栏新增虚拟「会话」分组（新建 / 重命名 / 删除 / 导出），文件树不再展示 `.oops`
+
 ## [0.1.41] - 2026-08-07
 
 ### Fixed

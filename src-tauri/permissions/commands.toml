@@ -77,8 +77,6 @@ commands.allow = [
   "delete_upgrade_item",
   "export_upgrade_items_json",
   "import_upgrade_items_json",
-  "set_chat_roots",
-  "get_chat_session_dir",
   "export_chat_session",
   "export_all_chat_sessions",
   "get_chat_sessions",

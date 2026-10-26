@@ -219,8 +219,8 @@ mod chat;
 use chat::{
     add_chat_file_message, add_chat_image_message, add_chat_image_message_base64, add_chat_message,
     add_chat_session, delete_chat_message, delete_chat_session, export_all_chat_sessions,
-    export_chat_session, get_chat_messages, get_chat_session_dir, get_chat_sessions,
-    rename_chat_session, search_chat_messages, set_chat_message_favorite, set_chat_roots,
+    export_chat_session, get_chat_messages, get_chat_sessions,
+    rename_chat_session, search_chat_messages, set_chat_message_favorite,
     update_chat_message,
 };
 
@@ -342,19 +342,8 @@ struct FileInfo {
     modified_at: u64,
 }
 
-/// 会话存储目录（`<root>/.oops/sessions`）里的内部文件不对文件树展示
-fn is_chat_session_store_dir(path: &std::path::Path) -> bool {
-    path.file_name().and_then(|name| name.to_str()) == Some("sessions")
-        && path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
-            == Some(".oops")
-}
-
 #[tauri::command]
 fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
-    let hide_chat_internals = is_chat_session_store_dir(std::path::Path::new(&path));
     let entries = fs::read_dir(&path).map_err(|e| format!("读取目录失败: {}", e))?;
     let mut result = Vec::new();
     for entry in entries {
@@ -364,10 +353,6 @@ fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "".to_string());
-        // `.state.json` / `.migrated-from-sqlite` / 临时文件是会话存储内部状态
-        if hide_chat_internals && name.starts_with('.') {
-            continue;
-        }
         let is_dir = path.is_dir();
 
         let metadata = fs::metadata(&path).map_err(|e| format!("获取元数据失败: {}", e))?;
@@ -970,8 +955,6 @@ fn generate_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         export_upgrade_items_json,
     import_upgrade_items_json,
         // 会话面板命令
-        set_chat_roots,
-        get_chat_session_dir,
         export_chat_session,
         export_all_chat_sessions,
         get_chat_sessions,

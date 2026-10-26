@@ -7,7 +7,7 @@ import {
   ExternalLink, Terminal as TerminalIcon, FilePlus, FolderPlus, Settings, Copy, Pin,
   ChevronsUp, RotateCw, ArrowDownAZ, ArrowUpAZ, Clock, FileClock, History,
   SortAsc, SortDesc, Scissors, ClipboardPaste, Eraser,
-  MessagesSquare, MessageSquarePlus, Download,
+  MessageSquarePlus,
 } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
@@ -43,11 +43,7 @@ import RecentFilesDropdown from "./sections/RecentFilesDropdown";
 import ContentSearchDialog from "./sections/ContentSearchDialog";
 import PinnedSection from "./sections/PinnedSection";
 import EmptyFolderState from "./sections/EmptyFolderState";
-import { isWorkspaceChatSessionDir, sessionIdFromSessionFilePath } from "@/components/chat/chatTab";
-import {
-  exportAllSessionsToJsonl,
-  exportSessionToJsonl,
-} from "@/components/chat/chatExport";
+import SessionsSection from "./sections/SessionsSection";
 
 /** 定位请求的轮询参数：目录子级是异步加载的，需要等待目标行渲染完成 */
 const REVEAL_POLL_INTERVAL_MS = 50;
@@ -99,8 +95,6 @@ export default function Sidebar() {
   const navigateToSearchMatch = useEditorStore((s) => s.navigateToSearchMatch);
   const selectChatSession = useEditorStore((s) => s.selectChatSession);
   const createChatSession = useEditorStore((s) => s.createChatSession);
-  const deleteChatSession = useEditorStore((s) => s.deleteChatSession);
-  const chatSessions = useEditorStore((s) => s.chatSessions);
   const setHoveredPath = useEditorStore((s) => s.setHoveredPath);
   const hoveredPath = useEditorStore((s) => s.hoveredPath);
   const setFolderExpanded = useEditorStore((s) => s.setFolderExpanded);
@@ -531,14 +525,6 @@ export default function Sidebar() {
       onConfirm: async () => {
         try {
           for (const entry of entries) {
-            const sessionId = !entry.is_dir
-              ? sessionIdFromSessionFilePath(entry.path)
-              : null;
-            if (sessionId !== null) {
-              // 会话文件由会话存储管理：走 deleteChatSession，同时关标签并刷新列表
-              await deleteChatSession(sessionId);
-              continue;
-            }
             await invoke("delete_item", { path: entry.path });
             if (entry.is_dir) removePinnedFoldersUnder(entry.path);
             else removePinnedFile(entry.path);
@@ -555,7 +541,7 @@ export default function Sidebar() {
         }
       },
     });
-  }, [contextMenu, getTargetEntries, showModal, removePinnedFile, removePinnedFoldersUnder, showNotification, parentPathOf, deleteChatSession]);
+  }, [contextMenu, getTargetEntries, showModal, removePinnedFile, removePinnedFoldersUnder, showNotification, parentPathOf]);
 
   const moveSingleItem = useCallback(
     async (
@@ -1154,63 +1140,6 @@ export default function Sidebar() {
     const isDefault = contextMenu.entry.is_dir && defaultFolders.some((f) => normalizePath(f.path) === normalizedPath);
     const isPinned = contextMenu.entry.is_dir && (isDefault || pinnedFolders.includes(normalizedPath));
     const isMulti = selectedPaths.length > 1 && selectedPaths.includes(normalizedPath);
-    // 会话文件：只提供会话操作，避免把 JSONL 当普通文件改名/移动后失联
-    const sessionId = !contextMenu.entry.is_dir
-      ? sessionIdFromSessionFilePath(contextMenu.entry.path)
-      : null;
-    if (!isMulti && sessionId !== null) {
-      const sessionTitle =
-        chatSessions.find((session) => session.id === sessionId)?.title ??
-        contextMenu.entry.name;
-      return [
-        {
-          label: "打开会话",
-          icon: <MessagesSquare size={14} />,
-          onClick: () => void selectChatSession(sessionId),
-        },
-        {
-          label: "重命名会话",
-          icon: <Edit2 size={14} />,
-          onClick: () =>
-            window.dispatchEvent(
-              new CustomEvent("file-rename", { detail: { path: contextMenu.entry.path } }),
-            ),
-        },
-        { separator: true, label: "", onClick: () => {} },
-        {
-          label: "在资源管理器中显示",
-          icon: <ExternalLink size={14} />,
-          onClick: () => void invoke("reveal_in_explorer", { path: contextMenu.entry.path }),
-        },
-        {
-          label: "复制完整路径",
-          icon: <Copy size={14} />,
-          onClick: () => void copyTextToClipboard(contextMenu.entry.path, "路径已复制到剪贴板"),
-        },
-        {
-          label: "导出为 JSONL",
-          icon: <Download size={14} />,
-          onClick: () =>
-            void exportSessionToJsonl(
-              { id: sessionId, title: sessionTitle },
-              showNotification,
-            ),
-        },
-        { separator: true, label: "", onClick: () => {} },
-        {
-          label: "删除会话",
-          icon: <Trash2 size={14} />,
-          danger: true,
-          onClick: () =>
-            showModal({
-              title: "删除会话",
-              message: `确定要永久删除会话 "${sessionTitle}" 吗？此操作无法撤销。`,
-              kind: "danger",
-              onConfirm: () => void deleteChatSession(sessionId),
-            }),
-        },
-      ];
-    }
     // 多选右键：仅提供批量操作
     if (isMulti) {
       return [
@@ -1235,16 +1164,6 @@ export default function Sidebar() {
       ];
     }
     return [
-      ...(contextMenu.entry.is_dir && isWorkspaceChatSessionDir(contextMenu.entry.path)
-        ? [
-            {
-              label: "导出全部会话为 JSONL...",
-              icon: <Download size={14} />,
-              onClick: () => void exportAllSessionsToJsonl(showNotification),
-            },
-            { separator: true, label: "", onClick: () => {} },
-          ]
-        : []),
       { label: "新建文件", icon: <FilePlus size={14} />, onClick: () => handleAction("new-file") },
       { label: "新建文件夹", icon: <FolderPlus size={14} />, onClick: () => handleAction("new-folder") },
       ...(contextMenu.entry.is_dir ? [{ label: "刷新", icon: <RotateCw size={14} />, onClick: () => handleAction("refresh") }] : []),
@@ -1281,7 +1200,7 @@ export default function Sidebar() {
       { label: "重命名", icon: <Edit2 size={14} />, onClick: () => handleAction("rename") },
       { label: "删除", icon: <Trash2 size={14} />, onClick: () => handleAction("delete"), danger: true },
     ];
-  }, [contextMenu, handleAction, pinnedFolders, rootPaths.length, handleCollapseAllFolders, clipboardItem, setClipboard, handlePaste, parentPathOf, selectedPaths, handleClipboardSelection, handleDeleteSelection, chatSessions, selectChatSession, deleteChatSession, showModal, showNotification]);
+  }, [contextMenu, handleAction, pinnedFolders, rootPaths.length, handleCollapseAllFolders, clipboardItem, setClipboard, handlePaste, parentPathOf, selectedPaths, handleClipboardSelection, handleDeleteSelection, showModal, showNotification]);
 
   const emptyAreaMenuItems = useMemo(
     () => [
@@ -1525,6 +1444,8 @@ export default function Sidebar() {
           setSelectionAnchor(null);
         }}
       >
+        <SessionsSection />
+
         <PinnedSection
           isExpanded={isPinnedExpanded}
           pinnedFiles={pinnedFiles}

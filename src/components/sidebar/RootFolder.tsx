@@ -7,7 +7,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "@/store/editor";
-import { normalizePath, sortTreeEntries } from "./sidebarUtils";
+import { normalizePath, sortTreeEntries, isHiddenTreeEntry } from "./sidebarUtils";
 import type { DirEntry, SidebarRevealHighlight } from "./sidebarUtils";
 import FileNode from "./FileNode";
 import MaterialFileIcon from "../MaterialFileIcon";
@@ -85,7 +85,7 @@ const RootFolder = memo(function RootFolder({
   const loadRoot = useCallback(async () => {
     try {
       const result = await invoke<DirEntry[]>("list_dir", { path });
-      setEntries(result);
+      setEntries(result.filter((entry) => !isHiddenTreeEntry(entry)));
     } catch (err) {
       console.error("Failed to load root:", err);
     }

@@ -1,11 +1,17 @@
-//! 会话面板数据层：会话 / 消息以 JSONL 文件存储，聊天图片附件落盘。
+//! 会话面板数据层：会话 / 消息以 JSONL 事件日志存储，聊天图片附件落盘。
 //!
-//! 每个会话一个 `<id>.jsonl`：第一行是会话元数据（`{"type":"session",...}`），
-//! 之后每行一条消息。有工作区根目录时存到 `<root>/.oops/sessions/`，会话因此
-//! 作为真实文件出现在左侧文件树；尚未添加工作区时回退到应用数据目录
-//! `chat-sessions/`。消息写盘时整文件原子替换（临时文件 + rename），崩溃不会留下半个会话。
+//! 存储策略与 omp / Claude Code 一致：**私有存储 + 派生索引 + 容错解析 + 追加写**。
 //!
-//! - 会话按「最近编辑时间」(updated_at) 倒序展示，消息按写入顺序正序展示；
+//! - 私有存储：每个会话一个 `<时间戳>_<随机后缀>.jsonl`，放在应用数据目录
+//!   `chat-sessions/` 下，不写进用户工作区；文件名只是 key，会话 id 存内容里。
+//! - 追加写：每行一条事件（`session` / `title` / `message` / `message-edit` /
+//!   `message-favorite` / `message-delete`），变更只 append，不重写整个文件；
+//!   读取时按顺序 fold 出当前状态，崩溃最多丢最后一行。
+//! - 容错解析：坏行、未知类型、无有效记录的杂物文件全部跳过，一个坏文件不会
+//!   让整个会话列表或搜索失败；旧版「header + 裸消息行」格式仍可读。
+//! - 派生索引：`chat_index` 表只缓存 (mtime,size) 命中的会话元数据，源数据永远
+//!   是文件本身；索引丢失/损坏只会变慢，结果不变。
+//!
 //! - 消息文本可编辑，编辑后 `edited = true` 且 `updated_at` 前进，`created_at` 保持不变；
 //! - 发送的**文件**只记录其本地路径（不复制、不读内容），始终指回原文件；
 //!   只有**图片**需要落盘一份副本——webview 要通过 asset 协议渲染缩略图，
@@ -18,6 +24,7 @@ use parking_lot::Mutex;
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -140,6 +147,22 @@ pub fn init_chat_schema(conn: &Connection) -> SqlResult<()> {
         )?;
     }
 
+    // 列表用的派生索引：只是 (mtime,size) 命中缓存，源数据永远是 JSONL 文件本身。
+    // 删掉这张表也只是变慢，结果不变。
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS chat_index (
+            file          TEXT PRIMARY KEY,
+            mtime_ms      INTEGER NOT NULL,
+            size          INTEGER NOT NULL,
+            id            INTEGER NOT NULL,
+            title         TEXT NOT NULL,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            message_count INTEGER NOT NULL,
+            last_message  TEXT NOT NULL
+        );",
+    )?;
+
     Ok(())
 }
 
@@ -191,25 +214,30 @@ fn normalized_role(raw: Option<&str>) -> String {
 }
 // ── JSONL 会话存储 ─────────────────────────────────────────────
 
-/// 会话目录名（无工作区时位于应用数据目录下）
+/// 会话存储目录：始终位于应用数据目录下（私有，不写进用户工作区）
 const CHAT_SESSION_DIR: &str = "chat-sessions";
-/// 工作区内的会话目录：`<root>/.oops/sessions/`
-const WORKSPACE_META_DIR: &str = ".oops";
-const WORKSPACE_SESSION_DIR: &str = "sessions";
-/// 记住当前选定的工作区会话根，避免根目录换序时搬动已有会话
-const CHAT_SESSION_ROOT_FILE: &str = "chat-session-root";
-/// 会话文件首行的类型标记
+/// 旧版把会话放在 `<root>/.oops/sessions/`；这两个常量只用于一次性导入
+const LEGACY_SESSION_ROOT_FILE: &str = "chat-session-root";
+const LEGACY_WORKSPACE_META_DIR: &str = ".oops";
+const LEGACY_WORKSPACE_SESSION_DIR: &str = "sessions";
+const WORKSPACE_IMPORT_MARKER: &str = ".imported-from-workspace";
+/// 事件记录类型：会话 / 标题 / 消息，以及三种消息变更。
+/// 全部追加写，不整文件重写；读取侧按顺序 fold 出当前状态。
 const SESSION_RECORD_TYPE: &str = "session";
+const TITLE_RECORD_TYPE: &str = "title";
+const MESSAGE_RECORD_TYPE: &str = "message";
+const MESSAGE_EDIT_RECORD_TYPE: &str = "message-edit";
+const MESSAGE_FAVORITE_RECORD_TYPE: &str = "message-favorite";
+const MESSAGE_DELETE_RECORD_TYPE: &str = "message-delete";
 /// 旧库迁移完成标记：有了它就不再回读 SQLite，避免删掉的会话被旧库重新“复活”
 const SQLITE_MIGRATION_MARKER: &str = ".migrated-from-sqlite";
 /// 自增 id 状态：会话/消息删除后也不复用 id
 const STORE_STATE_FILE: &str = ".state.json";
+/// 新会话文件名后缀的随机字节数（8 字节 → 16 位十六进制）
+const SESSION_FILE_SUFFIX_LEN: usize = 8;
 
 /// 所有会话文件操作串行化：同一时刻只允许一个读-改-写，避免互相覆盖
 static CHAT_SESSION_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-/// 当前工作区根目录，由前端在启动和根目录变化时同步
-static CHAT_ROOTS: Lazy<Mutex<Vec<PathBuf>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 /// 会话文件首行：会话元数据（后续每行一条消息）
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -240,18 +268,6 @@ fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("无法获取应用数据目录: {}", e))
 }
 
-/// 旧版/无工作区时的会话目录（应用数据目录下）
-fn legacy_chat_session_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app_data_dir(app)?.join(CHAT_SESSION_DIR);
-    fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败: {}", e))?;
-    Ok(dir)
-}
-
-/// 工作区内的会话目录：`<root>/.oops/sessions/`
-fn workspace_chat_session_dir(root: &Path) -> PathBuf {
-    root.join(WORKSPACE_META_DIR).join(WORKSPACE_SESSION_DIR)
-}
-
 fn normalized_path_string(path: &Path) -> String {
     to_slash(path).trim_end_matches('/').to_lowercase()
 }
@@ -260,49 +276,88 @@ fn same_fs_path(a: &Path, b: &Path) -> bool {
     normalized_path_string(a) == normalized_path_string(b)
 }
 
-fn read_session_root(app: &AppHandle) -> Result<Option<PathBuf>, String> {
-    let path = app_data_dir(app)?.join(CHAT_SESSION_ROOT_FILE);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("读取会话存储位置失败 {}: {}", path.display(), e))?;
-    let root = raw.trim();
-    if root.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(PathBuf::from(root)))
-}
-
-fn write_session_root(app: &AppHandle, root: &Path) -> Result<(), String> {
-    let path = app_data_dir(app)?.join(CHAT_SESSION_ROOT_FILE);
-    fs::write(&path, to_slash(root))
-        .map_err(|e| format!("保存会话存储位置失败 {}: {}", path.display(), e))
-}
-
-/// 会话文件当前所在目录：
-/// - 已选定的工作区根目录仍在工作区里时，使用 `<root>/.oops/sessions/`；
-/// - 否则使用第一个有效的工作区根目录；
-/// - 还没有工作区时回退到应用数据目录，保证聊天仍可用。
+/// 会话目录：应用数据目录下的私有目录。
+///
+/// 会话不再写进用户工作区——工作区是用户的，任何杂物（导出的 JSONL、备份、
+/// 空文件）都可能混进来；私有目录只由本应用写入。
 fn chat_session_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let roots = CHAT_ROOTS.lock().clone();
+    let dir = app_data_dir(app)?.join(CHAT_SESSION_DIR);
+    fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败: {}", e))?;
+    import_workspace_sessions(app, &dir)?;
+    Ok(dir)
+}
 
-    if let Some(root) = read_session_root(app)? {
-        let root_is_known = roots.is_empty() || roots.iter().any(|r| same_fs_path(r, &root));
-        if root_is_known && root.is_dir() {
-            let dir = workspace_chat_session_dir(&root);
-            fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败: {}", e))?;
-            return Ok(dir);
+/// 把旧版工作区会话目录里的 JSONL 搬进私有目录，并合并自增 id 状态。返回搬移文件数。
+///
+/// 抽成独立函数是为了能脱离 AppHandle 单测；导入是「搬」不是「复制」，
+/// 旧目录里留下的只有 `.state.json` 这类元数据。
+fn import_legacy_workspace(source: &Path, target: &Path) -> Result<usize, String> {
+    if !source.is_dir() || same_fs_path(source, target) {
+        return Ok(0);
+    }
+    fs::create_dir_all(target).map_err(|e| format!("创建会话目录失败: {}", e))?;
+
+    let mut moved = 0usize;
+    if let Ok(entries) = fs::read_dir(source) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+            if let Some(name) = path.file_name() {
+                if move_file_if_absent(&path, &target.join(name))? {
+                    moved += 1;
+                }
+            }
         }
     }
 
-    if let Some(root) = roots.iter().find(|root| root.is_dir()) {
-        let dir = workspace_chat_session_dir(root);
-        fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败: {}", e))?;
-        return Ok(dir);
+    let source_state = read_store_state(source)?;
+    if source_state.max_session_id > 0 || source_state.max_message_id > 0 {
+        let mut target_state = read_store_state(target)?;
+        target_state.max_session_id = target_state
+            .max_session_id
+            .max(source_state.max_session_id);
+        target_state.max_message_id = target_state
+            .max_message_id
+            .max(source_state.max_message_id);
+        write_store_state(target, &target_state)?;
     }
+    Ok(moved)
+}
 
-    legacy_chat_session_dir(app)
+/// 一次性把旧版 `<root>/.oops/sessions/*.jsonl` 搬进私有目录。
+///
+/// 有了标记就不再扫描工作区；导入是「搬」而不是「复制」，之后 `.oops` 删掉也不丢会话。
+fn import_workspace_sessions(app: &AppHandle, target: &Path) -> Result<(), String> {
+    let marker = target.join(WORKSPACE_IMPORT_MARKER);
+    if marker.exists() {
+        return Ok(());
+    }
+    let root_file = app_data_dir(app)?.join(LEGACY_SESSION_ROOT_FILE);
+    if let Ok(raw) = fs::read_to_string(&root_file) {
+        let root = PathBuf::from(raw.trim());
+        let legacy = root
+            .join(LEGACY_WORKSPACE_META_DIR)
+            .join(LEGACY_WORKSPACE_SESSION_DIR);
+        import_legacy_workspace(&legacy, target)?;
+        // 会话搬完后旧目录只剩元数据：状态已合并、迁移标记搬走，能删就删，
+        // 不在用户工作区里留 `.oops/sessions` 空壳
+        for name in [SQLITE_MIGRATION_MARKER] {
+            let from = legacy.join(name);
+            if from.is_file() {
+                let _ = move_file_if_absent(&from, &target.join(name));
+            }
+        }
+        let _ = fs::remove_file(legacy.join(STORE_STATE_FILE));
+        let _ = fs::remove_dir(&legacy);
+        if let Some(meta_dir) = legacy.parent() {
+            let _ = fs::remove_dir(meta_dir);
+        }
+    }
+    let _ = fs::remove_file(&root_file);
+    let _ = fs::write(&marker, b"1");
+    Ok(())
 }
 
 /// 加锁后执行一次会话目录操作（读改写必须串行）
@@ -310,7 +365,6 @@ fn with_chat_store<T>(
     app: &AppHandle,
     action: impl FnOnce(&Path) -> Result<T, String>,
 ) -> Result<T, String> {
-    // 先拿锁再解析目录：避免 set_chat_roots 迁移到一半时读到旧目录
     let _guard = CHAT_SESSION_LOCK.lock();
     let dir = chat_session_dir(app)?;
     action(&dir)
@@ -331,99 +385,6 @@ fn move_file_if_absent(source: &Path, target: &Path) -> Result<bool, String> {
             Ok(true)
         }
     }
-}
-
-/// 把一个会话目录里的 JSONL 和自增状态合并到目标目录（用于旧数据迁移 / 换工作区）。
-/// 返回实际迁移的会话文件数；旧 SQLite 迁移标记会一并搬到目标目录，避免旧会话被重新导入。
-fn migrate_sessions_to(source: &Path, target: &Path) -> Result<usize, String> {
-    if !source.is_dir() || same_fs_path(source, target) {
-        return Ok(0);
-    }
-    fs::create_dir_all(target).map_err(|e| format!("创建会话目录失败: {}", e))?;
-
-    let mut moved = 0;
-    let entries = fs::read_dir(source).map_err(|e| format!("读取会话目录失败: {}", e))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("读取会话目录失败: {}", e))?;
-        let path = entry.path();
-        if !path.is_file()
-            || path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
-        {
-            continue;
-        }
-        let file_name = entry.file_name();
-        if move_file_if_absent(&path, &target.join(file_name))? {
-            moved += 1;
-        }
-    }
-
-    let source_state = read_store_state(source)?;
-    if source_state.max_session_id > 0 || source_state.max_message_id > 0 {
-        let mut target_state = read_store_state(target)?;
-        target_state.max_session_id = target_state.max_session_id.max(source_state.max_session_id);
-        target_state.max_message_id = target_state.max_message_id.max(source_state.max_message_id);
-        write_store_state(target, &target_state)?;
-    }
-    let source_state_path = source.join(STORE_STATE_FILE);
-    if source_state_path.exists() {
-        fs::remove_file(&source_state_path)
-            .map_err(|e| format!("清理旧会话状态失败 {}: {}", source_state_path.display(), e))?;
-    }
-
-    // 旧 SQLite 迁移标记必须跟着会话走，否则下次启动会把已删除的旧会话重新导回来
-    let source_marker = source.join(SQLITE_MIGRATION_MARKER);
-    if source_marker.exists() {
-        let target_marker = target.join(SQLITE_MIGRATION_MARKER);
-        if !target_marker.exists() {
-            move_file_if_absent(&source_marker, &target_marker)?;
-        }
-    }
-
-    Ok(moved)
-}
-
-/// 前端同步工作区根目录：选定/保留会话存储根，并把旧目录里的会话迁进去。
-/// 返回当前实际使用的会话目录（正斜杠）。
-#[tauri::command]
-pub fn set_chat_roots(app: AppHandle, roots: Vec<String>) -> Result<String, String> {
-    let roots: Vec<PathBuf> = roots
-        .into_iter()
-        .filter(|root| !root.trim().is_empty())
-        .map(|root| PathBuf::from(root.trim()))
-        .collect();
-
-    let previous = read_session_root(&app)?;
-    let selected = previous
-        .clone()
-        .filter(|root| root.is_dir() && roots.iter().any(|item| same_fs_path(item, root)))
-        .or_else(|| roots.iter().find(|root| root.is_dir()).cloned());
-
-    *CHAT_ROOTS.lock() = roots;
-    let Some(root) = selected else {
-        return Ok(to_slash(&chat_session_dir(&app)?));
-    };
-
-    let target = workspace_chat_session_dir(&root);
-    fs::create_dir_all(&target).map_err(|e| format!("创建会话目录失败: {}", e))?;
-
-    let _guard = CHAT_SESSION_LOCK.lock();
-    // 旧版应用数据目录 → 工作区
-    migrate_sessions_to(&legacy_chat_session_dir(&app)?, &target)?;
-    // 原会话根不再属于工作区时，把会话一起搬到新根
-    if let Some(previous_root) = previous {
-        if !same_fs_path(&previous_root, &root) {
-            migrate_sessions_to(&workspace_chat_session_dir(&previous_root), &target)?;
-        }
-    }
-    write_session_root(&app, &root)?;
-    Ok(to_slash(&target))
-}
-
-/// 当前会话文件目录（正斜杠）；没有工作区时返回应用数据目录。
-#[tauri::command]
-pub fn get_chat_session_dir(app: AppHandle) -> Result<String, String> {
-    let _guard = CHAT_SESSION_LOCK.lock();
-    Ok(to_slash(&chat_session_dir(&app)?))
 }
 
 /// 导出文件名统一以 `.jsonl` 结尾；用户没写扩展名时补上，已有其他扩展名时保留原名再追加。
@@ -530,15 +491,256 @@ pub fn export_all_chat_sessions(
     export_all_sessions_to(&dir, Path::new(&target_dir))
 }
 
+/// 新建会话的文件名：`<本地时间>_<随机后缀>.jsonl`。
+///
+/// 文件名只是 key，**不代表会话 id**：id 存在首条 `session` 记录里，
+/// 所以文件被复制/改名也不会把 id 弄错，普通 JSONL 也不会被误认成会话。
+fn session_file_name() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    let mut hasher = Sha256::new();
+    hasher.update(nanos.to_le_bytes());
+    hasher.update(counter.to_le_bytes());
+    hasher.update(std::process::id().to_le_bytes());
+    let digest = hasher.finalize();
+    let mut suffix = String::with_capacity(SESSION_FILE_SUFFIX_LEN * 2);
+    for byte in &digest[..SESSION_FILE_SUFFIX_LEN] {
+        let _ = write!(suffix, "{:02x}", byte);
+    }
+    format!(
+        "{}_{}.jsonl",
+        Local::now().format("%Y%m%dT%H%M%S"),
+        suffix
+    )
+}
+
+/// 目录里所有会话文件，按文件名排序（排序稳定，列表结果才稳定）。
+fn session_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.is_file()
+                        && path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
+/// 按会话 id 找文件：id 来自文件内容，所以只能逐个 fold（文件数很少）。
 fn session_file_path(dir: &Path, id: i64) -> PathBuf {
+    for path in session_files(dir) {
+        if fold_session(&path).is_some_and(|file| file.header.id == id) {
+            return path;
+        }
+    }
+    // 找不到时给一个旧式路径，调用方按「文件不存在」处理
     dir.join(format!("{id}.jsonl"))
 }
 
-fn session_id_from_path(path: &Path) -> Result<i64, String> {
-    path.file_stem()
+/// 时间戳只用于「最近编辑」，取字典序最大即可（同为本地时区的 RFC3339）。
+fn touch_timestamp(target: &mut String, candidate: &str) {
+    if candidate > target.as_str() {
+        target.clear();
+        target.push_str(candidate);
+    }
+}
+
+/// 容错读取：逐行解析，坏行 / 未知类型直接跳过。
+///
+/// 这是与旧实现最大的区别：一行坏数据只会丢那一条记录，不会让整个会话甚至
+/// 整个会话列表加载失败；同时自然兼容旧版「header + 纯消息行」格式。
+fn fold_session(path: &Path) -> Option<SessionFile> {
+    let content = fs::read_to_string(path).ok()?;
+    let fallback_id = path
+        .file_stem()
         .and_then(|stem| stem.to_str())
-        .and_then(|stem| stem.parse::<i64>().ok())
-        .ok_or_else(|| format!("会话文件名无效: {}", path.display()))
+        .and_then(|stem| stem.parse::<i64>().ok());
+
+    let mut header = SessionHeader {
+        record_type: SESSION_RECORD_TYPE.to_string(),
+        id: 0,
+        title: String::new(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        message_count: 0,
+        last_message: String::new(),
+        max_message_id: 0,
+    };
+    let mut messages: Vec<ChatMessage> = Vec::new();
+    let mut has_session_record = false;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let record_type = record.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        match record_type {
+            SESSION_RECORD_TYPE => {
+                has_session_record = true;
+                if let Some(id) = record.get("id").and_then(|v| v.as_i64()) {
+                    header.id = id;
+                }
+                if header.title.is_empty() {
+                    if let Some(title) = record.get("title").and_then(|v| v.as_str()) {
+                        header.title = title.to_string();
+                    }
+                }
+                if header.created_at.is_empty() {
+                    if let Some(ts) = record.get("created_at").and_then(|v| v.as_str()) {
+                        header.created_at = ts.to_string();
+                    }
+                }
+                if let Some(ts) = record.get("updated_at").and_then(|v| v.as_str()) {
+                    touch_timestamp(&mut header.updated_at, ts);
+                }
+                if let Some(max) = record.get("max_message_id").and_then(|v| v.as_i64()) {
+                    header.max_message_id = header.max_message_id.max(max);
+                }
+            }
+            TITLE_RECORD_TYPE => {
+                if let Some(title) = record.get("title").and_then(|v| v.as_str()) {
+                    header.title = title.to_string();
+                }
+                if let Some(ts) = record.get("updated_at").and_then(|v| v.as_str()) {
+                    touch_timestamp(&mut header.updated_at, ts);
+                }
+            }
+            MESSAGE_RECORD_TYPE | "" => {
+                // 旧版消息行没有 `type`，整行就是一个 ChatMessage
+                let Ok(message) = serde_json::from_value::<ChatMessage>(record.clone()) else {
+                    continue;
+                };
+                header.max_message_id = header.max_message_id.max(message.id);
+                touch_timestamp(&mut header.updated_at, &message.updated_at);
+                if messages.iter().all(|existing| existing.id != message.id) {
+                    messages.push(message);
+                }
+            }
+            MESSAGE_EDIT_RECORD_TYPE => {
+                let Some(id) = record.get("id").and_then(|v| v.as_i64()) else {
+                    continue;
+                };
+                let Some(message) = messages.iter_mut().find(|item| item.id == id) else {
+                    continue;
+                };
+                if let Some(content) = record.get("content").and_then(|v| v.as_str()) {
+                    message.content = content.to_string();
+                }
+                if let Some(ts) = record.get("updated_at").and_then(|v| v.as_str()) {
+                    message.updated_at = ts.to_string();
+                    touch_timestamp(&mut header.updated_at, ts);
+                }
+                message.edited = true;
+            }
+            MESSAGE_FAVORITE_RECORD_TYPE => {
+                let Some(id) = record.get("id").and_then(|v| v.as_i64()) else {
+                    continue;
+                };
+                let Some(message) = messages.iter_mut().find(|item| item.id == id) else {
+                    continue;
+                };
+                if let Some(favorited) = record.get("favorited").and_then(|v| v.as_bool()) {
+                    message.favorited = favorited;
+                }
+            }
+            MESSAGE_DELETE_RECORD_TYPE => {
+                let Some(id) = record.get("id").and_then(|v| v.as_i64()) else {
+                    continue;
+                };
+                messages.retain(|item| item.id != id);
+                if let Some(ts) = record.get("updated_at").and_then(|v| v.as_str()) {
+                    touch_timestamp(&mut header.updated_at, ts);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if header.id == 0 {
+        header.id = fallback_id?;
+    }
+    // 没有任何有效记录的（空文件、乱写的 JSONL）不是会话
+    if !has_session_record && messages.is_empty() {
+        return None;
+    }
+    if header.title.is_empty() {
+        header.title = header.id.to_string();
+    }
+    if header.created_at.is_empty() {
+        header.created_at = messages
+            .first()
+            .map(|message| message.created_at.clone())
+            .unwrap_or_default();
+    }
+    if header.updated_at.is_empty() {
+        header.updated_at = header.created_at.clone();
+    }
+
+    messages.sort_by_key(|message| message.id);
+    refresh_header(&mut header, &messages);
+    Some(SessionFile { header, messages })
+}
+
+/// 追加一行记录：会话文件是事件日志，任何变更只 append，不重写整个文件。
+fn append_record(path: &Path, record: &serde_json::Value) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let line =
+        serde_json::to_string(record).map_err(|e| format!("序列化会话记录失败: {}", e))?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("打开会话文件失败 {}: {}", path.display(), e))?;
+    writeln!(file, "{}", line)
+        .map_err(|e| format!("写入会话失败 {}: {}", path.display(), e))?;
+    file.flush()
+        .map_err(|e| format!("写入会话失败 {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+/// 新建/迁移时一次性写完整文件（session 记录 + 标题 + 消息），之后只追加。
+fn write_session_file(
+    path: &Path,
+    header: &SessionHeader,
+    messages: &[ChatMessage],
+) -> Result<(), String> {
+    let mut output = serde_json::to_string(header)
+        .map_err(|e| format!("序列化会话失败: {}", e))?;
+    output.push('\n');
+    for message in messages {
+        let mut record = serde_json::to_value(message)
+            .map_err(|e| format!("序列化消息失败: {}", e))?;
+        record["type"] = serde_json::Value::String(MESSAGE_RECORD_TYPE.to_string());
+        output.push_str(
+            &serde_json::to_string(&record).map_err(|e| format!("序列化消息失败: {}", e))?,
+        );
+        output.push('\n');
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("创建会话目录失败 {}: {}", parent.display(), e))?;
+    }
+    fs::write(path, output)
+        .map_err(|e| format!("写入会话文件失败 {}: {}", path.display(), e))
 }
 
 /// 会话列表里的「最近一条消息」预览：文字取正文，文件/图片取文件名
@@ -570,65 +772,13 @@ fn session_from_header(header: &SessionHeader) -> ChatSession {
 }
 
 fn read_session_header(path: &Path) -> Result<SessionHeader, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("读取会话文件失败 {}: {}", path.display(), e))?;
-    let line = content
-        .lines()
-        .next()
-        .ok_or_else(|| format!("会话文件为空: {}", path.display()))?;
-    let mut header: SessionHeader = serde_json::from_str(line)
-        .map_err(|e| format!("会话文件头解析失败 {}: {}", path.display(), e))?;
-    if header.record_type != SESSION_RECORD_TYPE {
-        return Err(format!("会话文件头类型无效: {}", path.display()));
-    }
-    // 文件名才是会话 id 的依据，避免手工改过文件内容后错位
-    header.id = session_id_from_path(path)?;
-    Ok(header)
+    fold_session(path)
+        .map(|file| file.header)
+        .ok_or_else(|| format!("会话文件无可读记录: {}", path.display()))
 }
 
 fn load_session_file(path: &Path) -> Result<SessionFile, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("读取会话文件失败 {}: {}", path.display(), e))?;
-    let mut lines = content.lines();
-    let first = lines
-        .next()
-        .ok_or_else(|| format!("会话文件为空: {}", path.display()))?;
-    let mut header: SessionHeader = serde_json::from_str(first)
-        .map_err(|e| format!("会话文件头解析失败 {}: {}", path.display(), e))?;
-    if header.record_type != SESSION_RECORD_TYPE {
-        return Err(format!("会话文件头类型无效: {}", path.display()));
-    }
-    header.id = session_id_from_path(path)?;
-
-    let mut messages = Vec::new();
-    for (index, line) in lines.enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let message: ChatMessage = serde_json::from_str(line).map_err(|e| {
-            format!(
-                "会话文件第 {} 行解析失败 {}: {}",
-                index + 2,
-                path.display(),
-                e
-            )
-        })?;
-        messages.push(message);
-    }
-    messages.sort_by_key(|message| message.id);
-    refresh_header(&mut header, &messages);
-    Ok(SessionFile { header, messages })
-}
-
-/// 临时文件 + rename 原子替换，避免崩溃时留下半个会话
-fn write_session_atomic(path: &Path, content: &str) -> Result<(), String> {
-    let temp = path.with_extension("jsonl.tmp");
-    fs::write(&temp, content)
-        .map_err(|e| format!("写入会话文件失败 {}: {}", temp.display(), e))?;
-    fs::rename(&temp, path).map_err(|e| {
-        let _ = fs::remove_file(&temp);
-        format!("替换会话文件失败 {}: {}", path.display(), e)
-    })
+    fold_session(path).ok_or_else(|| format!("会话文件无可读记录: {}", path.display()))
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -660,38 +810,13 @@ fn write_store_state(dir: &Path, state: &StoreState) -> Result<(), String> {
     })
 }
 
-fn save_session_file(
-    dir: &Path,
-    header: &SessionHeader,
-    messages: &[ChatMessage],
-) -> Result<(), String> {
-    let mut next = header.clone();
-    refresh_header(&mut next, messages);
-
-    let mut output = serde_json::to_string(&next)
-        .map_err(|e| format!("序列化会话失败: {}", e))?;
-    output.push('\n');
-    for message in messages {
-        output.push_str(
-            &serde_json::to_string(message).map_err(|e| format!("序列化消息失败: {}", e))?,
-        );
-        output.push('\n');
-    }
-    write_session_atomic(&session_file_path(dir, next.id), &output)
-}
-
 fn session_ids(dir: &Path) -> Result<Vec<i64>, String> {
-    let mut ids = Vec::new();
-    let entries = fs::read_dir(dir).map_err(|e| format!("读取会话目录失败: {}", e))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("读取会话目录失败: {}", e))?;
-        let path = entry.path();
-        if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-            continue;
-        }
-        ids.push(session_id_from_path(&path)?);
-    }
+    let mut ids: Vec<i64> = session_files(dir)
+        .iter()
+        .filter_map(|path| fold_session(path).map(|file| file.header.id))
+        .collect();
     ids.sort_unstable();
+    ids.dedup();
     Ok(ids)
 }
 
@@ -705,8 +830,10 @@ fn next_session_id(dir: &Path) -> Result<i64, String> {
 /// 头里的 `max_message_id` 记录历史最大值，删除最后一条消息后也不会复用 id。
 fn next_message_id(dir: &Path) -> Result<i64, String> {
     let mut max = read_store_state(dir)?.max_message_id;
-    for id in session_ids(dir)? {
-        let file = load_session_file(&session_file_path(dir, id))?;
+    for path in session_files(dir) {
+        let Some(file) = fold_session(&path) else {
+            continue;
+        };
         max = max.max(file.header.max_message_id);
         for message in file.messages {
             max = max.max(message.id);
@@ -715,12 +842,151 @@ fn next_message_id(dir: &Path) -> Result<i64, String> {
     Ok(max + 1)
 }
 
+/// 容错列表：坏文件跳过，绝不让一个文件拖垮整个列表。
 fn list_sessions(dir: &Path) -> Result<Vec<ChatSession>, String> {
-    let mut sessions = Vec::new();
-    for id in session_ids(dir)? {
-        let header = read_session_header(&session_file_path(dir, id))?;
-        sessions.push(session_from_header(&header));
+    let mut sessions: Vec<ChatSession> = session_files(dir)
+        .iter()
+        .filter_map(|path| fold_session(path).map(|file| session_from_header(&file.header)))
+        .collect();
+    sessions.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    Ok(sessions)
+}
+
+/// 索引里的缓存行：(mtime_ms, size, 会话元数据)。任一不匹配就重新 fold 这个文件。
+struct CachedSession {
+    mtime_ms: i64,
+    size: i64,
+    session: ChatSession,
+}
+
+fn file_stamp(path: &Path) -> Option<(i64, i64)> {
+    let meta = fs::metadata(path).ok()?;
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
+    Some((mtime_ms, meta.len() as i64))
+}
+
+fn load_session_index() -> Result<HashMap<String, CachedSession>, String> {
+    crate::db::with_db(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT file, mtime_ms, size, id, title, created_at, updated_at,
+                    message_count, last_message
+             FROM chat_index",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                CachedSession {
+                    mtime_ms: row.get(1)?,
+                    size: row.get(2)?,
+                    session: ChatSession {
+                        id: row.get(3)?,
+                        title: row.get(4)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                        message_count: row.get(7)?,
+                        last_message: row.get(8)?,
+                    },
+                },
+            ))
+        })?;
+        let mut index = HashMap::new();
+        for row in rows {
+            let (file, cached) = row?;
+            index.insert(file, cached);
+        }
+        Ok(index)
+    })
+}
+
+/// 增量刷新索引：只回写变化的文件，并删掉已经不存在的文件对应的行。
+fn save_session_index(changed: &[(String, i64, i64, ChatSession)], present: &[String]) -> Result<(), String> {
+    let stale: Vec<String> = load_session_index()?
+        .keys()
+        .filter(|file| !present.iter().any(|name| name == *file))
+        .cloned()
+        .collect();
+
+    crate::db::with_db(|conn| {
+        for (file, mtime_ms, size, session) in changed {
+            conn.execute(
+                "INSERT INTO chat_index
+                    (file, mtime_ms, size, id, title, created_at, updated_at, message_count, last_message)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(file) DO UPDATE SET
+                    mtime_ms = excluded.mtime_ms,
+                    size = excluded.size,
+                    id = excluded.id,
+                    title = excluded.title,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at,
+                    message_count = excluded.message_count,
+                    last_message = excluded.last_message",
+                params![
+                    file,
+                    mtime_ms,
+                    size,
+                    session.id,
+                    session.title,
+                    session.created_at,
+                    session.updated_at,
+                    session.message_count,
+                    session.last_message,
+                ],
+            )?;
+        }
+        for file in &stale {
+            conn.execute("DELETE FROM chat_index WHERE file = ?1", params![file])?;
+        }
+        Ok(())
+    })
+}
+
+/// 列表 = 目录扫描 + 增量索引；索引不可用（DB 未初始化/表被删）时退回纯 fold。
+fn indexed_sessions(dir: &Path) -> Result<Vec<ChatSession>, String> {
+    let files = session_files(dir);
+    let cached = load_session_index().unwrap_or_default();
+
+    let mut sessions = Vec::with_capacity(files.len());
+    let mut changed: Vec<(String, i64, i64, ChatSession)> = Vec::new();
+    let mut present: Vec<String> = Vec::with_capacity(files.len());
+
+    for path in &files {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some((mtime_ms, size)) = file_stamp(path) else {
+            continue;
+        };
+        present.push(name.to_string());
+
+        if let Some(hit) = cached.get(name) {
+            if hit.mtime_ms == mtime_ms && hit.size == size {
+                sessions.push(hit.session.clone());
+                continue;
+            }
+        }
+        let Some(file) = fold_session(path) else {
+            continue;
+        };
+        let session = session_from_header(&file.header);
+        changed.push((name.to_string(), mtime_ms, size, session.clone()));
+        sessions.push(session);
     }
+
+    if !changed.is_empty() || cached.len() != present.len() {
+        // 索引写失败不影响正确性，下次再补
+        let _ = save_session_index(&changed, &present);
+    }
+
     sessions.sort_by(|a, b| {
         b.updated_at
             .cmp(&a.updated_at)
@@ -751,7 +1017,8 @@ fn insert_session(dir: &Path, raw_title: &str) -> Result<ChatSession, String> {
         last_message: String::new(),
         max_message_id: 0,
     };
-    save_session_file(dir, &header, &[])?;
+    // 文件名与 id 解耦：用时间 + 随机后缀，id 只写在内容里
+    write_session_file(&dir.join(session_file_name()), &header, &[])?;
 
     let mut state = read_store_state(dir)?;
     state.max_session_id = state.max_session_id.max(id);
@@ -764,10 +1031,15 @@ fn rename_session(dir: &Path, id: i64, title: &str) -> Result<Option<ChatSession
     if !path.exists() {
         return Ok(None);
     }
-    // 重命名属于元数据变更，不推进 updated_at（「最近编辑时间」只反映消息变化）
-    let mut file = load_session_file(&path)?;
-    file.header.title = normalized_title(title);
-    save_session_file(dir, &file.header, &file.messages)?;
+    // 重命名属于元数据变更：追加一条 title 记录，且不推进 updated_at
+    // （「最近编辑时间」只反映消息变化）
+    append_record(
+        &path,
+        &serde_json::json!({
+            "type": TITLE_RECORD_TYPE,
+            "title": normalized_title(title),
+        }),
+    )?;
     read_session(dir, id)
 }
 
@@ -786,7 +1058,6 @@ fn insert_message(dir: &Path, input: NewChatMessage) -> Result<Option<ChatMessag
     if !path.exists() {
         return Ok(None);
     }
-    let mut file = load_session_file(&path)?;
     let now = now();
     let message = ChatMessage {
         id: next_message_id(dir)?,
@@ -802,10 +1073,11 @@ fn insert_message(dir: &Path, input: NewChatMessage) -> Result<Option<ChatMessag
         edited: false,
         favorited: false,
     };
-    file.header.max_message_id = file.header.max_message_id.max(message.id);
-    file.messages.push(message.clone());
-    file.header.updated_at = now;
-    save_session_file(dir, &file.header, &file.messages)?;
+    // 追加一行，不重写已有内容：会话越大也不会越写越慢
+    let mut record =
+        serde_json::to_value(&message).map_err(|e| format!("序列化消息失败: {}", e))?;
+    record["type"] = serde_json::Value::String(MESSAGE_RECORD_TYPE.to_string());
+    append_record(&path, &record)?;
 
     let mut state = read_store_state(dir)?;
     state.max_message_id = state.max_message_id.max(message.id);
@@ -813,11 +1085,13 @@ fn insert_message(dir: &Path, input: NewChatMessage) -> Result<Option<ChatMessag
     Ok(Some(message))
 }
 
-fn locate_message(dir: &Path, id: i64) -> Result<Option<(i64, SessionFile, usize)>, String> {
-    for session_id in session_ids(dir)? {
-        let file = load_session_file(&session_file_path(dir, session_id))?;
+fn locate_message(dir: &Path, id: i64) -> Result<Option<(PathBuf, SessionFile, usize)>, String> {
+    for path in session_files(dir) {
+        let Some(file) = fold_session(&path) else {
+            continue;
+        };
         if let Some(index) = file.messages.iter().position(|message| message.id == id) {
-            return Ok(Some((session_id, file, index)));
+            return Ok(Some((path, file, index)));
         }
     }
     Ok(None)
@@ -825,28 +1099,40 @@ fn locate_message(dir: &Path, id: i64) -> Result<Option<(i64, SessionFile, usize
 
 /// 编辑消息文字；消息不存在时返回 None
 fn update_message(dir: &Path, id: i64, content: &str) -> Result<Option<ChatMessage>, String> {
-    let Some((_session_id, mut file, index)) = locate_message(dir, id)? else {
+    let Some((path, mut file, index)) = locate_message(dir, id)? else {
         return Ok(None);
     };
     let now = now();
+    append_record(
+        &path,
+        &serde_json::json!({
+            "type": MESSAGE_EDIT_RECORD_TYPE,
+            "id": id,
+            "content": content,
+            "updated_at": now,
+        }),
+    )?;
     let message = &mut file.messages[index];
     message.content = content.to_string();
-    message.updated_at = now.clone();
+    message.updated_at = now;
     message.edited = true;
-    let updated = message.clone();
-    file.header.updated_at = now;
-    save_session_file(dir, &file.header, &file.messages)?;
-    Ok(Some(updated))
+    Ok(Some(message.clone()))
 }
 
 /// 删除消息并推进所属会话的最近编辑时间；返回是否存在该消息
 fn remove_message(dir: &Path, id: i64) -> Result<bool, String> {
-    let Some((_session_id, mut file, index)) = locate_message(dir, id)? else {
+    let Some((path, _file, _index)) = locate_message(dir, id)? else {
         return Ok(false);
     };
-    file.messages.remove(index);
-    file.header.updated_at = now();
-    save_session_file(dir, &file.header, &file.messages)?;
+    // 日志式删除：追加删除事件，历史消息仍留在文件里（可回溯 / 不会因为写一半丢数据）
+    append_record(
+        &path,
+        &serde_json::json!({
+            "type": MESSAGE_DELETE_RECORD_TYPE,
+            "id": id,
+            "updated_at": now(),
+        }),
+    )?;
     Ok(true)
 }
 
@@ -859,13 +1145,19 @@ fn set_message_favorite(
     id: i64,
     favorited: bool,
 ) -> Result<Option<ChatMessage>, String> {
-    let Some((_session_id, mut file, index)) = locate_message(dir, id)? else {
+    let Some((path, mut file, index)) = locate_message(dir, id)? else {
         return Ok(None);
     };
+    append_record(
+        &path,
+        &serde_json::json!({
+            "type": MESSAGE_FAVORITE_RECORD_TYPE,
+            "id": id,
+            "favorited": favorited,
+        }),
+    )?;
     file.messages[index].favorited = favorited;
-    let updated = file.messages[index].clone();
-    save_session_file(dir, &file.header, &file.messages)?;
-    Ok(Some(updated))
+    Ok(Some(file.messages[index].clone()))
 }
 
 // ── 搜索 ───────────────────────────────────────────────────────
@@ -923,12 +1215,16 @@ fn search_messages(
     let needle = query.to_lowercase();
     let mut matches = Vec::new();
 
-    for session_id in session_ids(dir)? {
+    for path in session_files(dir) {
+        // 坏文件跳过：一个文件损坏不该让整个搜索失败
+        let Some(file) = fold_session(&path) else {
+            continue;
+        };
+        let session_id = file.header.id;
         // 空集合表示不限会话
         if !session_filter.is_empty() && !session_filter.contains(&session_id) {
             continue;
         }
-        let file = load_session_file(&session_file_path(dir, session_id))?;
         for message in &file.messages {
             let file_name = message.file_name.as_deref().unwrap_or("");
             if !message.content.to_lowercase().contains(&needle)
@@ -1046,7 +1342,7 @@ fn migrate_chat_to_jsonl_in(dir: &Path, conn: &Connection) -> Result<(), String>
             last_message: String::new(),
             max_message_id: messages.last().map(|message| message.id).unwrap_or(0),
         };
-        save_session_file(&dir, &header, &messages)?;
+        write_session_file(&dir.join(session_file_name()), &header, &messages)?;
         state.max_session_id = state.max_session_id.max(id);
         if let Some(last) = messages.last() {
             state.max_message_id = state.max_message_id.max(last.id);
@@ -1194,7 +1490,11 @@ fn store_image_bytes(
 /// 全部会话，按最近编辑时间倒序
 #[tauri::command]
 pub fn get_chat_sessions(app: AppHandle) -> Result<Vec<ChatSession>, String> {
-    with_chat_store(&app, list_sessions)
+    with_chat_store(&app, |dir| match indexed_sessions(dir) {
+        Ok(sessions) => Ok(sessions),
+        // 索引层出错（例如 DB 不可用）时退回直接 fold，保证列表始终可用
+        Err(_) => list_sessions(dir),
+    })
 }
 
 /// 新建会话；标题缺省为时间戳（与前端「新建文件」同名口径）
@@ -1746,7 +2046,7 @@ mod tests {
         let mut file = load_session_file(&path).unwrap();
         let index = file.messages.iter().position(|m| m.id == old.id).unwrap();
         file.messages[index].created_at = "2001-01-01T00:00:00+08:00".to_string();
-        save_session_file(&dir, &file.header, &file.messages).unwrap();
+        write_session_file(&path, &file.header, &file.messages).unwrap();
 
         let cut = parse_ms("2002-01-01T00:00:00+08:00").unwrap();
         let recent = search_messages(&dir, "关键词", &[], Some(cut), None).unwrap();
@@ -1852,45 +2152,44 @@ mod tests {
 
     /// 文件格式：首行会话头，之后一行一条消息；内容里的换行不会拆成多行
     #[test]
-    fn jsonl_file_has_header_and_one_line_per_message() {
+    fn session_file_is_an_append_only_event_log() {
         let dir = store();
         let session = insert_session(&dir, "会话").unwrap();
         insert_message(&dir, text_message(session.id, "第一行\n第二行")).unwrap();
 
         let lines = read_jsonl(&dir, session.id);
-        assert_eq!(lines.len(), 2, "1 行头 + 1 条消息");
+        assert_eq!(lines.len(), 2, "1 行 session + 1 行 message");
         let header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(header["type"], "session");
-        assert_eq!(header["message_count"], 1);
-        let message: ChatMessage = serde_json::from_str(&lines[1]).unwrap();
-        assert_eq!(message.content, "第一行\n第二行");
-        assert!(
-            !session_file_path(&dir, session.id)
-                .with_extension("jsonl.tmp")
-                .exists(),
-            "临时文件应在替换后消失"
-        );
+        assert_eq!(header["id"], session.id);
+        let message: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
+        assert_eq!(message["type"], "message");
+        assert_eq!(message["content"], "第一行\n第二行");
+
+        // 追加一条消息：已有行逐字节不变，只多一行
+        insert_message(&dir, text_message(session.id, "第三条")).unwrap();
+        let after = read_jsonl(&dir, session.id);
+        assert_eq!(after.len(), 3, "追加写，不重写整个文件");
+        assert_eq!(&after[..2], &lines[..], "已有行必须保持原样");
+        assert!(!session_file_path(&dir, session.id)
+            .with_extension("jsonl.tmp")
+            .exists());
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// 旧应用数据目录里的会话迁进工作区：文件、状态一起走，id 不复用
+    /// 旧工作区 `.oops/sessions` 的会话搬进私有目录：文件与 id 状态一起走，id 不复用
     #[test]
-    fn migrates_sessions_into_workspace_directory() {
+    fn imports_legacy_workspace_sessions() {
         let legacy = store();
         let workspace = temp_dir();
-        let target = workspace_chat_session_dir(&workspace);
+        let target = workspace.join("private-sessions");
 
         let session = insert_session(&legacy, "旧会话").unwrap();
         insert_message(&legacy, text_message(session.id, "旧消息")).unwrap();
-        fs::write(legacy.join(SQLITE_MIGRATION_MARKER), b"1").unwrap();
 
-        let moved = migrate_sessions_to(&legacy, &target).unwrap();
+        let moved = import_legacy_workspace(&legacy, &target).unwrap();
         assert_eq!(moved, 1);
-        assert!(!session_file_path(&legacy, session.id).exists());
-        assert!(!legacy.join(STORE_STATE_FILE).exists());
-        assert!(!legacy.join(SQLITE_MIGRATION_MARKER).exists());
-        assert!(target.join(SQLITE_MIGRATION_MARKER).exists());
         assert_eq!(list_sessions(&target).unwrap().len(), 1);
         assert_eq!(
             load_session_file(&session_file_path(&target, session.id))
@@ -1903,11 +2202,57 @@ mod tests {
         // 状态合并后新建会话继续用更大的 id
         let next = insert_session(&target, "新会话").unwrap();
         assert!(next.id > session.id);
-        // 幂等：再迁移不会产生重复文件
-        assert_eq!(migrate_sessions_to(&legacy, &target).unwrap(), 0);
+        // 幂等：再导入不会产生重复文件
+        assert_eq!(import_legacy_workspace(&legacy, &target).unwrap(), 0);
 
         fs::remove_dir_all(&legacy).unwrap();
         fs::remove_dir_all(&workspace).unwrap();
+    }
+
+    /// 回归：目录里混进空文件/垃圾/非会话 JSONL 时，列表和搜索都不能整体失败；
+    /// 旧版“文件名即 id + 首行 header + 裸消息”的文件仍能被读出来。
+    #[test]
+    fn listing_skips_junk_files_and_accepts_legacy_records() {
+        let dir = store();
+        let session = insert_session(&dir, "正常会话").unwrap();
+        insert_message(&dir, text_message(session.id, "正常消息")).unwrap();
+
+        fs::write(dir.join("empty.jsonl"), b"").unwrap();
+        fs::write(dir.join("garbage.jsonl"), b"not json\n{broken\n").unwrap();
+        fs::write(dir.join("notes.jsonl"), b"{\"type\":\"something-else\"}\n").unwrap();
+
+        let header = serde_json::json!({
+            "type": "session", "id": 99, "title": "旧格式",
+            "created_at": "2026-01-01T00:00:00+08:00",
+            "updated_at": "2026-01-02T00:00:00+08:00"
+        });
+        let message = serde_json::json!({
+            "id": 7, "session_id": 99, "role": "me", "kind": "text",
+            "content": "旧消息", "file_name": null, "file_path": null, "file_size": 0,
+            "created_at": "2026-01-02T00:00:00+08:00",
+            "updated_at": "2026-01-02T00:00:00+08:00",
+            "edited": false, "favorited": false
+        });
+        fs::write(
+            dir.join("99.jsonl"),
+            format!("{}\n{}\n", header, message),
+        )
+        .unwrap();
+
+        let sessions = list_sessions(&dir).unwrap();
+        assert_eq!(sessions.len(), 2, "垃圾文件不应变成会话: {:?}", sessions);
+        let legacy = sessions
+            .iter()
+            .find(|item| item.id == 99)
+            .expect("旧格式会话应被读出");
+        assert_eq!(legacy.title, "旧格式");
+        assert_eq!(legacy.message_count, 1);
+        assert_eq!(legacy.last_message, "旧消息");
+
+        let found = search_messages(&dir, "消息", &[], None, None).unwrap();
+        assert_eq!(found.matches.len(), 2, "坏文件不应让搜索失败");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// 导出单个会话：自动补 .jsonl，内容与原文件逐字节一致

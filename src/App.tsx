@@ -30,8 +30,6 @@ import { version as APP_VERSION } from "../package.json";
 import { DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_POSITION, isValidRestoredWindowSize, isValidRestoredWindowPosition } from "@/hooks/useAppInit";
 import { handleDroppedPath } from "@/hooks/useDragDrop";
 import { startExternalSync, stopExternalSync } from "@/services/externalSync";
-import { setChatRoots } from "@/services/chat";
-import { chatSessionParentDir, isWorkspaceChatSessionDir } from "@/components/chat/chatTab";
 
 function App() {
   const isLeftSidebarCollapsed = useEditorStore(s => s.isLeftSidebarCollapsed);
@@ -70,7 +68,6 @@ function App() {
   const imagePreview = useEditorStore(s => s.imagePreview);
   const rootPaths = useEditorStore(s => s.rootPaths);
   const loadChatSessions = useEditorStore(s => s.loadChatSessions);
-  const expandFolders = useEditorStore(s => s.expandFolders);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isDraggingOverTerminal, setIsDraggingOverTerminal] = useState(false);
@@ -90,7 +87,6 @@ function App() {
   const dragStartTerminalHeightRef = useRef(terminalHeight);
   const isResizingSplit = useRef(false);
   const splitWorkspaceRef = useRef<HTMLDivElement>(null);
-  const lastChatSessionDirRef = useRef("");
 
   const setTerminalDragState = useCallback((value: boolean) => {
     isDraggingOverTerminalRef.current = value;
@@ -604,35 +600,11 @@ function App() {
     };
   }, []);
 
-  // 工作区根目录变化：同步会话存储位置（必要时迁移旧数据），并刷新会话列表/文件树
+  // 工作区变化只需要刷新会话列表：会话存储已在应用私有目录，与工作区无关
   useEffect(() => {
     if (!isAppReady) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        await setChatRoots(rootPaths);
-        await loadChatSessions();
-        if (cancelled) return;
-        const dir = useEditorStore.getState().chatSessionDir;
-        if (
-          dir &&
-          dir !== lastChatSessionDirRef.current &&
-          isWorkspaceChatSessionDir(dir)
-        ) {
-          lastChatSessionDirRef.current = dir;
-          expandFolders([chatSessionParentDir(dir), dir]);
-          window.dispatchEvent(
-            new CustomEvent("file-refresh", { detail: { path: dir } }),
-          );
-        }
-      } catch (err) {
-        console.error("同步会话存储位置失败:", err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [rootPaths, isAppReady, loadChatSessions, expandFolders]);
+    void loadChatSessions();
+  }, [rootPaths, isAppReady, loadChatSessions]);
 
   // 应用内自动更新：主窗口启动后延迟检查一次（模块内 checkedOnce 守卫，失败静默）
   useEffect(() => {
