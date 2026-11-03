@@ -1008,6 +1008,31 @@ function ToolbarButton({
   );
 }
 
+function AddCellPill({
+  title,
+  label,
+  disabled,
+  onClick,
+}: {
+  title: string;
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className="flex items-center gap-1 rounded-full border border-dashed border-border px-3 py-1 text-[11px] text-text-muted transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-40"
+    >
+      <Plus size={11} />
+      {label}
+    </button>
+  );
+}
+
 function NotebookModeView({
   activeTab,
   editorWordWrap,
@@ -1793,6 +1818,23 @@ function NotebookModeView({
             </div>
           )}
 
+          {doc.cells.length > 0 && (
+            <div className="flex items-center justify-center gap-2 pb-0.5 opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100">
+              <AddCellPill
+                title="在顶部添加代码单元格（插到第一个单元格之前）"
+                label="代码单元格"
+                disabled={isReadOnly}
+                onClick={() => handleAddCell(0, "code")}
+              />
+              <AddCellPill
+                title="在顶部添加 Markdown 单元格（插到第一个单元格之前）"
+                label="Markdown 单元格"
+                disabled={isReadOnly}
+                onClick={() => handleAddCell(0, "markdown")}
+              />
+            </div>
+          )}
+
           {doc.cells.map((cell, index) => {
             const isMarkdownPreview =
               cell.cellType === "markdown" && previewMarkdownIds.has(cell.id);
@@ -1948,24 +1990,18 @@ function NotebookModeView({
 
           {doc.cells.length > 0 && (
             <div className="flex justify-center gap-2 pt-1 opacity-0 transition-opacity hover:opacity-100 focus-within:opacity-100">
-              <button
-                type="button"
+              <AddCellPill
+                title="在末尾添加代码单元格"
+                label="代码单元格"
                 disabled={isReadOnly}
                 onClick={() => handleAddCell(doc.cells.length, "code")}
-                className="flex items-center gap-1 rounded-full border border-dashed border-border px-3 py-1 text-[11px] text-text-muted transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-40"
-              >
-                <Plus size={11} />
-                代码单元格
-              </button>
-              <button
-                type="button"
+              />
+              <AddCellPill
+                title="在末尾添加 Markdown 单元格"
+                label="Markdown 单元格"
                 disabled={isReadOnly}
                 onClick={() => handleAddCell(doc.cells.length, "markdown")}
-                className="flex items-center gap-1 rounded-full border border-dashed border-border px-3 py-1 text-[11px] text-text-muted transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-40"
-              >
-                <Plus size={11} />
-                Markdown 单元格
-              </button>
+              />
             </div>
           )}
         </div>
