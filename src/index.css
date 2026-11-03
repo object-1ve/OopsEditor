@@ -475,6 +475,8 @@ body {
 .markdown-preview a {
   color: #1a6fd4;
   text-decoration: underline;
+  /* under：下划线按基线下方统一铺，避免中文回退字体（CJK）跟着字体度量上下跳 */
+  text-underline-position: under;
   text-underline-offset: 2px;
 }
 .markdown-preview a:hover {
@@ -484,11 +486,15 @@ body {
 .md-url-link {
   color: #1a6fd4 !important;
   text-decoration: underline;
+  /* 与 Monaco 主题 token（mtku 自带 under）保持一致，否则跨字体 run 高度不齐 */
+  text-underline-position: under;
 }
 /* Markdown 图片 `![alt](地址)` 的 alt：词法只给 ![ 和 ](地址) 上色，alt 补同款链接色 */
 .md-image-alt-link {
   color: #1a6fd4 !important;
   text-decoration: underline;
+  /* alt 常是中文：默认 auto 会用回退字体度量，下划线比周围 token 高/低一截 */
+  text-underline-position: under;
 }
 /* Notebook 全文件查找：全部命中 + 当前命中（Monaco 装饰器 inlineClassName） */
 .notebook-find-match {
