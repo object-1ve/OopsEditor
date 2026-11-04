@@ -8,6 +8,13 @@ export interface FileTab {
   content: string;
   isDirty: boolean;
   size?: number;
+  /**
+   * 预览标签（VS Code 式）：单击侧边栏文件时以预览方式打开，
+   * 同一分栏只保留一个预览标签，下一次预览会顶替它；
+   * 双击文件、编辑内容或手动固定后转为普通标签。
+   * 注意与 isPreviewMode（Markdown 预览视图）区分。
+   */
+  isPreviewTab?: boolean;
   isPreviewMode?: boolean;
   isLivePreviewMode?: boolean;
   viewMode?: "text" | "base64";

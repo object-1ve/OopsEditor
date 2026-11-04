@@ -7,7 +7,7 @@ A cross-platform desktop code editor built with **Tauri v2 + React + Monaco Edit
 ## Features
 
 - **File Explorer** -- Tree-based directory browsing with file CRUD, rename, and pin support
-- **Multi-tab Editing** -- Monaco Editor (VS Code engine) with split-pane support
+- **Multi-tab Editing** -- Monaco Editor (VS Code engine) with split-pane support; single-click a file in the sidebar to open a preview tab (warm bottom bar, italic title, one per pane), double-click to pin it (accent bottom bar)
 - **Syntax Highlighting** -- Built-in highlighting for dozens of languages
 - **Integrated Terminal** -- xterm terminal with multi-tab support, follows workspace directory
 - **Git Integration** -- View branches, staged/unstaged/untracked files, commit changes

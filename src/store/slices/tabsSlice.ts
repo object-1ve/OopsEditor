@@ -36,6 +36,17 @@ function scheduleAutosaveAfterEdit(get: () => EditorState, id: string) {
   scheduleAutoSave(id, tab, (cleanId) => get().markClean(cleanId));
 }
 
+/**
+ * 标签被顶替/关闭时释放它的运行期资源：滚动位置、自动保存计时器与文档缓存。
+ */
+function disposeTabResources(id: string) {
+  clearScrollMemory(id);
+  clearAutoSaveTimer(id);
+  cancelScheduledTabPersist(id);
+  evictExcelDoc(id);
+  evictNotebookDoc(id);
+}
+
 export const createTabsSlice: StateCreator<
   EditorState,
   [],
@@ -47,6 +58,8 @@ export const createTabsSlice: StateCreator<
     | "openFiles"
     | "openChatSessionTab"
     | "openTab"
+    | "openPreviewTab"
+    | "pinTab"
     | "closeTab"
     | "closeTabs"
     | "closeOtherTabs"
@@ -91,7 +104,16 @@ export const createTabsSlice: StateCreator<
       const existing = state.tabs.find((t) => t.id === tab.id);
       if (existing) {
         void persistActiveTabId(tab.id);
-        return { activeTabId: tab.id };
+        if (!existing.isPreviewTab) {
+          return { activeTabId: tab.id };
+        }
+        // 再次以普通方式打开（如双击侧边栏文件）：预览标签转为固定标签
+        return {
+          activeTabId: tab.id,
+          tabs: state.tabs.map((item) =>
+            item.id === tab.id ? { ...item, isPreviewTab: false } : item,
+          ),
+        };
       }
       const limitedTabsState = enforceTabLimit(
         [...state.tabs, tab],
@@ -112,6 +134,97 @@ export const createTabsSlice: StateCreator<
       };
     });
   },
+
+  /**
+   * 预览式打开（VS Code 行为）：单击侧边栏文件时调用。
+   * 同一分栏只保留一个预览标签；新预览在原位顶替旧预览，不新增标签。
+   * 已打开的标签只激活，不会把固定标签降级为预览。
+   */
+  openPreviewTab: (tab: FileTab) => {
+    const state = get();
+    if (tab.path && !isChatTab(tab)) {
+      get().recordRecentFile(tab.path);
+    }
+    const pane: EditorPane =
+      state.isSplit && state.focusedPane === "secondary" ? "secondary" : "primary";
+    const targetTabs = pane === "secondary" ? state.secondaryTabs : state.tabs;
+    const existing = targetTabs.find((t) => t.id === tab.id);
+    if (existing) {
+      if (pane === "secondary") {
+        set({ secondaryActiveTabId: existing.id, focusedPane: "secondary" });
+      } else {
+        set({ activeTabId: existing.id });
+        void persistActiveTabId(existing.id);
+      }
+      return;
+    }
+
+    const previewTab: FileTab = { ...tab, isPreviewTab: true };
+    // 被顶替的预览标签按设计不会有未保存改动（编辑会立即固定它），dirty 时保险起见另开新标签
+    const previewIndex = targetTabs.findIndex((t) => t.isPreviewTab && !t.isDirty);
+    if (previewIndex !== -1) {
+      disposeTabResources(targetTabs[previewIndex].id);
+    }
+
+    if (pane === "secondary") {
+      const nextTabs = [...state.secondaryTabs];
+      if (previewIndex !== -1) {
+        nextTabs[previewIndex] = previewTab;
+      } else {
+        nextTabs.push(previewTab);
+      }
+      set({
+        secondaryTabs: nextTabs,
+        secondaryActiveTabId: previewTab.id,
+        focusedPane: "secondary",
+      });
+      return;
+    }
+
+    if (previewIndex !== -1) {
+      // 原位顶替不改变标签数量，无需触发上限裁剪
+      const nextTabs = [...state.tabs];
+      nextTabs[previewIndex] = previewTab;
+      persistTabsState(nextTabs, previewTab.id);
+      set({
+        tabs: nextTabs,
+        activeTabId: previewTab.id,
+        openFiles: nextTabs.map((item) => item.path),
+      });
+      return;
+    }
+
+    set((current) => {
+      const limitedTabsState = enforceTabLimit(
+        [...current.tabs, previewTab],
+        previewTab.id,
+        current.maxOpenTabs,
+      );
+      persistTabsState(limitedTabsState.tabs, limitedTabsState.activeTabId);
+      limitedTabsState.closedTabs.forEach((closed) => disposeTabResources(closed.id));
+      if (limitedTabsState.closedTabs.length > 0) {
+        queueMicrotask(() => {
+          get().showNotification(formatAutoClosedTabsMessage(limitedTabsState.closedTabs), "info");
+        });
+      }
+      return {
+        tabs: limitedTabsState.tabs,
+        activeTabId: limitedTabsState.activeTabId,
+        openFiles: limitedTabsState.openFiles,
+      };
+    });
+  },
+
+  /** 固定预览标签；两个分栏中同 id 的标签一起固定 */
+  pinTab: (id: string) =>
+    set((state) => {
+      const pin = (tab: FileTab) =>
+        tab.id === id && tab.isPreviewTab ? { ...tab, isPreviewTab: false } : tab;
+      return {
+        tabs: state.tabs.map(pin),
+        secondaryTabs: state.secondaryTabs.map(pin),
+      };
+    }),
 
   openChatSessionTab: (sessionId: number) => {
     const title = get().chatSessions.find((s) => s.id === sessionId)?.title ?? "";
@@ -213,11 +326,11 @@ export const createTabsSlice: StateCreator<
   updateContent: (id: string, content: string) => {
     set((state) => {
       const newTabs = state.tabs.map((t) =>
-        t.id === id ? { ...t, content, isDirty: true } : t,
+        t.id === id ? { ...t, content, isDirty: true, isPreviewTab: false } : t,
       );
       const newSecondaryTabs = state.isSplit
         ? state.secondaryTabs.map((t) =>
-            t.id === id ? { ...t, content, isDirty: true } : t,
+            t.id === id ? { ...t, content, isDirty: true, isPreviewTab: false } : t,
           )
         : state.secondaryTabs;
       const updatedTab = newTabs.find((tab) => tab.id === id);
@@ -233,7 +346,8 @@ export const createTabsSlice: StateCreator<
 
   markTabDirty: (id: string) => {
     set((state) => {
-      const markDirty = (t: FileTab) => (t.id === id ? { ...t, isDirty: true } : t);
+      const markDirty = (t: FileTab) =>
+        t.id === id ? { ...t, isDirty: true, isPreviewTab: false } : t;
       const newTabs = state.tabs.map(markDirty);
       const newSecondaryTabs = state.isSplit
         ? state.secondaryTabs.map(markDirty)
@@ -510,8 +624,18 @@ export const createTabsSlice: StateCreator<
       get().recordRecentFile(tab.path);
     }
     set((s) => {
-      if (s.secondaryTabs.some((t) => t.id === tab.id)) {
-        return { secondaryActiveTabId: tab.id, focusedPane: "secondary" };
+      const existing = s.secondaryTabs.find((t) => t.id === tab.id);
+      if (existing) {
+        return {
+          // 以普通方式再次打开时，预览标签转为固定标签
+          secondaryTabs: existing.isPreviewTab
+            ? s.secondaryTabs.map((t) =>
+                t.id === tab.id ? { ...t, isPreviewTab: false } : t,
+              )
+            : s.secondaryTabs,
+          secondaryActiveTabId: tab.id,
+          focusedPane: "secondary",
+        };
       }
       return {
         secondaryTabs: [...s.secondaryTabs, tab],

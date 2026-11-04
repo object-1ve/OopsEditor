@@ -117,6 +117,10 @@ export interface EditorState {
   reloadTabFromDisk: (id: string) => void;
   setHoveredPath: (path: string | null) => void;
   openTab: (tab: FileTab) => void;
+  /** 以预览标签打开：同栏已有预览标签时原位顶替，编辑或双击后固定 */
+  openPreviewTab: (tab: FileTab) => void;
+  /** 把预览标签固定为普通标签（双击文件 / 右键「固定标签页」） */
+  pinTab: (id: string) => void;
   openChatSessionTab: (sessionId: number) => void;
   closeTab: (id: string) => void;
   closeTabs: (ids: string[]) => void;

@@ -27,6 +27,7 @@ import {
 } from "@dnd-kit/sortable";
 import ContextMenu from "../ContextMenu";
 import { formatTimestampName } from "@/utils/format";
+import { buildTabId } from "@/utils/path";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
   findWorkspaceRoot,
@@ -74,6 +75,8 @@ export default function Sidebar() {
   const showNotification = useEditorStore((s) => s.showNotification);
   const addTerminal = useEditorStore((s) => s.addTerminal);
   const openTab = useEditorStore((s) => s.openTab);
+  const openPreviewTab = useEditorStore((s) => s.openPreviewTab);
+  const pinTab = useEditorStore((s) => s.pinTab);
   const tabs = useEditorStore((s) => s.tabs);
   const secondaryTabs = useEditorStore((s) => s.secondaryTabs);
   const rebasePinnedFilePath = useEditorStore((s) => s.rebasePinnedFilePath);
@@ -213,6 +216,30 @@ export default function Sidebar() {
     [openTab, showNotification],
   );
 
+  /** 单击文件：以预览标签打开，同一分栏只保留一个预览标签 */
+  const openFilePreview = useCallback(
+    async (filePath: string, fileSize?: number) => {
+      await openFileTab(filePath, openPreviewTab, showNotification, fileSize);
+    },
+    [openPreviewTab, showNotification],
+  );
+
+  /** 双击文件：把单击产生的预览标签固定；预览尚未打开完成时按普通标签打开 */
+  const handleRowDoubleClick = useCallback(
+    (e: React.MouseEvent, entry: DirEntry) => {
+      e.stopPropagation();
+      if (entry.is_dir) return;
+      const tabId = buildTabId(entry.path, "text");
+      const state = useEditorStore.getState();
+      if ([...state.tabs, ...state.secondaryTabs].some((tab) => tab.id === tabId)) {
+        pinTab(tabId);
+        return;
+      }
+      void openFile(entry.path, entry.size);
+    },
+    [openFile, pinTab],
+  );
+
   const handleOpenFolder = useCallback(async () => {
     try {
       const selected = await open({ directory: true, multiple: false });
@@ -326,10 +353,11 @@ export default function Sidebar() {
       if (entry.is_dir) {
         toggleFolderExpanded(entry.path);
       } else {
-        void openFile(entry.path, entry.size);
+        // VS Code 行为：单击只是预览，双击才固定标签
+        void openFilePreview(entry.path, entry.size);
       }
     },
-    [selectionAnchor, getVisibleRowPaths, toggleFolderExpanded, openFile],
+    [selectionAnchor, getVisibleRowPaths, toggleFolderExpanded, openFilePreview],
   );
 
   // ── 顶部标签栏右键「在左侧边栏中定位」：展开目录链、选中、滚动并高亮 ──
@@ -1470,6 +1498,7 @@ export default function Sidebar() {
                     selectedPaths={selectedPaths}
                     cutSourcePaths={cutSourcePaths}
                     onRowClick={handleRowClick}
+                    onRowDoubleClick={handleRowDoubleClick}
                     registerEntry={registerEntry}
                     onItemDragStart={handleItemDragStart}
                     onItemDragEnd={handleItemDragEnd}

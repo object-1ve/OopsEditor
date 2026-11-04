@@ -17,6 +17,7 @@ const RootFolder = memo(function RootFolder({
   selectedPaths,
   cutSourcePaths,
   onRowClick,
+  onRowDoubleClick,
   registerEntry,
   onItemDragStart,
   onItemDragEnd,
@@ -32,6 +33,7 @@ const RootFolder = memo(function RootFolder({
   selectedPaths: string[];
   cutSourcePaths?: string[] | null;
   onRowClick: (e: React.MouseEvent, entry: DirEntry) => void;
+  onRowDoubleClick: (e: React.MouseEvent, entry: DirEntry) => void;
   registerEntry: (entry: DirEntry) => void;
   onItemDragStart: (e: React.DragEvent, entry: DirEntry) => void;
   onItemDragEnd: () => void;
@@ -185,6 +187,7 @@ const RootFolder = memo(function RootFolder({
                 selectedPaths={selectedPaths}
                 cutSourcePaths={cutSourcePaths ?? null}
                 onRowClick={onRowClick}
+                onRowDoubleClick={onRowDoubleClick}
                 registerEntry={registerEntry}
                 onItemDragStart={onItemDragStart}
                 onItemDragEnd={onItemDragEnd}

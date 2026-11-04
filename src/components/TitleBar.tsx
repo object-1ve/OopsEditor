@@ -43,6 +43,7 @@ export default function TitleBar() {
   const pinnedFiles = useEditorStore(s => s.pinnedFiles);
   const pinFile = useEditorStore(s => s.pinFile);
   const unpinFile = useEditorStore(s => s.unpinFile);
+  const pinTab = useEditorStore(s => s.pinTab);
   const replaceTabFileLocation = useEditorStore(s => s.replaceTabFileLocation);
   const reloadTabFromDisk = useEditorStore(s => s.reloadTabFromDisk);
   const showModal = useEditorStore(s => s.showModal);
@@ -260,6 +261,19 @@ export default function TitleBar() {
         ...(item.separatorBefore ? [{ separator: true, label: "", onClick: () => {} }] : []),
         { label: item.label, icon: item.icon, onClick: item.onClick },
       ]),
+      ...(tab.isPreviewTab
+        ? [
+            {
+              label: "固定标签页",
+              icon: <Pin size={14} />,
+              onClick: () => {
+                pinTab(tab.id);
+                showNotification(`已固定标签页: ${tab.name}`, "success");
+              },
+            },
+            { separator: true, label: "", onClick: () => {} },
+          ]
+        : []),
       { separator: true, label: "", onClick: () => {} },
       {
         label: isPinnedToSidebar ? "从左侧边栏取消固定" : "固定到左侧边栏",
@@ -321,7 +335,7 @@ export default function TitleBar() {
         onClick: () => handleClose({ stopPropagation: () => {} }, tab)
       },
     ];
-  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, reloadTabFromDisk, showNotification, unpinFile, isSplit, revealPathInSidebar]);
+  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, pinTab, reloadTabFromDisk, showNotification, unpinFile, isSplit, revealPathInSidebar]);
   const handleTabDoubleClick = useCallback(async (tab: FileTab) => {
     // 与点击的标签页保持同一文件类型：聊天标签页没有文件后缀，仍按 md 新建
     const extension = isChatTab(tab) ? ".md" : getFileExtension(tab.name);
@@ -369,11 +383,14 @@ export default function TitleBar() {
       {/* Tabs */}
       <div ref={tabStripRef} data-tauri-drag-region className="flex items-center flex-1 overflow-x-auto h-full relative">
         <div className="flex items-center min-w-0 h-full">
-          {tabs.map((tab) => (
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTabId;
+            const isPreviewTab = Boolean(tab.isPreviewTab);
+            return (
             <div
               key={tab.id}
               className={`group relative flex items-center gap-1.5 px-3 h-full text-sm cursor-pointer transition-all duration-150 min-w-10 shrink select-none ${
-                tab.id === activeTabId
+                isActive
                   ? "bg-primary text-text-primary"
                   : "bg-secondary text-text-muted hover:text-text-secondary hover:bg-surface/50"
               } ${hideClose ? "tab-no-close" : ""} ${hideName ? "tab-icon-only" : ""}`}
@@ -382,13 +399,24 @@ export default function TitleBar() {
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
               onMouseEnter={() => !isChatTab(tab) && setHoveredPath(tab.path)}
               onMouseLeave={() => setHoveredPath(null)}
+              title={isPreviewTab ? "预览标签页：双击文件或编辑内容后固定" : undefined}
             >
-              {tab.id === activeTabId && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-accent to-accent-bright rounded-full" />
-              )}
+              {/* 底部状态条：主色=固定标签，暖色=预览标签 */}
+              <div
+                aria-hidden="true"
+                className={`absolute bottom-0 left-0 right-0 h-[2px] rounded-full transition-colors ${
+                  isPreviewTab
+                    ? isActive
+                      ? "bg-accent-warm"
+                      : "bg-accent-warm/45"
+                    : isActive
+                      ? "bg-accent"
+                      : "bg-transparent"
+                }`}
+              />
 
               {isChatTab(tab) ? (
-                <MessagesSquare size={15} className={tab.id === activeTabId ? "text-accent" : ""} />
+                <MessagesSquare size={15} className={isActive ? "text-accent" : ""} />
               ) : (
                 <MaterialFileIcon
                   name={tab.name}
@@ -396,7 +424,7 @@ export default function TitleBar() {
                   size={16}
                 />
               )}
-              <span className="tab-name truncate max-w-28">{tab.name}</span>
+              <span className={`tab-name truncate max-w-28 ${isPreviewTab ? "italic" : ""}`}>{tab.name}</span>
               {tab.isDirty && <span className="tab-dirty text-accent-warm text-xs shrink-0">&#9679;</span>}
               <button
                 className="tab-close ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 cursor-pointer text-text-muted hover:text-text-primary"
@@ -406,7 +434,8 @@ export default function TitleBar() {
                 <X size={11} />
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

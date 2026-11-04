@@ -22,6 +22,7 @@ interface FileNodeProps extends DirEntry {
   selectedPaths: string[];
   cutSourcePaths?: string[] | null;
   onRowClick: (e: React.MouseEvent, entry: DirEntry) => void;
+  onRowDoubleClick: (e: React.MouseEvent, entry: DirEntry) => void;
   registerEntry: (entry: DirEntry) => void;
   onItemDragStart: (e: React.DragEvent, entry: DirEntry) => void;
   onItemDragEnd: () => void;
@@ -36,7 +37,7 @@ interface FileNodeProps extends DirEntry {
 }
 
 const FileNode = memo(function FileNode({
-  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, selectedPaths, cutSourcePaths, onRowClick, registerEntry, onItemDragStart, onItemDragEnd, onFolderDragOver, onFolderDragLeave, onFolderDrop, dropTargetPath, dragMoveSourcePath, onContextMenu, onRefresh, revealHighlight,
+  path, name, is_dir, size, modified_at, level, guideLevels, isLastSibling, selectedPaths, cutSourcePaths, onRowClick, onRowDoubleClick, registerEntry, onItemDragStart, onItemDragEnd, onFolderDragOver, onFolderDragLeave, onFolderDrop, dropTargetPath, dragMoveSourcePath, onContextMenu, onRefresh, revealHighlight,
 }: FileNodeProps) {
   const {
     showNotification,
@@ -182,6 +183,7 @@ const FileNode = memo(function FileNode({
         data-sidebar-path={path}
         draggable
         onClick={(e) => onRowClick(e, { path, name, is_dir, size, modified_at })}
+        onDoubleClick={(e) => onRowDoubleClick(e, { path, name, is_dir, size, modified_at })}
         onDragStart={(e) => onItemDragStart(e, { path, name, is_dir, size, modified_at })}
         onDragEnd={onItemDragEnd}
         onMouseEnter={() => setHoveredPath(path)}
@@ -268,6 +270,7 @@ const FileNode = memo(function FileNode({
               selectedPaths={selectedPaths}
               cutSourcePaths={cutSourcePaths ?? null}
               onRowClick={onRowClick}
+              onRowDoubleClick={onRowDoubleClick}
               registerEntry={registerEntry}
               onItemDragStart={onItemDragStart}
               onItemDragEnd={onItemDragEnd}
