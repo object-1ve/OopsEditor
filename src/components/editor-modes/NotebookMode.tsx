@@ -63,6 +63,7 @@ import {
   type NotebookFindMatch,
 } from "@/utils/notebookFind";
 import { registerMarkdownHover } from "@/services/markdownHover";
+import { attachMarkdownImageHover } from "@/services/markdownImageHover";
 import {
   findMarkdownImageAtColumn,
   findUrlAtColumn,
@@ -294,6 +295,15 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
             },
           }));
           editor.onDidDispose(disposeHover);
+          // 图片语法悬浮：缩略图可点击放大（不带文件名）
+          const disposeImageHover = attachMarkdownImageHover(editor, () => ({
+            docPath: docPath ?? "",
+            resolveAttachment: (name) => {
+              const bundle = attachmentsRef.current?.[name];
+              return bundle ? attachmentDataUrl(bundle) : null;
+            },
+          }));
+          editor.onDidDispose(disposeImageHover);
         }
         // Monaco 自带 Ctrl+Enter（插入行）会抢走按键，运行快捷键改在窗口捕获阶段处理
         editor.onDidFocusEditorText(() => onFocus(cellId));
@@ -955,11 +965,8 @@ function NotebookMarkdownCell({
               src={url}
               alt={alt ?? ""}
               className="cursor-zoom-in"
-              title="Ctrl+点击查看大图"
-              onClick={(event) => {
-                if (!event.ctrlKey && !event.metaKey) return;
-                onImageClick?.(src, alt ?? "");
-              }}
+              title="点击查看大图"
+              onClick={() => onImageClick?.(src, alt ?? "")}
             />
           );
         }
@@ -970,11 +977,8 @@ function NotebookMarkdownCell({
             src={resolveMarkdownImageSrc(src, basePath)}
             alt={alt ?? ""}
             className="cursor-zoom-in"
-            title="Ctrl+点击查看大图"
-            onClick={(event) => {
-              if (!event.ctrlKey && !event.metaKey) return;
-              onImageClick?.(src, alt ?? "");
-            }}
+            title="点击查看大图"
+            onClick={() => onImageClick?.(src, alt ?? "")}
           />
         );
       },

@@ -8,6 +8,7 @@ import { useMonacoScrollMemory } from "./sharedHooks";
 import { MarkdownPreviewPane } from "./MarkdownMode";
 import { registerMarkdownSnippets, type MarkdownSnippetsHandle } from "./markdownSnippets";
 import { registerMarkdownHover } from "@/services/markdownHover";
+import { attachMarkdownImageHover } from "@/services/markdownImageHover";
 import type { EditorModeContext, EditorModeAdapter, SharedContextMenuItem } from "./types";
 
 /**
@@ -44,6 +45,7 @@ function TextModeView({
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const snippetsHandleRef = useRef<MarkdownSnippetsHandle | null>(null);
   const markdownHoverCleanupRef = useRef<(() => void) | null>(null);
+  const imageHoverCleanupRef = useRef<(() => void) | null>(null);
   /** 悬浮预览要按当前文档目录解析相对路径：路径在保存/另存后会变，用 ref 保持最新 */
   const docPathRef = useRef(activeTab.path ?? "");
   docPathRef.current = activeTab.path ?? "";
@@ -60,6 +62,8 @@ function TextModeView({
       snippetsHandleRef.current = null;
       markdownHoverCleanupRef.current?.();
       markdownHoverCleanupRef.current = null;
+      imageHoverCleanupRef.current?.();
+      imageHoverCleanupRef.current = null;
     };
   }, []);
 
@@ -168,6 +172,11 @@ function TextModeView({
           // 悬浮预览：![](图片) 缩略图 / [文本](本地文件) 内容预览
           markdownHoverCleanupRef.current?.();
           markdownHoverCleanupRef.current = registerMarkdownHover(editor.getModel(), () => ({
+            docPath: docPathRef.current,
+          }));
+          // 图片语法悬浮：缩略图可点击放大（不带文件名）
+          imageHoverCleanupRef.current?.();
+          imageHoverCleanupRef.current = attachMarkdownImageHover(editor, () => ({
             docPath: docPathRef.current,
           }));
         }

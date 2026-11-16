@@ -22,8 +22,10 @@ import { copyTextToClipboard } from "@/utils/clipboard";
 import {
   createMarkdownHeadingIdFactory,
   extractTextFromReactNode,
+  resolveMarkdownImagePath,
   resolveMarkdownImageSrc,
 } from "@/utils/markdown";
+import { useEditorStore } from "@/store/editor";
 import ContextMenu from "@/components/ContextMenu";
 import type { MarkdownOutlineTarget } from "@/store/types";
 import type { FileTab } from "@/types";
@@ -86,13 +88,29 @@ function useMarkdownComponents(activeTab: FileTab) {
         const lineProps = line === undefined ? {} : { "data-line": line };
 
         const resolvedSrc = resolveMarkdownImageSrc(rawSrc, activeTab.path);
+        const openPreview = () => {
+          const store = useEditorStore.getState();
+          const raw = String(rawSrc).trim();
+          const name = alt || "图片";
+          if (/^(https?|data|blob|asset):/i.test(raw)) {
+            store.openImagePreview({ path: raw, name, url: raw });
+            return;
+          }
+          const absolute = resolveMarkdownImagePath(raw, activeTab.path);
+          if (absolute) store.openImagePreview({ path: absolute, name });
+        };
 
         return createElement("img", {
           alt: alt || "image",
           ...props,
           ...lineProps,
           src: resolvedSrc,
-          style: { maxWidth: "100%", display: "block" },
+          title: "点击查看大图",
+          onClick: (event: ReactMouseEvent<HTMLImageElement>) => {
+            event.preventDefault();
+            openPreview();
+          },
+          style: { maxWidth: "100%", display: "block", cursor: "zoom-in" },
           onError: () => {
             console.error("Image load error:", resolvedSrc);
           },

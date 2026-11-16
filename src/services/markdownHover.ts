@@ -20,7 +20,6 @@ import {
 } from "monaco-editor";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
-  findMarkdownImageAtColumn,
   findMarkdownLinkAtColumn,
   resolveMarkdownFilePath,
   resolveMarkdownImagePath,
@@ -133,21 +132,18 @@ async function buildImageContents(
     }
     const url = context.resolveAttachment?.(name) ?? null;
     if (!url) return null;
-    return [imageMarkdown(alt, url), pathLine(`单元格附件 ${name}`)];
+    return [imageMarkdown(alt, url)];
   }
 
   if (/^(https?|data|blob|asset):/i.test(trimmed)) {
-    return [
-      imageMarkdown(alt, trimmed),
-      pathLine(/^data:/i.test(trimmed) ? "内嵌图片" : trimmed),
-    ];
+    return [imageMarkdown(alt, trimmed)];
   }
 
   const absolute = resolveMarkdownImagePath(trimmed, context.docPath);
   if (!absolute) return null;
   const exists = await invoke<boolean>("path_exists", { path: absolute }).catch(() => false);
   if (!exists) return null;
-  return [imageMarkdown(alt, convertFileSrc(absolute)), pathLine(absolute)];
+  return [imageMarkdown(alt, convertFileSrc(absolute))];
 }
 
 /**
@@ -229,16 +225,7 @@ async function provideHover(
   const line = model.getLineContent(position.lineNumber);
   const column = position.column - 1;
 
-  const image = findMarkdownImageAtColumn(line, column);
-  if (image) {
-    const contents = await buildImageContents(image.alt, image.src, context);
-    if (!contents) return null;
-    return {
-      range: new Range(position.lineNumber, image.start + 1, position.lineNumber, image.end + 1),
-      contents,
-    };
-  }
-
+  // 图片语法由 markdownImageHover 的自定义面板负责（缩略图可点击放大），这里只管链接
   const link = findMarkdownLinkAtColumn(line, column);
   if (!link) return null;
   const contents = await buildLinkContents(link.text, link.target, context);
