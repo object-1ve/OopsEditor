@@ -134,6 +134,7 @@ const useEditorStore = create<EditorState>()((...a) => {
         rootPathOrder: settings.rootPathOrder || settings.rootPaths || [],
         customFontPath: settings.customFontPath,
         customFontApplyToUi: settings.customFontApplyToUi,
+        updateProxy: settings.updateProxy,
       });
 
       // 自定义字体是运行期加载的 FontFace，重启后进程内状态清空，必须重新应用一次（失败不阻塞启动）

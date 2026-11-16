@@ -1,5 +1,5 @@
 import { ArrowUpCircle, X } from "lucide-react";
-import { confirmUpdate, dismissUpdate, useUpdaterDialog } from "@/hooks/useUpdater";
+import { cancelUpdate, confirmUpdate, dismissUpdate, useUpdaterDialog } from "@/hooks/useUpdater";
 
 /** 应用内更新弹窗：挂在 App 根节点。available 确认 → downloading 进度 → ready 退出安装。 */
 export default function UpdateDialog() {
@@ -54,6 +54,18 @@ export default function UpdateDialog() {
             </div>
           )}
         </div>
+
+        {stage === "downloading" && (
+          <div className="flex justify-end gap-2 border-t border-border bg-surface/30 px-5 py-4">
+            <button
+              onClick={cancelUpdate}
+              className="rounded-md border border-border px-4 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text"
+              title="停止下载并放弃本次更新"
+            >
+              中断更新
+            </button>
+          </div>
+        )}
 
         {stage === "available" && (
           <div className="flex justify-end gap-2 border-t border-border bg-surface/30 px-5 py-4">

@@ -34,10 +34,14 @@ export default function SettingsModal() {
     customFontApplyToUi,
     setCustomFont,
     setCustomFontApplyToUi,
+    updateProxy,
+    setUpdateProxy,
   } = useEditorStore();
   const modalRef = useRef<HTMLDivElement>(null);
   const { checking } = useUpdaterDialog();
   const [isFontBusy, setIsFontBusy] = useState(false);
+  // 代理输入草稿：失焦/回车才落库，避免每敲一个字符写一次 SQLite
+  const [proxyDraft, setProxyDraft] = useState(updateProxy);
 
   /** 选字体：只挑文件、不做任何读取，实际加载交给 setCustomFont */
   const handlePickFont = useCallback(async () => {
@@ -52,6 +56,18 @@ export default function SettingsModal() {
       setIsFontBusy(false);
     }
   }, [setCustomFont]);
+
+  useEffect(() => {
+    if (isSettingsOpen) {
+      setProxyDraft(updateProxy);
+    }
+  }, [isSettingsOpen, updateProxy]);
+
+  const commitProxy = useCallback(() => {
+    if (proxyDraft.trim() !== updateProxy) {
+      setUpdateProxy(proxyDraft);
+    }
+  }, [proxyDraft, setUpdateProxy, updateProxy]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -358,12 +374,12 @@ export default function SettingsModal() {
               />
             </div>
           </div>
-          <div className="rounded-xl border border-border bg-primary/40 p-4">
+          <div className="space-y-3 rounded-xl border border-border bg-primary/40 p-4">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
                 <div className="text-sm font-medium text-text">软件更新</div>
                 <p className="text-xs leading-relaxed text-text-secondary">
-                  当前版本 v{APP_VERSION}，发现新版本时启动后会自动提示。
+                  当前版本 v{APP_VERSION}，发现新版本时启动后会自动提示；下载中可以随时中断。
                 </p>
               </div>
               <button
@@ -375,6 +391,28 @@ export default function SettingsModal() {
               >
                 {checking ? "检查中…" : "检查更新"}
               </button>
+            </div>
+            <div className="space-y-1 border-t border-border pt-3">
+              <label htmlFor="update-proxy" className="text-xs font-medium text-text">
+                更新代理
+              </label>
+              <input
+                id="update-proxy"
+                value={proxyDraft}
+                onChange={(event) => setProxyDraft(event.currentTarget.value)}
+                onBlur={commitProxy}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  }
+                }}
+                placeholder="http://127.0.0.1:7897"
+                spellCheck={false}
+                className="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text outline-none transition-colors focus:border-accent"
+              />
+              <p className="text-[11px] leading-relaxed text-text-muted/85">
+                留空则直连；只作用于检查与下载更新。可省略协议，按 http:// 处理。
+              </p>
             </div>
           </div>
         </div>

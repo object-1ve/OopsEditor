@@ -43,6 +43,8 @@ export const createUiSlice: StateCreator<
     | "maxRecentFiles"
     | "customFontPath"
     | "customFontApplyToUi"
+    | "updateProxy"
+    | "setUpdateProxy"
     | "setCustomFont"
     | "setCustomFontApplyToUi"
     | "isSettingsOpen"
@@ -93,6 +95,7 @@ export const createUiSlice: StateCreator<
   maxRecentFiles: DEFAULT_MAX_RECENT_FILES,
   customFontPath: '',
   customFontApplyToUi: false,
+  updateProxy: '',
   searchJumpTarget: null,
   isSettingsOpen: false,
   isSearchOpen: false,
@@ -213,6 +216,12 @@ export const createUiSlice: StateCreator<
     // 没有选中字体时只记偏好，等选了字体再一并生效
     const { customFontPath } = get();
     if (customFontPath) await get().setCustomFont(customFontPath, applyToUi);
+  },
+
+  setUpdateProxy: (value: string) => {
+    const trimmed = value.trim();
+    set({ updateProxy: trimmed });
+    void saveSetting("updateProxy", trimmed);
   },
 
   setMaxRecentFolders: (value: number) => {

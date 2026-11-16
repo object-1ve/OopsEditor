@@ -78,6 +78,8 @@ export interface AppSettings {
   customFontPath: string;
   /** 自定义字体是否同时作用于界面（否则只作用于编辑器/终端等代码区域） */
   customFontApplyToUi: boolean;
+  /** 检查/下载更新走的代理地址；空串表示不指定（直连或系统代理） */
+  updateProxy: string;
 }
 
 // chat = 会话信息（仅会话视图显示），info/outline = 文件信息与目录（仅文件视图显示）
@@ -131,6 +133,7 @@ export const defaultSettings: AppSettings = {
   maxRecentFiles: DEFAULT_MAX_RECENT_FILES,
   customFontPath: '',
   customFontApplyToUi: false,
+  updateProxy: '',
 };
 
 // ── SQLite-backed save / load ─────────────────────────────────
@@ -226,6 +229,9 @@ export async function loadSettings(): Promise<AppSettings> {
 
     const savedCustomFontPath = get<string>('customFontPath');
     if (typeof savedCustomFontPath === 'string') settings.customFontPath = savedCustomFontPath;
+
+    const savedUpdateProxy = get<string>('updateProxy');
+    if (typeof savedUpdateProxy === 'string') settings.updateProxy = savedUpdateProxy;
 
     const savedCustomFontApplyToUi = get<boolean>('customFontApplyToUi');
     if (typeof savedCustomFontApplyToUi === 'boolean') {

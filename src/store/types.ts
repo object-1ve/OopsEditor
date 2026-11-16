@@ -97,6 +97,8 @@ export interface EditorState {
   customFontPath: string;
   /** 自定义字体是否同时作用于界面（否则只作用于编辑器/终端等代码区域） */
   customFontApplyToUi: boolean;
+  /** 检查/下载更新走的代理地址；空串表示不指定 */
+  updateProxy: string;
   /** 会话面板数据（侧边栏标签与主区视图共享） */
   chatSessions: ChatSession[];
   chatActiveSessionId: number | null;
@@ -219,6 +221,7 @@ export interface EditorState {
   setMaxRecentFiles: (value: number) => void;
   setCustomFont: (path: string, applyToUi?: boolean) => Promise<void>;
   setCustomFontApplyToUi: (applyToUi: boolean) => Promise<void>;
+  setUpdateProxy: (value: string) => void;
   setRootPathOrder: (order: string[]) => void;
   toggleSplit: () => void;
   setSplit: (enabled: boolean) => void;
