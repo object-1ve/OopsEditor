@@ -118,13 +118,18 @@ export function findMarkdownImageAtColumn(
   return null;
 }
 
-/** Markdown 图片地址 → 本地绝对路径；http/data/asset/attachment 等非文件地址返回 null */
-export function resolveMarkdownImagePath(
-  rawSrc: string,
+/**
+ * Markdown 里的路径（相对路径 / 绝对路径 / file://）→ 本地绝对路径。
+ * 只做路径解析，不判断协议；解析不了（空串、没有基准目录）返回 null。
+ */
+export function resolveMarkdownFilePath(
+  rawPath: string,
   docPath?: string | null,
 ): string | null {
-  let src = rawSrc.trim();
-  if (!src || /^(https?|data|blob|asset|attachment):/i.test(src)) return null;
+  let src = rawPath.trim();
+  if (!src) return null;
+  if (src.startsWith("<") && src.endsWith(">")) src = src.slice(1, -1).trim();
+  if (!src) return null;
 
   if (src.startsWith("file://")) {
     src = src.replace(/^file:\/\/\/?/, "");
@@ -146,6 +151,45 @@ export function resolveMarkdownImagePath(
   if (lastSeparator <= 0) return null;
   const separator = docPath.includes("\\") ? "\\" : "/";
   return collapsePathSegments(`${docPath.substring(0, lastSeparator)}${separator}${src}`);
+}
+
+/** Markdown 图片地址 → 本地绝对路径；http/data/asset/attachment 等非文件地址返回 null */
+export function resolveMarkdownImagePath(
+  rawSrc: string,
+  docPath?: string | null,
+): string | null {
+  const src = rawSrc.trim();
+  if (!src || /^(https?|data|blob|asset|attachment):/i.test(src)) return null;
+  return resolveMarkdownFilePath(src, docPath);
+}
+
+/** 在一行文本里找 column（0 起）命中的非图片 Markdown 链接 `[文本](目标)` */
+export interface LineLinkHit {
+  /** 整段 `[文本](目标)` 在行内的区间 */
+  start: number;
+  end: number;
+  text: string;
+  target: string;
+}
+
+const MARKDOWN_ANY_LINK_PATTERN = /(!?)\[([^\]]*)\]\(([^)\n]+)\)/g;
+
+export function findMarkdownLinkAtColumn(
+  line: string,
+  column: number,
+): LineLinkHit | null {
+  MARKDOWN_ANY_LINK_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MARKDOWN_ANY_LINK_PATTERN.exec(line)) !== null) {
+    // `![alt](src)` 是图片，交给 findMarkdownImageAtColumn
+    if (match[1] === "!") continue;
+    const start = match.index;
+    const end = start + match[0].length;
+    if (column >= start && column < end) {
+      return { start, end, text: match[2], target: match[3].trim() };
+    }
+  }
+  return null;
 }
 
 /** 预览用的图片 src：本地文件转 asset 协议，URL / attachment: 原样返回 */

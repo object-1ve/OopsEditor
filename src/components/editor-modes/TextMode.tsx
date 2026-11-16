@@ -7,6 +7,7 @@ import { FilePenLine } from "lucide-react";
 import { useMonacoScrollMemory } from "./sharedHooks";
 import { MarkdownPreviewPane } from "./MarkdownMode";
 import { registerMarkdownSnippets, type MarkdownSnippetsHandle } from "./markdownSnippets";
+import { registerMarkdownHover } from "@/services/markdownHover";
 import type { EditorModeContext, EditorModeAdapter, SharedContextMenuItem } from "./types";
 
 /**
@@ -42,6 +43,10 @@ function TextModeView({
 >) {
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const snippetsHandleRef = useRef<MarkdownSnippetsHandle | null>(null);
+  const markdownHoverCleanupRef = useRef<(() => void) | null>(null);
+  /** 悬浮预览要按当前文档目录解析相对路径：路径在保存/另存后会变，用 ref 保持最新 */
+  const docPathRef = useRef(activeTab.path ?? "");
+  docPathRef.current = activeTab.path ?? "";
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const isSyncingRef = useRef(false);
   const restoreMonacoScroll = useMonacoScrollMemory(activeTab.id);
@@ -53,6 +58,8 @@ function TextModeView({
       monacoMemoryCleanupRef.current = null;
       snippetsHandleRef.current?.release();
       snippetsHandleRef.current = null;
+      markdownHoverCleanupRef.current?.();
+      markdownHoverCleanupRef.current = null;
     };
   }, []);
 
@@ -158,6 +165,11 @@ function TextModeView({
         // markdown 文件：注册 @ 片段补全（引用计数，卸载时释放）
         if (activeTab.language === "markdown") {
           snippetsHandleRef.current = registerMarkdownSnippets();
+          // 悬浮预览：![](图片) 缩略图 / [文本](本地文件) 内容预览
+          markdownHoverCleanupRef.current?.();
+          markdownHoverCleanupRef.current = registerMarkdownHover(editor.getModel(), () => ({
+            docPath: docPathRef.current,
+          }));
         }
       }}
       options={{

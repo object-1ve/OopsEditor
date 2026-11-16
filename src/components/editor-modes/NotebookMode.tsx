@@ -62,6 +62,7 @@ import {
   notebookMatchKey,
   type NotebookFindMatch,
 } from "@/utils/notebookFind";
+import { registerMarkdownHover } from "@/services/markdownHover";
 import {
   findMarkdownImageAtColumn,
   findUrlAtColumn,
@@ -186,6 +187,10 @@ interface NotebookCellEditorProps {
   onPasteImage: (cellId: string, file: File) => Promise<string | null>;
   onFocus: (cellId: string) => void;
   onBlur: (cellId: string) => void;
+  /** Notebook 文件路径：悬浮预览按它的目录解析相对路径 */
+  docPath?: string;
+  /** 该单元格的 attachments（attachment: 图片的悬浮缩略图） */
+  attachments?: Record<string, Record<string, string>>;
   onReady: (cellId: string, editor: MonacoEditorInstance) => void;
   /** 编辑器卸载（切到 Markdown 预览 / 单元格被删）：把实例从缓存里摘掉 */
   onDispose: (cellId: string) => void;
@@ -207,8 +212,13 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
   onBlur,
   onReady,
   onDispose,
+  docPath,
+  attachments,
 }: NotebookCellEditorProps) {
   const [height, setHeight] = useState(MIN_EDITOR_HEIGHT);
+  // 附件随粘贴/删除变化，悬浮时要拿到最新的那一份
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
 
   const options = useMemo(
     () => ({
@@ -273,6 +283,18 @@ const NotebookCellEditor = memo(function NotebookCellEditor({
           void openUrl(hit.url);
         });
         editor.onDidDispose(() => linkClick.dispose());
+
+        // Markdown 单元格的悬浮预览：![](图片) 缩略图（含 attachment:）/ [文本](本地文件) 内容预览
+        if (language === "markdown") {
+          const disposeHover = registerMarkdownHover(editor.getModel(), () => ({
+            docPath: docPath ?? "",
+            resolveAttachment: (name) => {
+              const bundle = attachmentsRef.current?.[name];
+              return bundle ? attachmentDataUrl(bundle) : null;
+            },
+          }));
+          editor.onDidDispose(disposeHover);
+        }
         // Monaco 自带 Ctrl+Enter（插入行）会抢走按键，运行快捷键改在窗口捕获阶段处理
         editor.onDidFocusEditorText(() => onFocus(cellId));
         editor.onDidBlurEditorWidget(() => onBlur(cellId));
@@ -1838,6 +1860,8 @@ function NotebookModeView({
           {doc.cells.map((cell, index) => {
             const isMarkdownPreview =
               cell.cellType === "markdown" && previewMarkdownIds.has(cell.id);
+            const cellAttachments =
+              cell.cellType === "markdown" ? readCellAttachments(cell) : undefined;
             const isRunningCell = runningCellId === cell.id;
             return (
               <div
@@ -1939,7 +1963,7 @@ function NotebookModeView({
                       >
                         <NotebookMarkdownCell
                           source={cell.source}
-                          attachments={readCellAttachments(cell)}
+                          attachments={cellAttachments}
                           basePath={activeTab.path}
                           onImageClick={(rawSrc, alt) =>
                             handleMarkdownImageClick(cell.id, rawSrc, alt)
@@ -1964,6 +1988,8 @@ function NotebookModeView({
                         onSave={handleSave}
                         onImageClick={handleMarkdownImageClick}
                         onPasteImage={handlePasteImage}
+                        docPath={activeTab.path}
+                        attachments={cellAttachments}
                         onFocus={handleEditorFocus}
                         onBlur={handleEditorBlur}
                         onReady={handleEditorReady}
