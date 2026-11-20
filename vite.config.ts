@@ -57,14 +57,16 @@ export default defineConfig(() => ({
 
   // Tauri expects a fixed port; fail if that port is not available
   server: {
-    port: 4222,
+    // 4222 落在 Windows 的 Hyper-V/WSL 动态保留区间（如 4206-4305）里会被 EACCES 拒绑，
+    // 这里改用 Vite 默认端口段，避开系统保留区。
+    port: 5173,
     strictPort: true,
     host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 4223,
+          port: 5174,
         }
       : undefined,
     watch: {
