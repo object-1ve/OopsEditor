@@ -24,6 +24,7 @@ export interface EditorModeContext {
   applyTheme: (monaco: Parameters<OnMount>[1]) => void;
   togglePreviewMode: (id: string) => void;
   toggleLivePreviewMode: (id: string) => void;
+  toggleInstantRenderMode: (id: string) => void;
   markdownOutlineTarget: MarkdownOutlineTarget | null;
   clearMarkdownOutlineTarget: () => void;
   showNotification: (message: string, type?: "info" | "error" | "success") => void;

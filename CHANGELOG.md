@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- Markdown **即时渲染模式**：单栏内边写边渲染（右键菜单 / <kbd>Ctrl+Alt+M</kbd> 切换、
+  <kbd>Ctrl+S</kbd> 保存），基于 Vditor IR 模式；正在编辑的块保留源码，其余块直接成形，
+  文档仍是标准 Markdown，YAML Front Matter 原样保留、相对路径图片按当前文档目录解析，
+  对会被往返改写的 HTML 块 / 脚注给出一次性提示
+
 ### Changed
 - 会话改用应用私有目录（`chat-sessions/`）存储，不再写进工作区 `.oops/sessions/`；
   文件名是时间戳 + 随机后缀，会话 id 存在内容里，首次启动自动把旧工作区会话搬进私有目录

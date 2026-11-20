@@ -4,8 +4,9 @@
   "version": "0.1.41",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "node scripts/copy-vditor-assets.mjs && vite",
+    "build": "node scripts/copy-vditor-assets.mjs && tsc && vite build",
+    "postinstall": "node scripts/copy-vditor-assets.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tdev": "tauri dev",
@@ -42,6 +43,7 @@
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "tailwindcss": "^4.3.0",
+    "vditor": "^4.0.1",
     "zustand": "^5.0.13"
   },
   "devDependencies": {

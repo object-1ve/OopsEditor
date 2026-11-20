@@ -199,6 +199,27 @@ export function resolveMarkdownImageSrc(rawSrc: string, docPath?: string | null)
   return absolute ? convertFileSrc(absolute) : rawSrc;
 }
 
+export interface MarkdownFrontMatterSplit {
+  /** 原文的 front matter（含首尾 `---` 行）；没有时为空串 */
+  frontMatter: string;
+  /** front matter 之后的正文 */
+  body: string;
+}
+
+/**
+ * 拆出 YAML Front Matter。
+ *
+ * 即时渲染走的是 HTML ⇄ Markdown 的往返，Front Matter 在 HTML 里只是一段文本，
+ * 往返后会被改写成代码块；这类文档先把头部原样摘出来，保存时再拼回去。
+ */
+export function splitMarkdownFrontMatter(markdown: string): MarkdownFrontMatterSplit {
+  const match = /^(---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$))/.exec(markdown);
+  if (!match) {
+    return { frontMatter: "", body: markdown };
+  }
+  return { frontMatter: match[1], body: markdown.slice(match[1].length) };
+}
+
 export function parseMarkdownHeadings(markdown: string): MarkdownHeading[] {
   const lines = markdown.split(/\r?\n/);
   const nextId = createMarkdownHeadingIdFactory();

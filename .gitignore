@@ -44,6 +44,9 @@ target/
 .ps-tmp/
 tests/
 
+# Vditor runtime assets copied by scripts/copy-vditor-assets.mjs
+public/vditor/
+
 # Examples
 example/
 

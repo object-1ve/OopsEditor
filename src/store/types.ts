@@ -184,6 +184,8 @@ export interface EditorState {
   clearNotification: () => void;
   togglePreviewMode: (id: string) => void;
   toggleLivePreviewMode: (id: string) => void;
+  /** 即时渲染模式：单栏内语法随手成形（与预览 / 实时模式互斥） */
+  toggleInstantRenderMode: (id: string) => void;
   toggleFolderExpanded: (path: string) => void;
   setFolderExpanded: (path: string, expanded: boolean) => void;
   expandFolders: (paths: string[]) => void;

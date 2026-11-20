@@ -74,6 +74,7 @@ export const createTabsSlice: StateCreator<
     | "replaceTabFileLocation"
     | "togglePreviewMode"
     | "toggleLivePreviewMode"
+    | "toggleInstantRenderMode"
     | "pinFile"
     | "unpinFile"
     | "rebasePinnedFilePath"
@@ -537,7 +538,12 @@ export const createTabsSlice: StateCreator<
       const nextTabs = state.tabs.map((tab) => {
         if (tab.id !== id) return tab;
         const nextIsPreviewMode = !Boolean(tab.isPreviewMode);
-        return { ...tab, isPreviewMode: nextIsPreviewMode, isLivePreviewMode: false };
+        return {
+          ...tab,
+          isPreviewMode: nextIsPreviewMode,
+          isLivePreviewMode: false,
+          isInstantRenderMode: false,
+        };
       });
       const updatedTab = nextTabs.find((tab) => tab.id === id);
       const tabIndex = nextTabs.findIndex((tab) => tab.id === id);
@@ -552,7 +558,32 @@ export const createTabsSlice: StateCreator<
       const nextTabs = state.tabs.map((tab) => {
         if (tab.id !== id) return tab;
         const nextIsLivePreviewMode = !Boolean(tab.isLivePreviewMode);
-        return { ...tab, isPreviewMode: false, isLivePreviewMode: nextIsLivePreviewMode };
+        return {
+          ...tab,
+          isPreviewMode: false,
+          isLivePreviewMode: nextIsLivePreviewMode,
+          isInstantRenderMode: false,
+        };
+      });
+      const updatedTab = nextTabs.find((tab) => tab.id === id);
+      const tabIndex = nextTabs.findIndex((tab) => tab.id === id);
+      if (updatedTab && tabIndex !== -1) {
+        persistSingleTabStateNow(updatedTab, tabIndex);
+      }
+      return { tabs: nextTabs };
+    }),
+
+  toggleInstantRenderMode: (id: string) =>
+    set((state) => {
+      const nextTabs = state.tabs.map((tab) => {
+        if (tab.id !== id) return tab;
+        const nextIsInstantRenderMode = !Boolean(tab.isInstantRenderMode);
+        return {
+          ...tab,
+          isPreviewMode: false,
+          isLivePreviewMode: false,
+          isInstantRenderMode: nextIsInstantRenderMode,
+        };
       });
       const updatedTab = nextTabs.find((tab) => tab.id === id);
       const tabIndex = nextTabs.findIndex((tab) => tab.id === id);

@@ -16,6 +16,7 @@ A cross-platform desktop code editor built with **Tauri v2 + React + Monaco Edit
 - **Excel Editing** -- Edit .xlsx/.xlsm: cells and formulas, multiple sheets (add/rename/delete/reorder), range selection and copy-paste, insert/delete rows and columns, draggable and auto-fit sizing, cell formatting (bold/italic/underline, colors, alignment, number formats) and merge, sorting, AutoFilter and find/replace, images (insert or clipboard paste), plus a save-time fidelity warning
 - **Notebook Editing** -- Open .ipynb: cell list (code / Markdown / raw), add, delete and reorder, auto-height code cells, rendering of existing outputs (text, images, HTML, colorized tracebacks), cell execution (local Python, variables persist across cells, Ctrl+Enter / Shift+Enter, run all, interrupt and restart kernel), images pasted from the clipboard into Markdown cells (stored as Jupyter cell.attachments), and save that preserves unmodeled fields and the original source layout
 - **Markdown Preview** -- Live rendering with syntax highlighting
+- **Markdown Instant Rendering** -- Write and render in a single pane (right-click menu or <kbd>Ctrl+Alt+M</kbd>): the block under the cursor keeps its source, everything else renders in place, so bold, headings, tables, code blocks and math take shape as you type; the file stays standard Markdown and YAML front matter is preserved verbatim
 - **Hex Viewer** -- Hex dump for binary files
 - **Clipboard Table** -- Paste table data auto-converts to Markdown tables
 - **Auto Save** -- Automatic content saving to prevent data loss

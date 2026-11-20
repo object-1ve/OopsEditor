@@ -12,6 +12,7 @@ import {
   Columns2,
   Copy,
   FilePenLine,
+  PenLine,
   Redo2,
   RefreshCw,
   Save,
@@ -123,6 +124,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
   const updateContent = useEditorStore(s => s.updateContent);
   const togglePreviewMode = useEditorStore(s => s.togglePreviewMode);
   const toggleLivePreviewMode = useEditorStore(s => s.toggleLivePreviewMode);
+  const toggleInstantRenderMode = useEditorStore(s => s.toggleInstantRenderMode);
   const reloadTabFromDisk = useEditorStore(s => s.reloadTabFromDisk);
   const showNotification = useEditorStore(s => s.showNotification);
   const markdownOutlineTarget = useEditorStore(s => s.markdownOutlineTarget);
@@ -149,7 +151,12 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
   } | null>(null);
   useEffect(() => {
     setEditorContextMenu(null);
-  }, [activeTab?.id, activeTab?.isLivePreviewMode, activeTab?.isPreviewMode]);
+  }, [
+    activeTab?.id,
+    activeTab?.isInstantRenderMode,
+    activeTab?.isLivePreviewMode,
+    activeTab?.isPreviewMode,
+  ]);
 
   useEffect(() => {
     if (
@@ -157,7 +164,8 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       !activeTab ||
       activeTab.id !== markdownOutlineTarget.tabId ||
       activeTab.language !== "markdown" ||
-      activeTab.isPreviewMode
+      activeTab.isPreviewMode ||
+      activeTab.isInstantRenderMode
     ) {
       return;
     }
@@ -180,7 +188,14 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     const id = currentTabIdRef.current;
     const tab =
       state.tabs.find((t) => t.id === id) ?? state.secondaryTabs.find((t) => t.id === id);
-    if (!target || !tab || tab.path !== target.path || tab.isPreviewMode || tab.viewMode === "base64") {
+    if (
+      !target ||
+      !tab ||
+      tab.path !== target.path ||
+      tab.isPreviewMode ||
+      tab.isInstantRenderMode ||
+      tab.viewMode === "base64"
+    ) {
       return;
     }
     try {
@@ -542,6 +557,22 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
       },
     });
 
+    // Ctrl+Alt+M：源码 ⇄ 即时渲染，和右键菜单里的入口等价
+    editor.addAction({
+      id: "toggle-instant-render",
+      label: "切换即时渲染模式",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyM],
+      precondition: "editorLangId == 'markdown'",
+      contextMenuGroupId: "navigation",
+      run: () => {
+        const state = useEditorStore.getState();
+        const id = currentTabIdRef.current;
+        if (id) {
+          state.toggleInstantRenderMode(id);
+        }
+      },
+    });
+
     editor.addAction({
       id: "toggle-markdown-preview",
       label: "切换预览模式",
@@ -675,6 +706,13 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
               icon: <Columns2 size={14} />,
               onClick: () => currentTabId && toggleLivePreviewMode(currentTabId),
             },
+            {
+              label: activeTab.isInstantRenderMode
+                ? "退出即时渲染模式"
+                : "开启即时渲染模式",
+              icon: <PenLine size={14} />,
+              onClick: () => currentTabId && toggleInstantRenderMode(currentTabId),
+            },
             { separator: true, label: "", onClick: () => {} },
           ]
         : []),
@@ -760,6 +798,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     handleEditorSave,
     handleEditorUndo,
     reloadTabFromDisk,
+    toggleInstantRenderMode,
     toggleLivePreviewMode,
     togglePreviewMode,
   ]);
@@ -825,6 +864,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
         applyTheme: applyTerracottaTheme,
         togglePreviewMode,
         toggleLivePreviewMode,
+        toggleInstantRenderMode,
         markdownOutlineTarget,
         clearMarkdownOutlineTarget,
         showNotification,

@@ -14,6 +14,7 @@ interface DbTabRecord {
   is_read_only: boolean;
   is_preview_mode: boolean;
   is_live_preview: boolean;
+  is_instant_render: boolean;
   size: number;
   sort_order: number;
   created_at: string;
@@ -49,6 +50,7 @@ type DbTabPayload = {
   is_read_only?: boolean;
   is_preview_mode?: boolean;
   is_live_preview?: boolean;
+  is_instant_render?: boolean;
   size?: number;
   sort_order?: number;
 };
@@ -76,6 +78,7 @@ function toFileTab(record: DbTabRecord): FileTab {
     size: typeof record.size === "number" ? record.size : undefined,
     isPreviewMode: Boolean(record.is_preview_mode),
     isLivePreviewMode: Boolean(record.is_live_preview),
+    isInstantRenderMode: Boolean(record.is_instant_render),
     viewMode: record.view_mode === "base64" ? "base64" : "text",
     isReadOnly: Boolean(record.is_read_only),
   };
@@ -94,6 +97,7 @@ function toDbTabPayload(tab: FileTab, sortOrder: number): DbTabPayload {
     is_read_only: Boolean(tab.isReadOnly),
     is_preview_mode: Boolean(tab.isPreviewMode),
     is_live_preview: Boolean(tab.isLivePreviewMode),
+    is_instant_render: Boolean(tab.isInstantRenderMode),
     size: tab.size ?? 0,
     sort_order: sortOrder,
   };

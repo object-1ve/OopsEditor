@@ -17,6 +17,11 @@ export interface FileTab {
   isPreviewTab?: boolean;
   isPreviewMode?: boolean;
   isLivePreviewMode?: boolean;
+  /**
+   * 即时渲染模式（Markdown 专用）：编辑区里语法随手成形，
+   * 不再分「源码 / 预览」两栏。与 isPreviewMode、isLivePreviewMode 互斥。
+   */
+  isInstantRenderMode?: boolean;
   viewMode?: "text" | "base64";
   isReadOnly?: boolean;
   /**

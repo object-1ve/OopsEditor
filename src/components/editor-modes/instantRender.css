@@ -1,0 +1,123 @@
+/*
+ * 即时渲染模式外观：把 Vditor 的浅色主题对齐到 OopsEditor 的暖色（terracotta）配色。
+ * Vditor 的配色全部走 `.vditor` 上的 CSS 变量，这里覆盖变量即可，无需改它的结构样式。
+ */
+.instant-render-mode .vditor {
+  --border-color: var(--border);
+  --second-color: rgba(92, 76, 66, 0.36);
+  --panel-background-color: var(--bg-primary);
+  --panel-shadow: 0 2px 10px rgba(123, 75, 57, 0.16);
+  --toolbar-background-color: var(--bg-primary);
+  --toolbar-icon-color: var(--text-muted);
+  --toolbar-icon-hover-color: var(--accent);
+  --toolbar-height: 34px;
+  --textarea-background-color: var(--bg-primary);
+  --textarea-text-color: var(--text-primary);
+  --count-background-color: var(--bg-secondary);
+  --heading-border-color: var(--border);
+  --blockquote-color: var(--text-secondary);
+  --blockquote-border-color: var(--accent-rose);
+  --blockquote-text-color: var(--text-secondary);
+  /* IR 模式里源码片段的配色：标题/加粗/链接/括号各有一套，全部换成主题色 */
+  --ir-heading-color: var(--accent);
+  --ir-title-color: var(--text-muted);
+  --ir-bi-color: var(--accent);
+  --ir-link-color: #1a6fd4;
+  --ir-bracket-color: var(--accent-bright);
+  --ir-paren-color: var(--accent-bright);
+
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background-color: var(--bg-primary);
+}
+
+.instant-render-mode .vditor-toolbar {
+  padding-left: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.instant-render-mode .vditor-toolbar__item .vditor-tooltipped {
+  color: var(--text-muted);
+}
+
+.instant-render-mode .vditor-toolbar__item .vditor-tooltipped:hover {
+  color: var(--accent);
+  background-color: var(--bg-secondary);
+}
+
+.instant-render-mode .vditor-ir pre.vditor-reset {
+  /* 正文栏最宽 900px 居中；窄窗口退化为 32px 边距 */
+  padding: 16px max(32px, calc((100% - 900px) / 2)) 96px;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.instant-render-mode .vditor-ir pre.vditor-reset:focus {
+  background-color: var(--bg-primary);
+}
+
+/* 与「预览模式」的排版保持一致：标题用主题色，代码块同底色 */
+.instant-render-mode .vditor-reset h1 {
+  font-size: 2rem;
+  font-weight: 800;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+}
+
+.instant-render-mode .vditor-reset h2 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.instant-render-mode .vditor-reset h3 {
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.instant-render-mode .vditor-reset a {
+  color: #1a6fd4;
+  text-decoration: underline;
+  text-underline-position: under;
+}
+
+.instant-render-mode .vditor-reset code:not(.hljs):not(.highlight-chroma) {
+  background-color: var(--bg-secondary);
+  color: var(--accent);
+  border-radius: 4px;
+}
+
+.instant-render-mode .vditor-reset pre > code {
+  background-color: #f8f6f3;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.instant-render-mode .vditor-reset blockquote {
+  border-left: 4px solid var(--accent-rose);
+  color: var(--text-secondary);
+}
+
+.instant-render-mode .vditor-reset table tr {
+  background-color: var(--bg-primary);
+}
+
+.instant-render-mode .vditor-reset table th,
+.instant-render-mode .vditor-reset table td {
+  border-color: var(--border);
+}
+
+/* 记录块 / 选中态等浮层也跟着主题走 */
+.instant-render-mode .vditor-panel,
+.instant-render-mode .vditor-hint {
+  color: var(--text-secondary);
+}
+
+.instant-render-mode .vditor-hint button:hover,
+.instant-render-mode .vditor-panel button:hover {
+  background-color: var(--bg-secondary);
+}

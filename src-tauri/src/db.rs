@@ -67,6 +67,7 @@ pub struct Tab {
     pub is_read_only: bool,
     pub is_preview_mode: bool,
     pub is_live_preview: bool,
+    pub is_instant_render: bool,
     pub size: i64,
     pub sort_order: i64,
     pub created_at: String,
@@ -85,6 +86,7 @@ pub struct NewTab {
     pub is_read_only: Option<bool>,
     pub is_preview_mode: Option<bool>,
     pub is_live_preview: Option<bool>,
+    pub is_instant_render: Option<bool>,
     pub size: Option<i64>,
     pub sort_order: Option<i64>,
 }
@@ -159,6 +161,7 @@ pub fn init_project_database(app: AppHandle) -> Result<(), String> {
             is_read_only      INTEGER NOT NULL DEFAULT 0,
             is_preview_mode   INTEGER NOT NULL DEFAULT 0,
             is_live_preview   INTEGER NOT NULL DEFAULT 0,
+            is_instant_render INTEGER NOT NULL DEFAULT 0,
             size              INTEGER NOT NULL DEFAULT 0,
             sort_order        INTEGER NOT NULL DEFAULT 0,
             created_at        TEXT NOT NULL,
@@ -232,6 +235,24 @@ pub fn init_project_database(app: AppHandle) -> Result<(), String> {
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pinned_files_sort ON pinned_files(sort_order)", [])
         .map_err(|e| format!("创建 pinned_files.sort_order 索引失败: {}", e))?;
+
+    // 迁移：为旧版 tabs 表补充 is_instant_render 列（即时渲染模式标记）
+    {
+        let columns = conn
+            .prepare("PRAGMA table_info(tabs)")
+            .map_err(|e| format!("查询 tabs 结构失败: {}", e))?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("读取 tabs 列失败: {}", e))?
+            .collect::<SqlResult<Vec<String>>>()
+            .map_err(|e| format!("读取 tabs 列失败: {}", e))?;
+        if !columns.iter().any(|col| col == "is_instant_render") {
+            conn.execute(
+                "ALTER TABLE tabs ADD COLUMN is_instant_render INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| format!("迁移 tabs.is_instant_render 失败: {}", e))?;
+        }
+    }
 
     // 会话面板表（chat_sessions / chat_messages）：仅用于把旧数据迁移到 JSONL
     crate::chat::init_chat_schema(&conn).map_err(|e| format!("创建会话表失败: {}", e))?;
@@ -904,7 +925,7 @@ pub fn get_all_tabs() -> Result<Vec<Tab>, String> {
         let mut stmt = conn.prepare(
             "SELECT id, file_id, name, path, language, content, view_mode,
                     is_dirty, is_read_only, is_preview_mode, is_live_preview,
-                    size, sort_order, created_at, updated_at
+                    size, sort_order, created_at, updated_at, is_instant_render
              FROM tabs ORDER BY sort_order ASC, id ASC",
         )?;
 
@@ -926,6 +947,7 @@ pub fn get_all_tabs() -> Result<Vec<Tab>, String> {
                     sort_order: row.get(12)?,
                     created_at: row.get(13)?,
                     updated_at: row.get(14)?,
+                    is_instant_render: row.get::<_, i64>(15)? != 0,
                 })
             })?
             .collect::<SqlResult<Vec<_>>>()?;
@@ -940,7 +962,7 @@ pub fn get_tab_by_file_id(file_id: String) -> Result<Option<Tab>, String> {
         let mut stmt = conn.prepare(
             "SELECT id, file_id, name, path, language, content, view_mode,
                     is_dirty, is_read_only, is_preview_mode, is_live_preview,
-                    size, sort_order, created_at, updated_at
+                    size, sort_order, created_at, updated_at, is_instant_render
              FROM tabs WHERE file_id = ?1",
         )?;
 
@@ -961,6 +983,7 @@ pub fn get_tab_by_file_id(file_id: String) -> Result<Option<Tab>, String> {
                 sort_order: row.get(12)?,
                 created_at: row.get(13)?,
                 updated_at: row.get(14)?,
+                is_instant_render: row.get::<_, i64>(15)? != 0,
             })
         })?;
 
@@ -988,12 +1011,13 @@ fn map_tab_row(row: &rusqlite::Row<'_>) -> SqlResult<Tab> {
         sort_order: row.get(12)?,
         created_at: row.get(13)?,
         updated_at: row.get(14)?,
+        is_instant_render: row.get::<_, i64>(15)? != 0,
     })
 }
 
 const SELECT_TAB_COLUMNS: &str = "SELECT id, file_id, name, path, language, content, view_mode,
             is_dirty, is_read_only, is_preview_mode, is_live_preview,
-            size, sort_order, created_at, updated_at
+            size, sort_order, created_at, updated_at, is_instant_render
      FROM tabs";
 
 /// 写入一行标签状态：按 file_id 更新，不存在则插入。
@@ -1005,8 +1029,9 @@ fn write_tab_row(conn: &Connection, tab: &NewTab, now: &str) -> SqlResult<()> {
             name = ?1, path = ?2, language = ?3, content = ?4,
             view_mode = ?5, is_dirty = ?6, is_read_only = ?7,
             is_preview_mode = ?8, is_live_preview = ?9,
-            size = ?10, sort_order = ?11, updated_at = ?12
-         WHERE file_id = ?13",
+            size = ?10, sort_order = ?11, updated_at = ?12,
+            is_instant_render = ?13
+         WHERE file_id = ?14",
         params![
             &tab.name,
             &normalized_path,
@@ -1020,6 +1045,7 @@ fn write_tab_row(conn: &Connection, tab: &NewTab, now: &str) -> SqlResult<()> {
             tab.size.unwrap_or(0),
             tab.sort_order.unwrap_or(0),
             now,
+            tab.is_instant_render.map(|v| v as i64).unwrap_or(0),
             &tab.file_id,
         ],
     )?;
@@ -1028,8 +1054,8 @@ fn write_tab_row(conn: &Connection, tab: &NewTab, now: &str) -> SqlResult<()> {
         conn.execute(
             "INSERT INTO tabs (file_id, name, path, language, content, view_mode,
                                is_dirty, is_read_only, is_preview_mode, is_live_preview,
-                               size, sort_order, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+                               size, sort_order, created_at, updated_at, is_instant_render)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14)",
             params![
                 &tab.file_id,
                 &tab.name,
@@ -1044,6 +1070,7 @@ fn write_tab_row(conn: &Connection, tab: &NewTab, now: &str) -> SqlResult<()> {
                 tab.size.unwrap_or(0),
                 tab.sort_order.unwrap_or(0),
                 now,
+                tab.is_instant_render.map(|v| v as i64).unwrap_or(0),
             ],
         )?;
     }
