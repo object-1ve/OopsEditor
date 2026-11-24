@@ -14,6 +14,8 @@ import "vditor/dist/index.css";
 import "./instantRender.css";
 import "./tableChrome.css";
 import { TableChrome } from "./tableChrome";
+import "./slashMenu.css";
+import { SlashMenu } from "./slashMenu";
 import { FilePenLine } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -59,6 +61,7 @@ export function InstantRenderModeView({
   const containerRef = useRef<HTMLDivElement>(null);
   const vditorRef = useRef<Vditor | null>(null);
   const tableChromeRef = useRef<TableChrome | null>(null);
+  const slashMenuRef = useRef<SlashMenu | null>(null);
   const readyRef = useRef(false);
   const destroyedRef = useRef(false);
   /** 最后一次「写回标签」的内容，用来分辨外部改动与我们自己的回写 */
@@ -246,6 +249,20 @@ export function InstantRenderModeView({
           });
           tableChromeRef.current.setDisabled(readOnlyRef.current);
         }
+        // 斜杠指令面板：空段落里输入 / 呼出快捷指令
+        if (container && scroller) {
+          slashMenuRef.current = new SlashMenu({
+            host: container,
+            scroller,
+            insertMarkdown: (markdown) => vditor.insertMD(markdown),
+            onCommit: () => {
+              touchedRef.current = true;
+              flush();
+            },
+            isReadOnly: () => readOnlyRef.current,
+          });
+          slashMenuRef.current.setDisabled(readOnlyRef.current);
+        }
         // IR 模式会随输入重建块 DOM，图片地址在每次重建后都要重新解析
         const observer = new MutationObserver(() => resolveLocalImages());
         const content = host.querySelector(".vditor-ir");
@@ -268,6 +285,8 @@ export function InstantRenderModeView({
       }
       tableChromeRef.current?.destroy();
       tableChromeRef.current = null;
+      slashMenuRef.current?.destroy();
+      slashMenuRef.current = null;
       observerRef.current?.disconnect();
       observerRef.current = null;
       try {
@@ -304,6 +323,7 @@ export function InstantRenderModeView({
     const vditor = vditorRef.current;
     if (!vditor || !readyRef.current) return;
     tableChromeRef.current?.setDisabled(Boolean(activeTab.isReadOnly));
+    slashMenuRef.current?.setDisabled(Boolean(activeTab.isReadOnly));
     if (activeTab.isReadOnly) vditor.disabled();
     else vditor.enable();
   }, [activeTab.isReadOnly]);

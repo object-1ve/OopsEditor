@@ -5,6 +5,7 @@
  * 采纳后按 Monaco snippet 语法插入，支持 Tab 在占位符间跳转。
  */
 import { languages, type IRange } from "monaco-editor";
+import { SLASH_COMMANDS } from "./slashCommands";
 
 interface MdSnippet {
   /** 菜单显示名（@ 前缀） */
@@ -163,10 +164,34 @@ export function registerMarkdownSnippets(): MarkdownSnippetsHandle {
   const ensureProvider = () => {
     if (provider) return;
     provider = languages.registerCompletionItemProvider("markdown", {
-      triggerCharacters: ["@"],
+      triggerCharacters: ["@", "/"],
       provideCompletionItems(model, position): languages.CompletionList {
         const lineContent = model.getLineContent(position.lineNumber);
         const before = lineContent.slice(0, position.column - 1);
+
+        // 行首 `/`：与即时渲染的斜杠指令同一份目录
+        const slash = before.match(/^\/([\p{L}\d_-]*)$/u);
+        if (slash) {
+          const slashRange: IRange = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: position.column - slash[0].length,
+            endColumn: position.column,
+          };
+          return {
+            suggestions: SLASH_COMMANDS.map((command, i): languages.CompletionItem => ({
+              label: `/${command.label}`,
+              kind: languages.CompletionItemKind.Snippet,
+              detail: command.group,
+              documentation: { value: command.prefix ?? command.markdown ?? "" },
+              insertText: command.prefix ?? command.markdown ?? "",
+              range: slashRange,
+              filterText: `/${command.label} ${command.keys}`,
+              sortText: String(i).padStart(2, "0"),
+            })),
+          };
+        }
+
         // 仅当光标前是 @（可带已输入的过滤字符）时呼出；替换范围包含 @ 本身
         const trigger = before.match(/@([\p{L}\d_-]*)$/u);
         if (!trigger) {

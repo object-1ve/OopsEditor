@@ -507,8 +507,9 @@ export class TableChrome {
 
   private handlePointerMove = (event: PointerEvent) => {
     if (this.disabled || this.opts.isReadOnly() || this.drag?.active) return;
-    // 工具条浮在表格上方、超出「靠近表格」的范围，指针在上面时不要重新判定
-    if (event.target instanceof Node && this.overlay.contains(event.target)) return;
+    // 工具条浮在表格上方、超出「靠近表格」的范围；斜杠面板也可能压在表格上，
+    // 指针落在这两类浮层里时不要重新判定表格
+    if (event.target instanceof Element && this.isFloatingUi(event.target)) return;
     const point = this.toLocal(event);
     const frame = this.frameNear(point);
     if (frame !== this.active) {
@@ -534,7 +535,7 @@ export class TableChrome {
 
   private handlePointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || this.disabled || this.opts.isReadOnly()) return;
-    if ((event.target as HTMLElement | null)?.closest(".oops-table-toolbar")) return;
+    if (event.target instanceof Element && this.isFloatingUi(event.target)) return;
     const point = this.toLocal(event);
     const frame = this.frameNear(point);
     if (!frame?.geom) return;
@@ -680,6 +681,11 @@ export class TableChrome {
   // ---------------------------------------------------------------------------
   // 命中测试
   // ---------------------------------------------------------------------------
+
+  /** 自己的浮层（工具条）与斜杠面板都属于「不是表格本身」的界面 */
+  private isFloatingUi(target: Element): boolean {
+    return this.overlay.contains(target) || target.closest(".oops-slash-panel") !== null;
+  }
 
   private toLocal(event: PointerEvent) {
     const rect = this.overlay.getBoundingClientRect();

@@ -1,0 +1,130 @@
+/*
+ * 斜杠指令面板：分组卡片，样式对齐 OopsEditor 的暖色主题。
+ */
+.oops-slash-panel {
+  position: absolute;
+  z-index: 8;
+  display: none;
+  flex-direction: column;
+  width: 288px;
+  max-height: min(420px, 62vh);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  box-shadow: 0 8px 28px rgba(123, 75, 57, 0.18);
+}
+
+.oops-slash-panel.is-visible {
+  display: flex;
+}
+
+.oops-slash-section {
+  padding: 6px 8px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.oops-slash-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.oops-slash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.oops-slash-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.oops-slash-item.is-cell {
+  justify-content: center;
+  height: 32px;
+  padding: 0;
+}
+
+.oops-slash-item.is-row {
+  height: 32px;
+  padding: 0 8px;
+}
+
+.oops-slash-item.is-active {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.oops-slash-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.oops-slash-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.oops-slash-icon.is-chip {
+  width: auto;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.oops-slash-item.is-active .oops-slash-icon.is-chip {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.oops-slash-item.is-accent .oops-slash-icon {
+  color: var(--accent);
+}
+
+.oops-slash-item.is-warm .oops-slash-icon {
+  color: var(--accent-warm);
+}
+
+.oops-slash-item.is-sage .oops-slash-icon {
+  color: var(--accent-sage);
+}
+
+.oops-slash-item.is-rose .oops-slash-icon {
+  color: var(--accent-rose);
+}
+
+.oops-slash-label {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.oops-slash-empty {
+  padding: 14px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
