@@ -1,0 +1,166 @@
+/*
+ * Markdown 表格交互层（即时渲染模式）：列条 / 行条、边界引脚、插入缝、
+ * 选中底色、拖拽落点与浮起副本、行/列工具条。
+ * 颜色全部走主题变量，和 OopsEditor 的暖色保持一致。
+ */
+.oops-table-chrome {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.oops-table-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 条：默认不可见，指针靠近表格时淡入 */
+.oops-table-bar {
+  position: absolute;
+  border-radius: 3px;
+  background: rgba(92, 76, 66, 0.07);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.oops-table-frame.is-active .oops-table-bar {
+  opacity: 1;
+}
+
+.oops-table-frame.is-active .oops-table-bar:hover {
+  background: rgba(92, 76, 66, 0.16);
+}
+
+/* 列/行太多时不给条，避免上百个浮层拖慢滚动 */
+.oops-table-frame.is-crowded {
+  display: none;
+}
+
+/* 选中行/列的底色 */
+.oops-table-highlight {
+  position: absolute;
+  border-radius: 2px;
+  background: rgba(200, 106, 78, 0.1);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.oops-table-highlight.is-visible {
+  opacity: 1;
+}
+
+/* 边界上的「+」引脚 */
+.oops-table-pin {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(123, 75, 57, 0.32);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms ease;
+}
+
+.oops-table-pin svg {
+  stroke: currentColor;
+}
+
+.oops-table-pin.is-visible {
+  opacity: 1;
+}
+
+/* 插入缝：虚线预览「会插在这里」 */
+.oops-table-seam {
+  position: absolute;
+  border-radius: 3px;
+  border: 1px dashed var(--accent);
+  background: rgba(200, 106, 78, 0.1);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.oops-table-seam.is-visible {
+  opacity: 1;
+}
+
+/* 拖拽落点与浮起副本 */
+.oops-table-slot {
+  position: absolute;
+  border-radius: 3px;
+  border: 1px dashed var(--accent);
+  background: rgba(200, 106, 78, 0.08);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.oops-table-slot.is-visible {
+  opacity: 1;
+}
+
+.oops-table-ghost {
+  position: absolute;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: rgba(253, 250, 247, 0.88);
+  box-shadow: 0 6px 18px rgba(123, 75, 57, 0.22);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.oops-table-ghost.is-visible {
+  opacity: 1;
+}
+
+/* 选中行/列后浮出的工具条 */
+.oops-table-toolbar {
+  position: absolute;
+  display: none;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  box-shadow: 0 2px 10px rgba(123, 75, 57, 0.16);
+  pointer-events: auto;
+}
+
+.oops-table-toolbar.is-visible {
+  display: flex;
+}
+
+.oops-table-toolbar__item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.oops-table-toolbar__item:hover:not(:disabled) {
+  background: var(--bg-secondary);
+  color: var(--accent);
+}
+
+.oops-table-toolbar__item.is-danger:hover:not(:disabled) {
+  color: #b4432f;
+}
+
+.oops-table-toolbar__item:disabled {
+  opacity: 0.35;
+  cursor: default;
+}

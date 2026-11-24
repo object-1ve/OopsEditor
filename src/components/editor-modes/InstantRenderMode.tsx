@@ -12,6 +12,8 @@ import { useCallback, useEffect, useRef } from "react";
 import Vditor from "vditor";
 import "vditor/dist/index.css";
 import "./instantRender.css";
+import "./tableChrome.css";
+import { TableChrome } from "./tableChrome";
 import { FilePenLine } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -54,7 +56,9 @@ export function InstantRenderModeView({
   | "saveActiveTab"
 >) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const vditorRef = useRef<Vditor | null>(null);
+  const tableChromeRef = useRef<TableChrome | null>(null);
   const readyRef = useRef(false);
   const destroyedRef = useRef(false);
   /** 最后一次「写回标签」的内容，用来分辨外部改动与我们自己的回写 */
@@ -227,6 +231,21 @@ export function InstantRenderModeView({
           }
         }
         resolveLocalImages();
+        // 表格交互层：条 / 引脚 / 选中工具条，挂在整个编辑区外层，不污染编辑器 DOM
+        const container = containerRef.current;
+        const scroller = host.querySelector<HTMLElement>(".vditor-ir pre.vditor-reset");
+        if (container && scroller) {
+          tableChromeRef.current = new TableChrome({
+            host: container,
+            scroller,
+            onCommit: () => {
+              touchedRef.current = true;
+              flush();
+            },
+            isReadOnly: () => readOnlyRef.current,
+          });
+          tableChromeRef.current.setDisabled(readOnlyRef.current);
+        }
         // IR 模式会随输入重建块 DOM，图片地址在每次重建后都要重新解析
         const observer = new MutationObserver(() => resolveLocalImages());
         const content = host.querySelector(".vditor-ir");
@@ -247,6 +266,8 @@ export function InstantRenderModeView({
         clearTimeout(pendingRef.current);
         pendingRef.current = null;
       }
+      tableChromeRef.current?.destroy();
+      tableChromeRef.current = null;
       observerRef.current?.disconnect();
       observerRef.current = null;
       try {
@@ -282,6 +303,7 @@ export function InstantRenderModeView({
   useEffect(() => {
     const vditor = vditorRef.current;
     if (!vditor || !readyRef.current) return;
+    tableChromeRef.current?.setDisabled(Boolean(activeTab.isReadOnly));
     if (activeTab.isReadOnly) vditor.disabled();
     else vditor.enable();
   }, [activeTab.isReadOnly]);
@@ -330,7 +352,10 @@ export function InstantRenderModeView({
   }, [activeTab.id, flush, toggleInstantRenderMode]);
 
   return (
-    <div className="instant-render-mode relative h-full min-h-0 overflow-hidden bg-primary">
+    <div
+      ref={containerRef}
+      className="instant-render-mode relative h-full min-h-0 overflow-hidden bg-primary"
+    >
       <div ref={hostRef} className="h-full min-h-0" />
       <button
         onClick={() => {
