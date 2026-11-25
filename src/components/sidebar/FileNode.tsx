@@ -5,7 +5,8 @@ import { useState, useEffect, useCallback, useMemo, memo, useRef } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "@/store/editor";
-import { normalizePath, sortTreeEntries, getRenameSelectionEnd, revealFlashClass, isHiddenTreeEntry } from "./sidebarUtils";
+import { getRenameSelectionEnd } from "@/utils/path";
+import { normalizePath, sortTreeEntries, revealFlashClass, isHiddenTreeEntry } from "./sidebarUtils";
 import type { DirEntry, SidebarRevealHighlight } from "./sidebarUtils";
 import MaterialFileIcon from "../MaterialFileIcon";
 
@@ -119,8 +120,9 @@ const FileNode = memo(function FileNode({
         const matchedTabs = [...tabs, ...secondaryTabs].filter(
           (tab) => normalizePath(tab.path) === normalizePath(path),
         );
+        // 重命名不等于保存：保留未保存标记，避免脏标签被当成已同步
         matchedTabs.forEach((tab) =>
-          replaceTabFileLocation(tab.id, newPath, newName),
+          replaceTabFileLocation(tab.id, newPath, newName, { preserveDirty: true }),
         );
       }
       setIsRenaming(false);

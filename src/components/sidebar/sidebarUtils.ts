@@ -82,13 +82,6 @@ export interface SidebarRevealHighlight {
 export const revealFlashClass = (variant: number) =>
   variant % 2 === 0 ? "sidebar-reveal-flash" : "sidebar-reveal-flash-alt";
 
-export const getRenameSelectionEnd = (entryName: string, isDirectory: boolean) => {
-  if (isDirectory) return entryName.length;
-  const lastDotIndex = entryName.lastIndexOf(".");
-  if (lastDotIndex <= 0) return entryName.length;
-  return lastDotIndex;
-};
-
 export const sortTreeEntries = (
   entries: DirEntry[],
   pinnedFolders: string[],

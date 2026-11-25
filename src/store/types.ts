@@ -134,7 +134,12 @@ export interface EditorState {
   /** 标记标签已修改：供 Excel 等自行管理内容（不经 tab.content）的模式使用 */
   markTabDirty: (id: string) => void;
   markClean: (id: string) => void;
-  replaceTabFileLocation: (id: string, nextPath: string, nextName?: string) => void;
+  replaceTabFileLocation: (
+    id: string,
+    nextPath: string,
+    nextName?: string,
+    options?: { preserveDirty?: boolean },
+  ) => void;
   addRootPath: (path: string) => void;
   removeRootPath: (path: string) => void;
   setDefaultFolders: (folders: DefaultFolder[]) => void;
@@ -235,4 +240,6 @@ export interface EditorState {
   closeTabInPane: (id: string, pane: EditorPane) => void;
   closeTabsInPane: (ids: string[], pane: EditorPane) => void;
   setActiveTabInPane: (id: string, pane: EditorPane) => void;
+  /** 在同一分栏内把标签拖到目标标签前/后（placeAfter=true 表示插到目标右侧） */
+  moveTabInPane: (pane: EditorPane, id: string, targetId: string, placeAfter: boolean) => void;
 }

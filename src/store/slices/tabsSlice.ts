@@ -85,6 +85,7 @@ export const createTabsSlice: StateCreator<
     | "closeTabInPane"
     | "closeTabsInPane"
     | "setActiveTabInPane"
+    | "moveTabInPane"
   >
 > = (set, get) => ({
   tabs: [],
@@ -471,7 +472,12 @@ export const createTabsSlice: StateCreator<
     doReload();
   },
 
-  replaceTabFileLocation: (id: string, nextPath: string, nextName?: string) =>
+  replaceTabFileLocation: (
+    id: string,
+    nextPath: string,
+    nextName?: string,
+    options?: { preserveDirty?: boolean },
+  ) =>
     set((state) => {
       const isPrimary = state.tabs.some((tab) => tab.id === id);
       const targetTab = isPrimary
@@ -485,7 +491,7 @@ export const createTabsSlice: StateCreator<
           id: tab.viewMode === "base64" ? `${nextPath}#base64` : nextPath,
           path: nextPath,
           name: nextName ?? nextPath.split(/[/\\]/).pop() ?? tab.name,
-          isDirty: false,
+          isDirty: options?.preserveDirty ? tab.isDirty : false,
         };
       });
 
@@ -496,7 +502,7 @@ export const createTabsSlice: StateCreator<
           id: tab.viewMode === "base64" ? `${nextPath}#base64` : nextPath,
           path: nextPath,
           name: nextName ?? nextPath.split(/[/\\]/).pop() ?? tab.name,
-          isDirty: false,
+          isDirty: options?.preserveDirty ? tab.isDirty : false,
         };
       });
 
@@ -710,6 +716,27 @@ export const createTabsSlice: StateCreator<
       ids.forEach((id) => evictExcelDoc(id));
       ids.forEach((id) => evictNotebookDoc(id));
       return { secondaryTabs: tabs, secondaryActiveTabId };
+    });
+  },
+
+  moveTabInPane: (pane, id, targetId, placeAfter) => {
+    if (id === targetId) return;
+    set((state) => {
+      const currentTabs = pane === "secondary" ? state.secondaryTabs : state.tabs;
+      if (!currentTabs.some((tab) => tab.id === id) || !currentTabs.some((tab) => tab.id === targetId)) {
+        return state;
+      }
+
+      const nextTabs = currentTabs.filter((tab) => tab.id !== id);
+      const targetIndex = nextTabs.findIndex((tab) => tab.id === targetId);
+      // 目标索引按移除自身后的列表计算，避免向左拖时错位一格
+      nextTabs.splice(targetIndex + (placeAfter ? 1 : 0), 0, currentTabs.find((tab) => tab.id === id)!);
+
+      if (pane === "secondary") {
+        return { secondaryTabs: nextTabs };
+      }
+      persistTabsState(nextTabs, state.activeTabId);
+      return { tabs: nextTabs, openFiles: nextTabs.map((tab) => tab.path) };
     });
   },
 

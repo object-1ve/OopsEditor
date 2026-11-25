@@ -1,9 +1,12 @@
-import { ArrowRight, ChevronLeft, ChevronRight, CopyX, Locate, Pin, RefreshCw, Save, X } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, CopyX, Locate, Pencil, Pin, RefreshCw, Save, X } from "lucide-react";
 import { useEditorStore, type EditorPane } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
 import { useTabStripDensity } from "@/hooks/useTabStripDensity";
+import { useTabRename } from "@/hooks/useTabRename";
+import { useTabDragReorder } from "@/hooks/useTabDragReorder";
 import ContextMenu from "./ContextMenu";
+import TabRenameInput from "./TabRenameInput";
 import MaterialFileIcon from "./MaterialFileIcon";
 import { MessagesSquare } from "lucide-react";
 import { detectLanguage, isChatTab, type FileTab } from "@/types";
@@ -62,6 +65,8 @@ const tabs = useEditorStore(s => s.tabs);
   const paneActiveTabId = isSecondary ? secondaryActiveTabId : activeTabId;
   const isFocused = isSplit && focusedPane === pane;
   const { ref: tabStripRef, hideClose, hideName } = useTabStripDensity(paneTabs.length);
+  const rename = useTabRename();
+  const drag = useTabDragReorder(pane);
 
   const setActive = useCallback((id: string) => {
     setActiveTabInPane(id, pane);
@@ -240,6 +245,20 @@ const tabs = useEditorStore(s => s.tabs);
     if (!tab) return [];
     const isPinnedToSidebar = pinnedFiles.some((item) => item.path === tab.path);
 
+    const renameItem = tab.path && !isChatTab(tab)
+      ? [
+          {
+            label: "重命名文件",
+            icon: <Pencil size={14} />,
+            onClick: () => {
+              rename.beginRename(tab);
+              setContextMenu(null);
+            },
+          },
+          { separator: true, label: "", onClick: () => {} },
+        ]
+      : [];
+
     const saveToDefaultFolderItems = !canSaveToDefaultFolder(tab.language)
       ? []
       : defaultFolders.length > 0
@@ -261,6 +280,7 @@ const tabs = useEditorStore(s => s.tabs);
           ];
 
     return [
+      ...renameItem,
       ...saveToDefaultFolderItems.flatMap((item) => [
         ...(item.separatorBefore ? [{ separator: true, label: "", onClick: () => {} }] : []),
         { label: item.label, icon: item.icon, onClick: item.onClick },
@@ -339,7 +359,7 @@ const tabs = useEditorStore(s => s.tabs);
         onClick: () => handleClose({ stopPropagation: () => {} }, tab)
       },
     ];
-  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, pinTab, reloadTabFromDisk, showNotification, unpinFile, isSplit, isSecondary, revealPathInSidebar]);
+  }, [contextMenu, paneTabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, pinTab, reloadTabFromDisk, showNotification, unpinFile, isSplit, isSecondary, revealPathInSidebar, rename]);
   const handleDoubleClick = useCallback(async (tab: FileTab) => {
     // 与点击的标签页保持同一文件类型：聊天标签页没有文件后缀，仍按 md 新建
     const extension = isChatTab(tab) ? ".md" : getFileExtension(tab.name);
@@ -396,10 +416,16 @@ const tabs = useEditorStore(s => s.tabs);
                 isActive
                   ? "bg-primary text-text-primary"
                   : "bg-secondary text-text-muted hover:text-text-secondary hover:bg-surface/50"
-              } ${hideClose ? "tab-no-close" : ""} ${hideName ? "tab-icon-only" : ""}`}
+              } ${hideClose ? "tab-no-close" : ""} ${hideName && rename.renamingTabId !== tab.id ? "tab-icon-only" : ""} ${drag.draggingTabId === tab.id ? "opacity-50" : ""}`}
               onClick={() => setActive(tab.id)}
               onDoubleClick={() => handleDoubleClick(tab)}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
+              draggable={rename.renamingTabId !== tab.id}
+              onDragStart={(e) => drag.onDragStart(e, tab.id)}
+              onDragOver={(e) => drag.onDragOver(e, tab.id)}
+              onDragLeave={() => drag.clearHint(tab.id)}
+              onDrop={(e) => drag.onDrop(e, tab.id)}
+              onDragEnd={drag.onDragEnd}
               onMouseEnter={() => !isChatTab(tab) && setHoveredPath(tab.path)}
               onMouseLeave={() => setHoveredPath(null)}
               title={isPreviewTab ? "预览标签页：双击文件或编辑内容后固定" : undefined}
@@ -420,6 +446,12 @@ const tabs = useEditorStore(s => s.tabs);
                       : "bg-transparent"
                 }`}
               />
+              {drag.hint?.tabId === tab.id && (
+                <div
+                  aria-hidden="true"
+                  className={`absolute top-1 bottom-1 w-0.5 rounded-full bg-accent ${drag.hint.placeAfter ? "right-0" : "left-0"}`}
+                />
+              )}
 
               {isChatTab(tab) ? (
                 <MessagesSquare size={15} className={isActive ? "text-accent" : ""} />
@@ -430,7 +462,16 @@ const tabs = useEditorStore(s => s.tabs);
                   size={16}
                 />
               )}
-              <span className={`tab-name truncate max-w-28 ${isPreviewTab ? "italic" : ""}`}>{tab.name}</span>
+              {rename.renamingTabId === tab.id ? (
+                <TabRenameInput
+                  value={rename.draft}
+                  onChange={rename.updateDraft}
+                  onCommit={() => void rename.commitRename()}
+                  onCancel={rename.cancelRename}
+                />
+              ) : (
+                <span className={`tab-name truncate max-w-28 ${isPreviewTab ? "italic" : ""}`}>{tab.name}</span>
+              )}
               {tab.isDirty && <span className="tab-dirty text-accent-warm text-xs shrink-0">&#9679;</span>}
               <button
                 className="tab-close ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface transition-all shrink-0 cursor-pointer text-text-muted hover:text-text-primary"

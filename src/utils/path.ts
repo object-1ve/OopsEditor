@@ -28,6 +28,16 @@ export function getFileExtension(fileName: string): string {
 }
 
 /**
+ * 重命名输入框初始化选中位置：目录名全选，文件名只选主干、保留扩展名。
+ */
+export function getRenameSelectionEnd(entryName: string, isDirectory: boolean) {
+  if (isDirectory) return entryName.length;
+  const lastDotIndex = entryName.lastIndexOf(".");
+  if (lastDotIndex <= 0) return entryName.length;
+  return lastDotIndex;
+}
+
+/**
  * 折叠路径里的 `.` 与 `..` 段（纯字符串处理，不访问文件系统）。
  *
  * markdown 里跨文件夹引用是 `../A/Attachment/x.png` 这种形式，而 Tauri 的 asset 协议
