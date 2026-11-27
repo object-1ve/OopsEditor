@@ -11,6 +11,7 @@ import {
   cancelScheduledTabPersist,
   hydrateRestoredTabContents,
   persistTabsState,
+  schedulePinnedTabPathsPersist,
 } from "@/utils/workspaceSession";
 import { base64ToHexView, parseHexView } from "@/utils/hexView";
 import { appDataDir } from "@tauri-apps/api/path";
@@ -90,8 +91,16 @@ const useEditorStore = create<EditorState>()((...a) => {
         }
       }
 
+      // 还原固定标签：固定状态只存在设置里，必须在裁剪前套回去，固定标签才会被跳过
+      const pinnedTabPaths = new Set((settings.pinnedTabPaths || []).map(normalizePath));
+      const tabsWithPins = rehydratedTabs.map((tab) =>
+        pinnedTabPaths.has(normalizePath(tab.path))
+          ? { ...tab, isPinned: true, isPreviewTab: false }
+          : tab,
+      );
+
       const limitedTabsState = enforceTabLimit(
-        rehydratedTabs,
+        tabsWithPins,
         settings.activeTabId,
         settings.maxOpenTabs,
       );
@@ -174,6 +183,12 @@ const useEditorStore = create<EditorState>()((...a) => {
       }
     },
   };
+});
+
+// 标签集合变化时同步固定标签路径：关闭/重命名/固定后都能把设置里的清单收敛到当前状态
+useEditorStore.subscribe((state, prev) => {
+  if (state.tabs === prev.tabs && state.secondaryTabs === prev.secondaryTabs) return;
+  schedulePinnedTabPathsPersist([...state.tabs, ...state.secondaryTabs]);
 });
 
 export { useEditorStore };

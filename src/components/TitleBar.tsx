@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronLeft, ChevronRight, CopyX, Locate, Pencil, Pin, RefreshCw, Save, X } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, CopyX, Locate, Pencil, Pin, PinOff, RefreshCw, Save, X } from "lucide-react";
 import { useEditorStore } from "@/store/editor";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useMemo } from "react";
@@ -47,6 +47,7 @@ export default function TitleBar() {
   const pinFile = useEditorStore(s => s.pinFile);
   const unpinFile = useEditorStore(s => s.unpinFile);
   const pinTab = useEditorStore(s => s.pinTab);
+  const unpinTab = useEditorStore(s => s.unpinTab);
   const replaceTabFileLocation = useEditorStore(s => s.replaceTabFileLocation);
   const reloadTabFromDisk = useEditorStore(s => s.reloadTabFromDisk);
   const showModal = useEditorStore(s => s.showModal);
@@ -281,8 +282,19 @@ export default function TitleBar() {
         ...(item.separatorBefore ? [{ separator: true, label: "", onClick: () => {} }] : []),
         { label: item.label, icon: item.icon, onClick: item.onClick },
       ]),
-      ...(tab.isPreviewTab
+      ...(tab.isPinned
         ? [
+            {
+              label: "取消固定标签页",
+              icon: <PinOff size={14} />,
+              onClick: () => {
+                unpinTab(tab.id);
+                showNotification(`已取消固定标签页: ${tab.name}`, "info");
+              },
+            },
+            { separator: true, label: "", onClick: () => {} },
+          ]
+        : [
             {
               label: "固定标签页",
               icon: <Pin size={14} />,
@@ -292,8 +304,7 @@ export default function TitleBar() {
               },
             },
             { separator: true, label: "", onClick: () => {} },
-          ]
-        : []),
+          ]),
       { separator: true, label: "", onClick: () => {} },
       {
         label: isPinnedToSidebar ? "从左侧边栏取消固定" : "固定到左侧边栏",
@@ -355,7 +366,7 @@ export default function TitleBar() {
         onClick: () => handleClose({ stopPropagation: () => {} }, tab)
       },
     ];
-  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, pinTab, reloadTabFromDisk, showNotification, unpinFile, isSplit, revealPathInSidebar, rename]);
+  }, [contextMenu, tabs, defaultFolders, pinnedFiles, handleClose, handleCloseOthers, handleCloseLeft, handleCloseRight, handleSaveToDefaultFolder, handleTransferToOtherPane, pinFile, pinTab, reloadTabFromDisk, showNotification, unpinFile, isSplit, revealPathInSidebar, rename, unpinTab]);
   const handleTabDoubleClick = useCallback(async (tab: FileTab) => {
     // 与点击的标签页保持同一文件类型：聊天标签页没有文件后缀，仍按 md 新建
     const extension = isChatTab(tab) ? ".md" : getFileExtension(tab.name);
@@ -427,7 +438,13 @@ export default function TitleBar() {
               onPointerDown={(e) => drag.onTabPointerDown(e, tab.id)}
               onMouseEnter={() => !isChatTab(tab) && setHoveredPath(tab.path)}
               onMouseLeave={() => setHoveredPath(null)}
-              title={isPreviewTab ? "预览标签页：双击文件或编辑内容后固定" : undefined}
+              title={
+                tab.isPinned
+                  ? "已固定标签页：不受标签页数量上限自动关闭"
+                  : isPreviewTab
+                    ? "预览标签页：双击文件或编辑内容后固定"
+                    : undefined
+              }
             >
               {/* 底部状态条：主色=固定标签，暖色=预览标签 */}
               <div
@@ -457,6 +474,9 @@ export default function TitleBar() {
                   path={tab.path}
                   size={16}
                 />
+              )}
+              {tab.isPinned && (
+                <Pin size={11} className="shrink-0 text-accent/80" aria-label="已固定" />
               )}
               {rename.renamingTabId === tab.id ? (
                 <TabRenameInput

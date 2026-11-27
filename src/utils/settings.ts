@@ -59,6 +59,8 @@ export interface AppSettings {
   windowPosition?: { x: number; y: number };
   tabs: FileTab[];
   activeTabId: string | null;
+  /** 已固定的标签页路径（规范化正斜杠）；重启后恢复固定状态，固定标签不受标签页上限自动关闭 */
+  pinnedTabPaths: string[];
   rootPaths: string[];
   defaultFolders: DefaultFolder[];
   pinnedFiles: PinnedFile[];
@@ -117,6 +119,7 @@ export const defaultSettings: AppSettings = {
   autoSaveOnEdit: false,
   tabs: [],
   activeTabId: null,
+  pinnedTabPaths: [],
   rootPaths: [],
   defaultFolders: [],
   pinnedFiles: [],
@@ -226,6 +229,11 @@ export async function loadSettings(): Promise<AppSettings> {
 
     const savedRecentFiles = get<string[]>('recentFiles');
     settings.recentFiles = sanitizeRecentFiles(savedRecentFiles, settings.maxRecentFiles);
+
+    const savedPinnedTabPaths = get<string[]>('pinnedTabPaths');
+    settings.pinnedTabPaths = Array.isArray(savedPinnedTabPaths)
+      ? savedPinnedTabPaths.filter((item): item is string => typeof item === 'string' && item.length > 0)
+      : [];
 
     const savedCustomFontPath = get<string>('customFontPath');
     if (typeof savedCustomFontPath === 'string') settings.customFontPath = savedCustomFontPath;

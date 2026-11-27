@@ -323,7 +323,7 @@ export default function SettingsModal() {
               <>
                 <SettingsCard
                   title="标签页上限"
-                  description={`最多保留 ${maxOpenTabs} 个标签。超过后会自动关闭最早打开且未修改的标签，已修改标签会保留。`}
+                  description={`最多保留 ${maxOpenTabs} 个标签。超过后会自动关闭最早打开且未修改的标签，已修改或已固定的标签会保留。`}
                   action={
                     <input
                       type="number"

@@ -14,12 +14,16 @@ export function enforceTabLimit(
   const closedTabs: FileTab[] = [];
 
   while (nextTabs.length > sanitizedMaxOpenTabs) {
-    const firstCleanTabIndex = nextTabs.findIndex((tab) => !tab.isDirty);
-    if (firstCleanTabIndex === -1) {
+    // 已修改、已固定、当前活动的标签都不参与自动关闭：
+    // 固定标签占满名额时，新打开的标签不会刚进来就被关掉（宁可暂时超出上限）
+    const firstClosableTabIndex = nextTabs.findIndex(
+      (tab) => !tab.isDirty && !tab.isPinned && tab.id !== activeTabId,
+    );
+    if (firstClosableTabIndex === -1) {
       break;
     }
 
-    const [closedTab] = nextTabs.splice(firstCleanTabIndex, 1);
+    const [closedTab] = nextTabs.splice(firstClosableTabIndex, 1);
     if (closedTab) {
       closedTabs.push(closedTab);
     }

@@ -60,6 +60,8 @@ export const createTabsSlice: StateCreator<
     | "openTab"
     | "openPreviewTab"
     | "pinTab"
+    | "unpinTab"
+    | "promotePreviewTab"
     | "closeTab"
     | "closeTabs"
     | "closeOtherTabs"
@@ -217,14 +219,36 @@ export const createTabsSlice: StateCreator<
     });
   },
 
-  /** 固定预览标签；两个分栏中同 id 的标签一起固定 */
+  /** 固定标签页：预览标签一并转正，此后不受「标签页上限」自动关闭影响；两个分栏中同 id 的标签一起固定 */
   pinTab: (id: string) =>
     set((state) => {
       const pin = (tab: FileTab) =>
-        tab.id === id && tab.isPreviewTab ? { ...tab, isPreviewTab: false } : tab;
+        tab.id === id ? { ...tab, isPinned: true, isPreviewTab: false } : tab;
       return {
         tabs: state.tabs.map(pin),
         secondaryTabs: state.secondaryTabs.map(pin),
+      };
+    }),
+
+  /** 把预览标签转为普通标签：双击侧边栏文件时用，不改变固定状态 */
+  promotePreviewTab: (id: string) =>
+    set((state) => {
+      const promote = (tab: FileTab) =>
+        tab.id === id && tab.isPreviewTab ? { ...tab, isPreviewTab: false } : tab;
+      return {
+        tabs: state.tabs.map(promote),
+        secondaryTabs: state.secondaryTabs.map(promote),
+      };
+    }),
+
+  /** 取消固定标签页：重新参与「标签页上限」的自动关闭 */
+  unpinTab: (id: string) =>
+    set((state) => {
+      const unpin = (tab: FileTab) =>
+        tab.id === id ? { ...tab, isPinned: false } : tab;
+      return {
+        tabs: state.tabs.map(unpin),
+        secondaryTabs: state.secondaryTabs.map(unpin),
       };
     }),
 

@@ -121,8 +121,12 @@ export interface EditorState {
   openTab: (tab: FileTab) => void;
   /** 以预览标签打开：同栏已有预览标签时原位顶替，编辑或双击后固定 */
   openPreviewTab: (tab: FileTab) => void;
-  /** 把预览标签固定为普通标签（双击文件 / 右键「固定标签页」） */
+  /** 固定标签页（预览标签一并转正），固定后不受「标签页上限」自动关闭影响 */
   pinTab: (id: string) => void;
+  /** 取消固定标签页 */
+  unpinTab: (id: string) => void;
+  /** 把预览标签转为普通标签（不改固定状态；双击文件时用） */
+  promotePreviewTab: (id: string) => void;
   openChatSessionTab: (sessionId: number) => void;
   closeTab: (id: string) => void;
   closeTabs: (ids: string[]) => void;

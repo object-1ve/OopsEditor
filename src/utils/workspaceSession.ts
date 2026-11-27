@@ -398,6 +398,32 @@ export async function syncRootPathsToDatabase(paths: string[]) {
   }
 }
 
+/** 上次排程落库的固定标签路径串，避免内容编辑引发的无意义 set_setting */
+let lastPinnedTabPathsKey = "";
+let pinnedTabPathsTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * 把当前固定标签页的路径同步进设置（去抖）：固定/取消固定/重命名/关闭都会触发，
+ * 重启时据此恢复 isPinned。路径统一正斜杠，和数据库里的标签路径一致。
+ */
+export function schedulePinnedTabPathsPersist(tabs: FileTab[]) {
+  const paths = Array.from(
+    new Set(
+      tabs
+        .filter((tab) => tab.isPinned && tab.path)
+        .map((tab) => tab.path.replace(/\\/g, "/")),
+    ),
+  );
+  const key = paths.join("\u0000");
+  if (key === lastPinnedTabPathsKey) return;
+  lastPinnedTabPathsKey = key;
+  if (pinnedTabPathsTimer) clearTimeout(pinnedTabPathsTimer);
+  pinnedTabPathsTimer = setTimeout(() => {
+    pinnedTabPathsTimer = null;
+    void saveSettingValue("pinnedTabPaths", paths);
+  }, 300);
+}
+
 export async function persistActiveTabId(activeTabId: string | null) {
   await saveSettingValue("activeTabId", activeTabId);
 }

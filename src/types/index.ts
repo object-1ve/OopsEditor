@@ -15,6 +15,10 @@ export interface FileTab {
    * 注意与 isPreviewMode（Markdown 预览视图）区分。
    */
   isPreviewTab?: boolean;
+  /**
+   * 顶部标签栏固定：不受「标签页上限」的自动关闭影响（固定时预览标签一并转正）。
+   */
+  isPinned?: boolean;
   isPreviewMode?: boolean;
   isLivePreviewMode?: boolean;
   /**

@@ -76,7 +76,7 @@ export default function Sidebar() {
   const addTerminal = useEditorStore((s) => s.addTerminal);
   const openTab = useEditorStore((s) => s.openTab);
   const openPreviewTab = useEditorStore((s) => s.openPreviewTab);
-  const pinTab = useEditorStore((s) => s.pinTab);
+  const promotePreviewTab = useEditorStore((s) => s.promotePreviewTab);
   const tabs = useEditorStore((s) => s.tabs);
   const secondaryTabs = useEditorStore((s) => s.secondaryTabs);
   const rebasePinnedFilePath = useEditorStore((s) => s.rebasePinnedFilePath);
@@ -232,12 +232,12 @@ export default function Sidebar() {
       const tabId = buildTabId(entry.path, "text");
       const state = useEditorStore.getState();
       if ([...state.tabs, ...state.secondaryTabs].some((tab) => tab.id === tabId)) {
-        pinTab(tabId);
+        promotePreviewTab(tabId);
         return;
       }
       void openFile(entry.path, entry.size);
     },
-    [openFile, pinTab],
+    [openFile, promotePreviewTab],
   );
 
   const handleOpenFolder = useCallback(async () => {
