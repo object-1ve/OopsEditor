@@ -65,7 +65,7 @@ const tabs = useEditorStore(s => s.tabs);
   const paneActiveTabId = isSecondary ? secondaryActiveTabId : activeTabId;
   const isFocused = isSplit && focusedPane === pane;
   const { ref: tabStripRef, hideClose, hideName } = useTabStripDensity(paneTabs.length);
-  const rename = useTabRename();
+  const rename = useTabRename(pane);
   const drag = useTabDragReorder(pane);
 
   const setActive = useCallback((id: string) => {
