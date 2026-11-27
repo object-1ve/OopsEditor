@@ -1845,7 +1845,7 @@ function NotebookModeView({
           )}
 
           {doc.cells.length > 0 && (
-            <div className="flex items-center justify-center gap-2 pb-0.5 opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100">
+            <div className="flex items-center justify-center gap-2 pb-0.5 opacity-0 transition-opacity hover:opacity-100 focus-within:opacity-100">
               <AddCellPill
                 title="在顶部添加代码单元格（插到第一个单元格之前）"
                 label="代码单元格"
