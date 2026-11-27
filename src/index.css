@@ -111,6 +111,13 @@ body {
   color: var(--text-primary);
 }
 
+/* 标签拖动中：整页光标变成抓取中（标签条的指针拖动不依赖 HTML5 DnD 的拖拽光标） */
+body.tab-dragging,
+body.tab-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
 /* ── 会话消息气泡 ──
    气泡是白底黑字，全局 ::selection 的 32% 橙叠在白底上偏淡，这里给气泡内更实一档的选中背景，
    保证拖动选中时一眼可见；文字色不动，仍由全局的深色承担对比度。 */

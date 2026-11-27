@@ -401,7 +401,13 @@ export default function TitleBar() {
       }`}
     >
       {/* Tabs */}
-      <div ref={tabStripRef} data-tauri-drag-region className="flex items-center flex-1 overflow-x-auto h-full relative">
+      <div
+        ref={tabStripRef}
+        data-tauri-drag-region
+        data-tab-strip
+        onClickCapture={drag.onClickCapture}
+        className="flex items-center flex-1 overflow-x-auto h-full relative"
+      >
         <div className="flex items-center min-w-0 h-full">
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
@@ -414,15 +420,11 @@ export default function TitleBar() {
                   ? "bg-primary text-text-primary"
                   : "bg-secondary text-text-muted hover:text-text-secondary hover:bg-surface/50"
               } ${hideClose ? "tab-no-close" : ""} ${hideName && rename.renamingTabId !== tab.id ? "tab-icon-only" : ""} ${drag.draggingTabId === tab.id ? "opacity-50" : ""}`}
+              data-tab-id={tab.id}
               onClick={() => setActive(tab.id)}
               onDoubleClick={() => handleTabDoubleClick(tab)}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
-              draggable={rename.renamingTabId !== tab.id}
-              onDragStart={(e) => drag.onDragStart(e, tab.id)}
-              onDragOver={(e) => drag.onDragOver(e, tab.id)}
-              onDragLeave={() => drag.clearHint(tab.id)}
-              onDrop={(e) => drag.onDrop(e, tab.id)}
-              onDragEnd={drag.onDragEnd}
+              onPointerDown={(e) => drag.onTabPointerDown(e, tab.id)}
               onMouseEnter={() => !isChatTab(tab) && setHoveredPath(tab.path)}
               onMouseLeave={() => setHoveredPath(null)}
               title={isPreviewTab ? "预览标签页：双击文件或编辑内容后固定" : undefined}
