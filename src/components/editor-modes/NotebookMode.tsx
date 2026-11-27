@@ -124,6 +124,9 @@ const NOTEBOOK_EDITOR_OPTIONS = {
   // Ctrl+Click 网址自己接管（Monaco 的 link detector 走 window.open，在 Tauri 里打不开）
   links: false,
   suggest: { showWords: true },
+  // 关闭 EditContext：它把隐藏输入层固定在单元格左上角，首次聚焦时浏览器会把整个
+  // 滚动容器滚到该位置（长单元格里点一下就跳回顶部）。textarea 模式的隐藏输入跟随光标，不会跳。
+  editContext: false,
 } as const;
 
 /** 源码模式里要被染成蓝色的网址：http(s):// 与 www. 开头的裸链接 */
