@@ -8,6 +8,7 @@ import {
 import { type OnMount } from "@monaco-editor/react";
 import "highlight.js/styles/github.css";
 import {
+  Braces,
   Clipboard,
   Columns2,
   Copy,
@@ -38,6 +39,7 @@ import { copyTextToClipboard } from "@/utils/clipboard";
 import { invoke } from "@tauri-apps/api/core";
 import { findMatchColumns } from "@/utils/editorJump";
 import { collapsePathSegments } from "@/utils/path";
+import { formatJsonText } from "@/utils/jsonFormat";
 import { findUrlAtColumn } from "@/utils/markdown";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { detectLanguage, isPreviewOnlyLanguage } from "@/types";
@@ -315,6 +317,69 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     window.dispatchEvent(new CustomEvent("file-refresh", { detail: { path: tab.path } }));
   }, []);
 
+  /**
+   * 格式化当前 Monaco 里的 JSON：解析失败时定位到出错行列并提示，成功时整份替换（一次可撤销）。
+   * 缩进跟随模型设置（indentSize / insertSpaces），避免固定 2 空格改写用户的 4 空格文件。
+   */
+  const formatJsonInEditor = useCallback(
+    (editor: Parameters<OnMount>[0]) => {
+      const model = editor.getModel();
+      if (!model) {
+        return;
+      }
+
+      const source = model.getValue();
+      const modelOptions = model.getOptions();
+      const result = formatJsonText(source, {
+        tabSize: modelOptions.indentSize,
+        insertSpaces: modelOptions.insertSpaces,
+      });
+
+      if (!result.ok) {
+        const lineNumber = Math.min(Math.max(1, result.line), model.getLineCount());
+        const column = Math.min(
+          Math.max(1, result.column),
+          model.getLineMaxColumn(lineNumber),
+        );
+        editor.setPosition({ lineNumber, column });
+        editor.revealLineInCenter(lineNumber);
+        editor.focus();
+        showNotification(`JSON 格式错误：${result.error}`, "error");
+        return;
+      }
+
+      if (!result.changed) {
+        showNotification("JSON 已是格式化状态", "info");
+        return;
+      }
+
+      const position = editor.getPosition();
+      editor.pushUndoStop();
+      editor.executeEdits("format-json", [
+        {
+          range: model.getFullModelRange(),
+          text: result.text,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.pushUndoStop();
+      if (position) {
+        // 格式化会改动行数，原光标位置按新文档钳制，避免落在文档外
+        const lineNumber = Math.min(position.lineNumber, model.getLineCount());
+        editor.setPosition({
+          lineNumber,
+          column: Math.min(position.column, model.getLineMaxColumn(lineNumber)),
+        });
+      }
+      editor.revealPositionInCenterIfOutsideViewport(
+        editor.getPosition() ?? { lineNumber: 1, column: 1 },
+      );
+      editor.focus();
+      showNotification("JSON 已格式化", "success");
+    },
+    [showNotification],
+  );
+
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
     // 新实例刚挂载:消费 mount 前已到达的搜索跳转
@@ -587,7 +652,20 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
         }
       },
     });
-  }, [persistTab, consumeSearchJump]);
+
+    // Shift+Alt+F：JSON 文件的格式化入口（与 Monaco 默认 formatDocument 同键，
+    // 本 action 后注册且 when 只匹配 json，非 json 文件仍落到内置动作）
+    editor.addAction({
+      id: "format-json",
+      label: "格式化 JSON",
+      keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF],
+      precondition: "editorLangId == 'json' && !editorReadonly",
+      contextMenuGroupId: "modification",
+      run: () => {
+        formatJsonInEditor(editor);
+      },
+    });
+  }, [persistTab, consumeSearchJump, formatJsonInEditor]);
 
   // 组件卸载时清理编辑器插入回调
   useEffect(() => {
@@ -716,6 +794,21 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
             { separator: true, label: "", onClick: () => {} },
           ]
         : []),
+      ...(activeTab?.language === "json" && !isReadOnlyTab
+        ? [
+            {
+              label: "格式化 JSON",
+              icon: <Braces size={14} />,
+              onClick: () => {
+                const editor = editorRef.current;
+                if (editor) {
+                  formatJsonInEditor(editor);
+                }
+              },
+            },
+            { separator: true, label: "", onClick: () => {} },
+          ]
+        : []),
       ...(!isReadOnlyTab
         ? [
             {
@@ -791,6 +884,7 @@ export default function Editor({ tabId, pane = "primary" }: { tabId?: string | n
     activeTab?.language,
     currentTabId,
     editorContextMenu?.hasSelection,
+    formatJsonInEditor,
     handleEditorCopy,
     handleEditorCut,
     handleEditorPaste,
